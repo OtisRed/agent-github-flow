@@ -100,11 +100,15 @@ def verify_candidate_ci(read, repository, expected, policy, run_id, job_id):
                      "checks-incomplete")
             matching = [check for check in checks if check["name"] == "verify"
                         and check["app"]["id"] == policy["app_id"]]
-            _require(len(matching) == 1 and matching[0]["id"] == job_id
-                     and matching[0]["head_sha"] == head and matching[0]["status"] == "completed"
-                     and matching[0]["conclusion"] == "success"
-                     and matching[0]["check_suite"]["id"] == run["check_suite_id"], "check-mismatch")
-            item = matching[0]
+            # GitHub can retain separate draft and ready suites for the same head.
+            # Parallel success does not substitute for evidence from the requested suite.
+            by_suite = {check["check_suite"]["id"]: check for check in matching}
+            item = by_suite.get(run["check_suite_id"])
+            _require(item is not None and item["id"] == job_id
+                     and len(by_suite) == len(matching) == len({check["id"] for check in matching})
+                     and all(_id(suite) and _id(check["id"]) and check["head_sha"] == head
+                             and check["status"] == "completed" and check["conclusion"] == "success"
+                             for suite, check in by_suite.items()), "check-mismatch")
             return {**{key: item[key] for key in ("id", "name", "head_sha", "status", "conclusion")},
                     "app": {"id": item["app"]["id"]}}
 
