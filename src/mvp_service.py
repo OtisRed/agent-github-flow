@@ -28,7 +28,7 @@ from promotion_plan import SHA
 from promotion_schedule import promotion_mode, run_promotions
 from selective_promotion_executor import run_prepared_promotion
 from deployment_schedule import run_deployments
-from deployment_source import deployment_checks
+from deployment_source import deployment_checks, deployment_targets
 from deployment_state import DeploymentState
 from pr_admission_service import build_readers, run_admission
 from pr_admission_github import normalize_retry_targets
@@ -69,6 +69,8 @@ def validate_config(config):
     for name in ("state_path", "webhook_secret_path", "project_token_path", "app_key_path"):
         if not isinstance(config.get(name), str) or not os.path.isabs(config[name]):
             raise ValueError("Invalid config path")
+    if 'deployment_state_path' in config and os.path.realpath(config['deployment_state_path']) == os.path.realpath(config['state_path']):
+        raise ValueError("Controller and deployment require separate databases")
     projects = config.get("projects")
     if not isinstance(projects, list) or not projects:
         raise ValueError("No configured projects")
@@ -95,8 +97,11 @@ def validate_config(config):
         if type(sync) is not bool or (sync and (not path or type(project.get('admission_sync_bot_id')) is not int
                                                or project['admission_sync_bot_id'] <= 0)):
             raise ValueError("Invalid selective forward-sync configuration")
-        if mode == 'selective' and project.get('deployment_guarded') is True:
-            raise ValueError("Selective promotion does not yet support the deployment guard")
+        source = project.get('deployment_promotion_source', 'prefix')
+        if source not in ('prefix', 'selective'):
+            raise ValueError("Invalid deployment promotion source")
+        if mode == 'selective' and project.get('deployment_guarded') is True and source != 'selective':
+            raise ValueError("Selective promotion requires selective deployment evidence")
         if 'deployment_guarded' in project and type(project['deployment_guarded']) is not bool:
             raise ValueError("Invalid deployment guard setting")
         if project.get('deployment_guarded') is True and ('deployment_state_path' not in config or project.get('promotion_enabled') is not True):
@@ -106,13 +111,19 @@ def validate_config(config):
         if 'deployment_enabled' in project and type(project['deployment_enabled']) is not bool:
             raise ValueError("Invalid deployment setting")
         smoke_only = project.get('deployment_smoke_only', False)
+        main_only = project.get('deployment_main_only', False)
+        if type(main_only) is not bool or (main_only and (
+                smoke_only or project.get('deployment_enabled') is not True)):
+            raise ValueError("Main-only deployment requires a production executor")
+        if source == 'selective' and (mode == 'prefix' or smoke_only or project.get('deployment_enabled') is not True):
+            raise ValueError("Selective deployment evidence requires a selective or paused production deployment")
         if type(smoke_only) is not bool or (smoke_only and (
                 project.get('deployment_enabled') is not True or 'deployment_state_path' not in config
                 or project.get('deployment_guarded') is True)):
             raise ValueError("Smoke-only deployment requires a ledger and cannot guard production promotion")
         if project.get('deployment_enabled') is True:
             checks = project.get('deployment_checks')
-            targets = {'smoke'} if smoke_only else {'main', 'smoke'}
+            targets = set(deployment_targets(project))
             if ((not smoke_only and project.get('deployment_guarded') is not True)
                     or not isinstance(project.get('deployment_executor'), str)
                     or not os.path.isabs(project['deployment_executor'])
@@ -266,13 +277,14 @@ def run(config):
                 and p.get("promotion_notice_since") is not None
             }
 
-            def selective_step(transport, token, project):
+            def selective_step(transport, token, project, *, deployment_guard=None):
                 if os.path.lexists(state.with_name('selective-promotions.sqlite')):
                     # Keep the old replay guard authoritative until an operator reconciles it.
                     return 'selective-ledger-migration-required'
                 return run_prepared_promotion(transport, token, project, project_token=project_token,
                                               journal_path=state, journal_in_state=True,
-                                              notice_token=notice_tokens.get(project["repository_id"]))
+                                              notice_token=notice_tokens.get(project["repository_id"]),
+                                              deployment_guard=deployment_guard)
 
             promotion_thread = threading.Thread(target=run_promotions, args=(stop, config, private_key),
                                                 kwargs={"quickfix_queue": quickfix_queue, "selective_step": selective_step}, daemon=True)
