@@ -25,3 +25,4 @@
 
 - [Odzyskanie dostępu kontrolera](docs/credential-recovery.md) — poświadczenia App i Projectów, wymiana oraz ograniczenia odtwarzania.
 - [Alerty operacyjne](docs/runtime-alerts.md) — lokalny protokół, konfiguracja i odzyskanie po utracie odpowiedzi.
+- [Wersjonowany wykonawca wdrożeń AGF](docs/controller-deployment-executor.md) — przygotowanie paczki i odzyskiwanie.
