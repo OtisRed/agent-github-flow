@@ -82,12 +82,13 @@ def run_promotions(stop, config, private_key, *, transport=request, quickfix_que
                 except Exception:
                     result = 'failed'
                 if (mode == 'selective' and result == 'merged') or result not in (
-                        'branch-created', 'pull-request-created', 'waiting-checks', 'changed', 'merged', 'unknown'):
+                        'branch-created', 'pull-request-created', 'waiting-checks', 'changed', 'merged', 'unknown',
+                        'notice-pending'):
                     requested.discard(repository_id)
                 if previous.get(project['repository_id']) != result:
                     alert = result in ('failed', 'protection-required', 'blocked', 'deployment-blocked',
                                        'selective-unavailable', 'selective-ledger-migration-required',
-                                       'forward-sync-required', 'forward-sync-blocked', 'unknown')
+                                       'forward-sync-required', 'forward-sync-blocked', 'unknown', 'notice-pending')
                     print(('FLOW attention: promotion-' if alert else 'FLOW promotion: ') + result
                           + ' repo=' + str(project['repository_id']),
                           file=sys.stderr if alert else sys.stdout, flush=True)

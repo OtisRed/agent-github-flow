@@ -36,6 +36,10 @@ class SelectiveMergeJournal:
                     repo INTEGER NOT NULL, pr INTEGER NOT NULL,
                     PRIMARY KEY (repo, pr)
                 );
+                CREATE TABLE IF NOT EXISTS promotion_notice (
+                    repo INTEGER NOT NULL, issue INTEGER NOT NULL, cycle INTEGER NOT NULL,
+                    PRIMARY KEY (repo, issue, cycle)
+                );
             """)
 
     def _connect(self):
@@ -60,6 +64,11 @@ class SelectiveMergeJournal:
             rows = db.execute("SELECT manifest,result FROM attempt WHERE repo=? AND result IS NOT NULL",
                               (repo,)).fetchall()
         return [(json.loads(manifest)["sources"], result) for manifest, result in rows]
+
+    def claim_notice(self, repo, issue, cycle):
+        with closing(self._connect()) as db, db:
+            result = db.execute("INSERT OR IGNORE INTO promotion_notice VALUES (?, ?, ?)", (repo, issue, cycle))
+        return result.rowcount == 1
 
     def reserve(self, repo, pr, manifest):
         try:

@@ -66,6 +66,12 @@ of `state.sqlite` as `PATH`. The receipt is derived from SQLite
 only if the confirmed squash is still reachable from the observed main. It covers the exact issue
 closure cycle and source PRs. An unreachable receipt blocks planning.
 
+### Komentarz o wybiórczej promocji
+
+W konfiguracji AGF ustaw `promotion_notice_since` na datę i godzinę aktywacji ze strefą czasową. Dla PR-ów promocyjnych scalonych od tego momentu App publikuje `[FLOW-PROMOTION]` na issue po potwierdzeniu squasha. Wpis wskazuje cykl zamknięcia, URL PR-u i pełny SHA. `admission_sync_bot_id` wskazuje tożsamość App używaną do rozpoznania wpisu.
+
+Przed zapisem kontroler odczytuje komentarze i rezerwuje próbę w produkcyjnym SQLite. Po utracie odpowiedzi ponawia jedynie odczyt. Jeśli wpisu nadal brakuje, `notice-pending` wymaga uzgodnienia przez operatora. Zachowaj przygotowane żądanie promocji do potwierdzenia wpisów i synchronizacji. Sam wpis nie tworzy przekazania statusu.
+
 ### Odczyt potwierdzenia po numerze issue
 
 Na Mikrusie operator uruchamia polecenie z katalogu wydania jako konto usługi:
