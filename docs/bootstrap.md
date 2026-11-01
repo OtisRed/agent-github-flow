@@ -22,13 +22,15 @@ To stan z chwili sprawdzenia, a nie gwarancja bieżącej konfiguracji. Przed pra
 - [#3](https://github.com/OtisRed/agent-github-flow/issues/3): GitHub App, jej instalacja i uprawnienia. Nie umieszczaj kluczy ani tokenów w publicznym repozytorium.
 - [#4](https://github.com/OtisRed/agent-github-flow/issues/4) i [#5](https://github.com/OtisRed/agent-github-flow/issues/5): format `[FLOW]` i reakcja na przekazanie.
 - [#6](https://github.com/OtisRed/agent-github-flow/issues/6): nocne wykrywanie i naprawa jednoznacznych rozbieżności.
-- [#7–#10](https://github.com/OtisRed/agent-github-flow/issues): przyjmowanie issue, review, wspólny smoke i nocna promocja. Sprawdź aktualne zależności poszczególnych issue; ich numeracja nie jest automatyczną kolejnością wdrożenia.
+- [#7](https://github.com/OtisRed/agent-github-flow/issues/7), [#8](https://github.com/OtisRed/agent-github-flow/issues/8), [#9](https://github.com/OtisRed/agent-github-flow/issues/9) i [#10](https://github.com/OtisRed/agent-github-flow/issues/10): przyjmowanie issue, review, wspólny smoke i nocna promocja. Sprawdź aktualne zależności poszczególnych issue; ich numeracja nie jest automatyczną kolejnością wdrożenia.
 
 Pierwszą wersję uruchamiamy na tym repozytorium. Dla każdego elementu potwierdź stan na właściwej gałęzi, konfigurację, uprawnienia i wynik rzeczywistej próby, zanim przekażesz mu odpowiedzialność. Przy przełączeniu zastąp ręczny zapis właściwym automatem, bez pozostawiania dwóch niezależnych mechanizmów zmieniających ten sam status. Późniejsze przyjęcie flow w VSone ma osobny zakres i nie następuje przez samą zmianę tej instrukcji.
 
 ## Gdy stan jest niespójny
 
 Jeśli karta, ostatnie przekazanie i stan native issue różnią się albo odczyt jest niepełny, najpierw ustal aktualne fakty. Nie dopisuj sukcesu do niepotwierdzonej zmiany i nie ponawiaj zapisu w ciemno. Ręcznie rozlicz jednoznaczny brakujący krok w zakresie zlecenia, a przy niejasności opisz problem. Samo naprawienie karty nie zamyka ani nie otwiera issue. Po wdrożeniu wspólnego mechanizmu postępuj według jego faktycznej, zweryfikowanej procedury.
+
+Gdy wdrożony workflow nie uruchomił się w oczekiwanym terminie albo zakończył się błędem, sprawdź historię uruchomień Actions, właściwy harmonogram i uprawnienia oraz zapisz istotne ustalenia w kontrakcie właściwego issue. Brak rozbieżności statusu nie potwierdza, że przebieg się odbył. Ustal faktyczny zakres już wykonanych operacji przed ponowieniem. W czasie naprawy agent może jednorazowo wykonać brakujący krok ręcznie w zakresie upoważnienia, po odczycie aktualnego stanu i z odnotowaniem wyniku; wstrzymaj lub wyklucz równoległy zapis automatu dla tego samego zakresu. Przywróć automat jako jedynego właściciela dopiero po sprawdzeniu konfiguracji i rzeczywistego przebiegu. Jeśli nie da się ustalić wyniku lub bezpiecznie uniknąć równoległego zapisu, przerwij i wyjaśnij problem zamiast ponawiać operację w ciemno.
 
 ## Warunek zakończenia bootstrapu
 
