@@ -1,0 +1,30 @@
+name: PAT project GraphQL probe
+on:
+  push:
+    branches: [spike/pat-project-graphql]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: pat-probe
+    timeout-minutes: 3
+    steps:
+      - name: Read and update the pre-created test card
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${GH_TOKEN:-}"
+          item='PVTI_lAHOAbWL0M4Bpr2hzhFMXyo'
+          read_status() {
+            gh api graphql -f query='query($id: ID!) { node(id: $id) { ... on ProjectV2Item { id isArchived fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } }' -f id="$item" --jq '.data.node | if .id == null or .isArchived then "invalid" else (.fieldValueByName.name // "unset") end'
+          }
+          before=$(read_status)
+          echo "Initial status: $before"
+          if [ "$before" != 'needs-design' ]; then echo 'Unexpected state; no write'; exit 1; fi
+          gh api graphql -f query='mutation($id: ID!) { updateProjectV2ItemFieldValue(input: {projectId: "PVT_kwHOAbWL0M4Bpr2h", itemId: $id, fieldId: "PVTSSF_lAHOAbWL0M4Bpr2hzhoGUlU", value: {singleSelectOptionId: "13ac1232"}}) { projectV2Item { id } } }' -f id="$item" --jq '.data.updateProjectV2ItemFieldValue.projectV2Item.id'
+          after=$(read_status)
+          echo "Final status: $after"
+          test "$after" = 'spike'
