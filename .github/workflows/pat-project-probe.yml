@@ -1,0 +1,40 @@
+name: PAT project read-write probe
+on:
+  push:
+    branches: [spike/pat-project-probe]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: pat-probe
+    timeout-minutes: 3
+    steps:
+      - name: Create and test a disposable draft card
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then echo 'Project credential is unavailable'; exit 1; fi
+          item_id=''
+          cleanup() {
+            if [ -n "$item_id" ]; then
+              gh project item-archive 10 --owner OtisRed --id "$item_id" >/dev/null || echo 'Archive failed; inspect probe card manually'
+            fi
+          }
+          trap cleanup EXIT
+          item_id=$(gh project item-create 10 --owner OtisRed --title 'TEST TECHNICZNY — PAT Actions' --body 'Jednorazowa karta do testu odczytu i zmiany statusu.' --format json --jq .id)
+          test -n "$item_id"
+          echo "Probe card: $item_id (run $GITHUB_RUN_ID)"
+          before=$(gh project item-list 10 --owner OtisRed --limit 100 --format json | jq -r --arg id "$item_id" '.items[] | select(.id == $id) | .status // "unset"')
+          echo "Initial status: $before"
+          if [ "$before" != 'needs-design' ]; then echo 'Unexpected initial status; stopping'; exit 1; fi
+          gh project item-edit --id "$item_id" --project-id PVT_kwHOAbWL0M4Bpr2h --field-id PVTSSF_lAHOAbWL0M4Bpr2hzhoGUlU --single-select-option-id 13ac1232
+          after=$(gh project item-list 10 --owner OtisRed --limit 100 --format json | jq -r --arg id "$item_id" '.items[] | select(.id == $id) | .status // "unset"')
+          echo "Final status: $after"
+          if [ "$after" != 'spike' ]; then echo 'Status readback mismatch'; exit 1; fi
+          archive_id="$item_id"
+          item_id=''
+          gh project item-archive 10 --owner OtisRed --id "$archive_id" >/dev/null || { echo 'Archive outcome unconfirmed; inspect probe card manually'; exit 1; }
+          echo 'Probe card archived'
