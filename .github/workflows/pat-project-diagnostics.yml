@@ -1,0 +1,22 @@
+name: PAT read-only diagnostics
+on:
+  push:
+    branches: [spike/pat-project-diagnostics]
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: pat-probe
+    timeout-minutes: 3
+    steps:
+      - name: Diagnose authentication without displaying credentials
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          set -u
+          if [ -z "${GH_TOKEN:-}" ]; then echo 'Credential unavailable'; exit 1; fi
+          if gh api user --jq .login >/dev/null 2>&1; then echo 'REST authentication: OK'; else echo 'REST authentication: FAILED'; exit 1; fi
+          if gh api graphql -f query='query { user(login: "OtisRed") { __typename } }' >/dev/null 2>&1; then echo 'GraphQL owner lookup: OK'; else echo 'GraphQL owner lookup: FAILED'; exit 1; fi
+          if gh api graphql -f query='query { user(login: "OtisRed") { projectV2(number: 10) { number } } }' --jq '.data.user.projectV2.number' 2>/dev/null | grep -qx '10'; then echo 'Project read: OK'; else echo 'Project read: FAILED'; exit 1; fi
