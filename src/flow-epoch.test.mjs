@@ -9,7 +9,7 @@ const reopen = { id: 'reopen-1', type: 'REOPENED', at: '2026-01-01T10:02:00Z' };
 test('binds native reopen evidence to the issue and latest complete event history', () => {
   const value = { ...input(), issueNodeId: 'issue', events: [close, reopen] };
   assert.deepEqual(verifyNativeReopen(value), { kind: 'native-reopen-evidence', issueNodeId: 'issue',
-    epoch: { kind: 'reopened', anchor: 'reopen-1' } });
+    epoch: { kind: 'reopened', anchor: 'reopen-1' }, reopenedAt: reopen.at });
   value.observedAt = reopen.at;
   assert.deepEqual(verifyNativeReopen(value), { kind: 'blocked', reason: 'handoff-before-or-at-reopen' });
   value.events = []; value.observedAt = '2026-01-01T10:10:00Z';

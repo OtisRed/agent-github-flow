@@ -3,6 +3,7 @@ import { FLOW_STATUSES } from './flow.mjs';
 import { isFlowMarker } from './flow-recovery.mjs';
 import { isReentryWitness, checkpointEvidenceMatches } from './flow-reentry-types.mjs';
 import { planBootstrap } from './flow-bootstrap.mjs';
+import { parseFlowTimestamp } from './flow-epoch.mjs';
 
 const blocked = reason => ({ kind: 'blocked', reason });
 const same = (a, b) => isFlowMarker(a) && isFlowMarker(b)
@@ -18,7 +19,8 @@ const normalWitness = value => value && typeof value === 'object' && !Array.isAr
   && Object.keys(value).length === 3 && ['version', 'current', 'previous'].every(key => Object.hasOwn(value, key))
   && value.version === 1 && value.previous === null && isFlowMarker(value.current) && value.current.phase === 'committed';
 const expected = input => ({ witness: structuredClone(input.witness), marker: structuredClone(input.marker),
-  issueState: input.issueState, currentStatus: input.currentStatus, epoch: structuredClone(input.epoch) });
+  issueState: input.issueState, currentStatus: input.currentStatus, epoch: structuredClone(input.epoch),
+  cutoverAt: input.cutoverAt, reopenedAt: input.nativeReopenEvidence.reopenedAt });
 const mutation = (input, plan) => ({ ...plan, expected: expected(input) });
 
 // Models the native reopen owner only. The caller must prove the latest native
@@ -34,10 +36,16 @@ export function planReentry(input) {
   if (input.nativeReopenEvidence?.kind !== 'native-reopen-evidence'
     || input.nativeReopenEvidence.issueNodeId !== input.issueNodeId
     || !sameEpoch(input.nativeReopenEvidence.epoch, input.epoch)) return blocked('unverified-native-reopen');
+  const cutover = parseFlowTimestamp(input.cutoverAt);
+  if (cutover === null) return blocked('invalid-policy');
+  const reopenedAt = parseFlowTimestamp(input.nativeReopenEvidence.reopenedAt);
+  if (reopenedAt === null) return blocked('unverified-native-reopen');
+  if (reopenedAt <= cutover) return blocked('reopen-before-or-at-cutover');
   if (!Object.hasOwn(input, 'marker') || !Object.hasOwn(input, 'witness')) return blocked('missing-checkpoint-state');
 
   const witness = input.witness;
   if (isReentryWitness(witness)) {
+    if (witness.cutoverAt !== input.cutoverAt) return blocked('cutover-changed');
     if (!validPrevious(witness.previous, input.previousComment)) return blocked('previous-comment-missing-or-changed');
     if (witness.previous !== null && (!checkpointEvidenceMatches(input, witness.previous)
       || input.checkpointEpochEvidence.relation !== 'prior')) return blocked('unverified-checkpoint-epoch');
@@ -52,8 +60,8 @@ export function planReentry(input) {
         if (witness.previous !== null && input.marker === null && input.currentStatus === witness.fromStatus
           && !['needs-design', 'done'].includes(input.currentStatus)) return blocked('unexpected-status');
       }
-      return mutation(input, { kind: 'start-reentry', witness: { version: 2, kind: 'reentry', phase: 'pending',
-        epoch: structuredClone(input.epoch), previous: structuredClone(witness.previous), fromStatus: input.currentStatus } });
+      return mutation(input, { kind: 'start-reentry', witness: { version: 3, kind: 'reentry', phase: 'pending',
+        epoch: structuredClone(input.epoch), previous: structuredClone(witness.previous), fromStatus: input.currentStatus, cutoverAt: input.cutoverAt } });
     }
     if (witness.phase === 'ready') {
       if (input.marker !== null) return blocked('checkpoint-mismatch');
@@ -84,6 +92,6 @@ export function planReentry(input) {
     previous = structuredClone(witness.current);
   } else if (witness !== null || input.marker !== null) return blocked('checkpoint-mismatch');
 
-  return mutation(input, { kind: 'start-reentry', witness: { version: 2, kind: 'reentry', phase: 'pending',
-    epoch: structuredClone(input.epoch), previous, fromStatus: input.currentStatus } });
+  return mutation(input, { kind: 'start-reentry', witness: { version: 3, kind: 'reentry', phase: 'pending',
+    epoch: structuredClone(input.epoch), previous, fromStatus: input.currentStatus, cutoverAt: input.cutoverAt } });
 }

@@ -14,7 +14,7 @@ test('reads and rechecks all native pages without needing a comment', async () =
   const cursors = []; const graphql = async (_query, vars) => { cursors.push(vars.after);
     return vars.after ? page([reopen]) : page([close], true, 'next'); };
   assert.deepEqual(await collectNativeReopenEvidence(input(graphql)), { kind: 'native-reopen-evidence', issueNodeId: 'issue',
-    epoch: { kind: 'reopened', anchor: 'reopen' }, eventCount: 2 });
+    epoch: { kind: 'reopened', anchor: 'reopen' }, reopenedAt: reopen.createdAt, eventCount: 2 });
   assert.deepEqual(cursors, [null, 'next', null, 'next']);
 });
 

@@ -37,6 +37,7 @@ export function planBootstrap(input) {
   const state = planActiveStatus({ issueState: input.issueState, currentStatus: input.currentStatus, targetStatus: input.currentStatus });
   if (state.kind === 'blocked') return state;
   if (!Object.hasOwn(input, 'marker') || !Object.hasOwn(input, 'witness')) return blocked('missing-checkpoint-state');
+  if (isReentryWitness(input.witness) && input.witness.cutoverAt !== input.cutoverAt) return blocked('cutover-changed');
   const reentryReady = isReentryWitness(input.witness) && input.witness.phase === 'ready'
     && input.epoch.kind === 'reopened' && input.witness.epoch.anchor === input.epoch.anchor && input.marker === null;
   if (reentryReady && !previousMatches(input.witness.previous, input.previousComment)) return blocked('previous-comment-missing-or-changed');

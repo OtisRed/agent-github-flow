@@ -70,11 +70,11 @@ test('readback also protects the old comment and epoch evidence after reopen', a
   const old = { version: 1, phase: 'committed', commentId: '9', digest: createHash('sha256').update(oldBody).digest('hex'),
     fromStatus: 'review', targetStatus: 'smoke' };
   ctx.state.epoch = { kind: 'reopened', anchor: 'reopen' }; ctx.state.handoffEpochEvidence.epoch = structuredClone(ctx.state.epoch);
-  ctx.state.witness = { version: 2, kind: 'reentry', phase: 'ready', epoch: structuredClone(ctx.state.epoch), previous: old, fromStatus: 'done' };
+  ctx.state.witness = { version: 3, kind: 'reentry', phase: 'ready', epoch: structuredClone(ctx.state.epoch), previous: old, fromStatus: 'done', cutoverAt: ctx.state.cutoverAt };
   ctx.state.previousComment = { id: '9', nodeId: 'old-node', body: oldBody };
   ctx.state.checkpointEpochEvidence = { kind: 'checkpoint-epoch-evidence', issueNodeId: 'issue', commentId: '9', commentNodeId: 'old-node',
     commentDigest: old.digest, relation: 'prior', epoch: structuredClone(ctx.state.epoch) };
-  ctx.state.nativeReopenEvidence = { kind: 'native-reopen-evidence', issueNodeId: 'issue', epoch: structuredClone(ctx.state.epoch) };
+  ctx.state.nativeReopenEvidence = { kind: 'native-reopen-evidence', issueNodeId: 'issue', epoch: structuredClone(ctx.state.epoch), reopenedAt: '2026-01-01T00:00:01Z' };
   const writeStep = async (snapshot, plan) => { await ctx.writeStep(snapshot, plan); ctx.state.previousComment.body += ' changed'; };
   assert.deepEqual(await runBootstrapStep({ readSnapshot: ctx.readSnapshot, writeStep }), { kind: 'blocked', reason: 'readback-conflict' });
   assert.equal(ctx.mutations.length, 1);

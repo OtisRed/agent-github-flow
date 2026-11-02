@@ -26,6 +26,21 @@ const project = () => ({ kind: 'snapshot', issueNodeId: 'issue', repository: 'ow
 const readers = () => ({ project: async () => project(), handoff: async () => ({ kind: 'evidence', handoff }),
   epoch: async ({ commentNodeId }) => proof(commentNodeId === old.nodeId ? old : handoff) });
 
+test('uses the initial cutover on legacy reopen with no previous checkpoint', async () => {
+  const value = input(); value.mode = 'reentry'; const r = readers(); const reopened = { kind: 'reopened', anchor: 'event' };
+  let seen; r.handoff = async args => { seen = args; return { kind: 'evidence', handoff: { kind: 'absent' } }; };
+  r.native = async () => ({ kind: 'native-reopen-evidence', issueNodeId: 'issue', epoch: reopened, reopenedAt: '2026-01-01T00:00:01Z' });
+  let result = await collectFlowSnapshot(value, r); assert.equal(result.kind, 'snapshot');
+  assert.equal(seen.cutoverAt, value.cutoverAt); assert.equal(result.cutoverAt, value.cutoverAt);
+  const current = project(); current.witness = { version: 3, kind: 'reentry', phase: 'pending', epoch: reopened, previous: null, fromStatus: 'done', cutoverAt: value.cutoverAt };
+  r.project = async () => current;
+  result = await collectFlowSnapshot(value, r); assert.equal(result.kind, 'snapshot'); assert.equal(seen.cutoverAt, value.cutoverAt);
+  current.witness.phase = 'ready'; value.mode = 'handoff';
+  result = await collectFlowSnapshot(value, r); assert.deepEqual(result, { kind: 'awaiting-handoff' });
+  value.cutoverAt = '2025-12-31T23:59:59Z';
+  result = await collectFlowSnapshot(value, r); assert.deepEqual(result, { kind: 'blocked', reason: 'cutover-changed' });
+});
+
 test('applies the fixed cutover only to the first handoff without checkpoints', async () => {
   const r = readers(); const value = input(); let seen;
   r.handoff = async args => { seen = args; return { kind: 'evidence', handoff }; };

@@ -16,7 +16,8 @@ const initial = () => {
     currentStatus: 'smoke', statusOptions: [{ id: 'smoke-id', name: 'smoke' }, { id: 'design-id', name: 'needs-design' }],
     epoch, marker, witness: { version: 1, current: marker, previous: null }, previousComment: { id: '1', nodeId: 'node1', body },
     handoff: { kind: 'absent' },
-    nativeReopenEvidence: { kind: 'native-reopen-evidence', issueNodeId: 'issue', epoch },
+    cutoverAt: '2026-01-01T00:00:00Z',
+    nativeReopenEvidence: { kind: 'native-reopen-evidence', issueNodeId: 'issue', epoch, reopenedAt: '2026-01-01T00:00:01Z' },
     checkpointEpochEvidence: { kind: 'checkpoint-epoch-evidence', relation: 'prior', issueNodeId: 'issue', commentId: '1',
       commentNodeId: 'node1', commentDigest: digest, epoch } };
 };
@@ -34,6 +35,14 @@ function harness() {
   return { state, mutations, readSnapshot: async () => structuredClone(state),
     writeStep: (snapshot, plan) => writeReentryGitHubStep({ graphql, snapshot, plan }) };
 }
+
+test('reports a conflict if cutover policy changes during a reopen write', async () => {
+  const ctx = harness(); ctx.state.cutoverAt = '2026-01-01T00:00:00Z';
+  ctx.state.nativeReopenEvidence.reopenedAt = '2026-01-01T00:00:01Z';
+  const writeStep = async (snapshot, plan) => { await ctx.writeStep(snapshot, plan); ctx.state.cutoverAt = '2026-01-01T00:00:01Z'; };
+  assert.deepEqual(await runReentryStep({ readSnapshot: ctx.readSnapshot, writeStep }), { kind: 'blocked', reason: 'readback-conflict' });
+  assert.equal(ctx.mutations.length, 1);
+});
 
 test('restarts from native reopen once and preserves issue text', async () => {
   const ctx = harness();

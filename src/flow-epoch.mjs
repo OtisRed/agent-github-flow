@@ -4,6 +4,7 @@ const timestamp = value => {
   const time = Date.parse(value);
   return Number.isFinite(time) && new Date(time).toISOString() === value.replace('Z', '.000Z') ? time : null;
 };
+export const parseFlowTimestamp = timestamp;
 
 // The reader must supply the complete ordered native close/reopen timeline
 // and bind handoffCreatedAt to the exact selected GitHub comment. This pure
@@ -62,7 +63,8 @@ export function verifyNativeReopen(input) {
   const result = verifyHandoffEpochAndAnchor({ ...input, handoffCreatedAt: input.observedAt });
   if (result.kind !== 'verified') return result;
   if (result.epoch.kind !== 'reopened') return blocked('no-reopen-event');
-  return { kind: 'native-reopen-evidence', issueNodeId: input.issueNodeId, epoch: result.epoch };
+  const reopened = [...input.events].reverse().find(event => event.type === 'REOPENED');
+  return { kind: 'native-reopen-evidence', issueNodeId: input.issueNodeId, epoch: result.epoch, reopenedAt: reopened.at };
 }
 
 // Classifies the exact checkpointed comment relative to the latest reopen.

@@ -10,7 +10,7 @@ const handoff = status => ({ kind: 'handoff', id: '12', nodeId: 'comment-node', 
 const bindHandoff = value => { value.handoffEpochEvidence = { kind: 'handoff-epoch-evidence', issueNodeId: value.issueNodeId,
   commentNodeId: value.handoff.nodeId, commentId: value.handoff.id, commentCreatedAt: value.handoff.createdAt, commentDigest: createHash('sha256').update(value.handoff.body).digest('hex'),
   epoch: structuredClone(value.epoch) }; };
-const bindReopen = value => { value.nativeReopenEvidence = { kind: 'native-reopen-evidence', issueNodeId: value.issueNodeId, epoch: structuredClone(value.epoch) }; };
+const bindReopen = value => { value.nativeReopenEvidence = { kind: 'native-reopen-evidence', issueNodeId: value.issueNodeId, epoch: structuredClone(value.epoch), reopenedAt: '2026-01-01T10:00:01Z' }; };
 const input = () => ({ complete: true, singleWriterVerified: true, projectSourceVerified: true, singleCardVerified: true,
   trusted: true, issueNodeId: 'issue-node', issueState: 'OPEN', currentStatus: 'needs-design',
   epoch: { kind: 'initial', anchor: 'issue-node' }, cutoverAt: '2026-01-01T10:00:00Z',
@@ -145,7 +145,10 @@ test('retains the previous comment evidence until a post-reopen bootstrap is com
     fromStatus: 'review', targetStatus: 'smoke' };
   value.epoch = { kind: 'reopened', anchor: 'reopen-node' };
   bindHandoff(value);
-  value.witness = { version: 2, kind: 'reentry', phase: 'ready', epoch: value.epoch, previous: old, fromStatus: 'done' };
+  value.witness = { version: 3, kind: 'reentry', phase: 'ready', epoch: value.epoch, previous: old, fromStatus: 'done', cutoverAt: value.cutoverAt };
+  value.cutoverAt = '2025-12-31T23:59:59Z';
+  assert.deepEqual(planBootstrap(value), { kind: 'blocked', reason: 'cutover-changed' });
+  value.cutoverAt = value.witness.cutoverAt;
   value.previousComment = { id: '1', nodeId: 'old-node', body: oldBody };
   value.checkpointEpochEvidence = { kind: 'checkpoint-epoch-evidence', relation: 'prior', issueNodeId: value.issueNodeId,
     commentId: '1', commentNodeId: 'old-node', commentDigest: old.digest, epoch: structuredClone(value.epoch) };

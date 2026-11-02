@@ -6,12 +6,43 @@ import { planReentry } from './flow-reentry.mjs';
 const oldBody = '[FLOW]\nRola: Smoker\nStan docelowy: smoke\nWykonano: Praca\nNastępny krok: Smoke';
 const old = { version: 1, phase: 'committed', commentId: '1', digest: createHash('sha256').update(oldBody).digest('hex'), fromStatus: 'review', targetStatus: 'smoke' };
 const input = () => ({ complete: true, singleWriterVerified: true, projectSourceVerified: true, singleCardVerified: true,
-  nativeReopenEvidence: { kind: 'native-reopen-evidence', issueNodeId: 'issue-node', epoch: { kind: 'reopened', anchor: 'reopen-node' } },
+  cutoverAt: '2026-01-01T10:00:00Z',
+  nativeReopenEvidence: { kind: 'native-reopen-evidence', issueNodeId: 'issue-node', epoch: { kind: 'reopened', anchor: 'reopen-node' }, reopenedAt: '2026-01-01T10:00:01Z' },
   issueNodeId: 'issue-node', issueState: 'OPEN', currentStatus: 'done',
   epoch: { kind: 'reopened', anchor: 'reopen-node' }, marker: old,
   witness: { version: 1, current: old, previous: null }, previousComment: { id: '1', nodeId: 'old-comment-node', body: oldBody },
   checkpointEpochEvidence: { kind: 'checkpoint-epoch-evidence', relation: 'prior', issueNodeId: 'issue-node',
     commentId: '1', commentNodeId: 'old-comment-node', commentDigest: old.digest, epoch: { kind: 'reopened', anchor: 'reopen-node' } } });
+
+test('never replays a historical reopen before or at the migration cutover', () => {
+  const value = input(); value.marker = null; value.witness = null;
+  value.cutoverAt = '2026-01-01T10:00:00Z';
+  for (const reopenedAt of ['2025-12-31T23:59:59Z', value.cutoverAt]) {
+    value.nativeReopenEvidence.reopenedAt = reopenedAt;
+    assert.deepEqual(planReentry(value), { kind: 'blocked', reason: 'reopen-before-or-at-cutover' });
+  }
+  value.nativeReopenEvidence.reopenedAt = '2026-01-01T10:00:01Z';
+  assert.equal(planReentry(value).kind, 'start-reentry');
+  value.cutoverAt = 'invalid';
+  assert.deepEqual(planReentry(value), { kind: 'blocked', reason: 'invalid-policy' });
+  value.cutoverAt = '2026-01-01T10:00:00Z'; delete value.nativeReopenEvidence.reopenedAt;
+  assert.deepEqual(planReentry(value), { kind: 'blocked', reason: 'unverified-native-reopen' });
+});
+
+test('freezes cutover in the reopen sentinel across resumptions', () => {
+  const value = input(); value.marker = null; value.witness = null;
+  const plan = planReentry(value); assert.equal(plan.kind, 'start-reentry');
+  assert.equal(plan.witness.cutoverAt, value.cutoverAt);
+  value.witness = plan.witness; value.cutoverAt = '2025-12-31T23:59:59Z';
+  assert.deepEqual(planReentry(value), { kind: 'blocked', reason: 'cutover-changed' });
+});
+
+test('does not silently resume an older sentinel without a recorded cutover', () => {
+  const value = input(); value.marker = null; value.witness = null;
+  const plan = planReentry(value); value.witness = { ...plan.witness, version: 2 };
+  delete value.witness.cutoverAt;
+  assert.deepEqual(planReentry(value), { kind: 'blocked', reason: 'checkpoint-mismatch' });
+});
 
 test('reentry recovers every step and never resets progress after ready', () => {
   const value = input();
@@ -91,7 +122,7 @@ test('recovers the observed pending agent-ready fixture after a later reopen', (
 
 test('supersedes a finished older reopen after a second verified reopen', () => {
   const value = input(); value.marker = null; value.currentStatus = 'needs-design';
-  value.witness = { version: 2, kind: 'reentry', phase: 'ready', epoch: structuredClone(value.epoch), previous: old, fromStatus: 'done' };
+  value.witness = { version: 3, kind: 'reentry', phase: 'ready', epoch: structuredClone(value.epoch), previous: old, fromStatus: 'done', cutoverAt: value.cutoverAt };
   value.epoch = { kind: 'reopened', anchor: 'reopen-2' };
   value.nativeReopenEvidence.epoch = structuredClone(value.epoch);
   value.checkpointEpochEvidence.epoch = structuredClone(value.epoch);

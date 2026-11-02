@@ -6,7 +6,7 @@ import { collectHandoffEvidence } from './flow-handoff-reader.mjs';
 import { collectEpochEvidence, collectCheckpointEpochEvidence } from './flow-epoch-reader.mjs';
 import { collectNativeReopenEvidence } from './flow-native-epoch-reader.mjs';
 import { matchesHandoffEpoch } from './flow-epoch-proof.mjs';
-import { checkpointEvidenceMatches } from './flow-reentry-types.mjs';
+import { checkpointEvidenceMatches, isReentryWitness } from './flow-reentry-types.mjs';
 import { isFlowMarker } from './flow-recovery.mjs';
 
 const blocked = reason => ({ kind: 'blocked', reason });
@@ -53,9 +53,12 @@ export async function collectFlowSnapshot(input, readers = {}, options = {}) {
   if (first.issueNodeId !== input.issueId || first.repository?.toLowerCase() !== input.repository.toLowerCase()) return blocked('issue-mismatch');
   const previousMarker = checkpoint(first.witness);
   if (previousMarker === undefined || (previousMarker !== null && !isFlowMarker(previousMarker))) return blocked('invalid-checkpoint');
+  if (isReentryWitness(first.witness) && first.witness.cutoverAt !== input.cutoverAt) return blocked('cutover-changed');
+  const noPrevious = first.marker === null && (first.witness === null
+    || (isReentryWitness(first.witness) && first.witness.previous === null));
   let comments;
   try { comments = await handoffReader({ ...args, trustedAuthorIds: input.trustedAuthorIds,
-    ...(input.mode === 'handoff' && first.marker === null && first.witness === null ? { cutoverAt: input.cutoverAt } : {}),
+    ...(noPrevious ? { cutoverAt: input.cutoverAt } : {}),
     ...(previousMarker ? { checkpointCommentId: previousMarker.commentId } : {}) }); } catch { return blocked('handoff-read-failed'); }
   if (comments?.kind !== 'evidence') return blocked('handoff-read-failed');
   if (previousMarker && (!comments.previousComment || comments.previousComment.id !== previousMarker.commentId
@@ -68,7 +71,7 @@ export async function collectFlowSnapshot(input, readers = {}, options = {}) {
     let native;
     try { native = await nativeReader({ ...args, issueNodeId: input.issueId }); } catch { return blocked('native-read-failed'); }
     if (native?.kind !== 'native-reopen-evidence' || native.issueNodeId !== input.issueId) return blocked('native-read-failed');
-    output.epoch = native.epoch; output.nativeReopenEvidence = native;
+    output.epoch = native.epoch; output.nativeReopenEvidence = native; output.cutoverAt = input.cutoverAt;
     if (previousMarker) {
       let evidence;
       try { evidence = await checkpointReader({ ...args, commentNodeId: comments.previousComment.nodeId, commentId: previousMarker.commentId }); }
@@ -79,7 +82,8 @@ export async function collectFlowSnapshot(input, readers = {}, options = {}) {
     }
   } else {
     if (comments.handoff?.kind === 'absent') {
-      if (first.marker !== null || first.witness !== null) return blocked('missing-checkpointed-handoff');
+      const freshReentry = isReentryWitness(first.witness) && first.witness.phase === 'ready' && noPrevious;
+      if (first.marker !== null || (first.witness !== null && !freshReentry)) return blocked('missing-checkpointed-handoff');
       let final; try { final = await projectReader(input); } catch { return blocked('project-read-failed'); }
       return final && isDeepStrictEqual(first, final) ? { kind: 'awaiting-handoff' } : blocked('project-snapshot-changed');
     }

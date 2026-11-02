@@ -76,10 +76,21 @@ test('reports no handoff without creating a checkpoint', async () => {
 
 test('routes native reopen separately and requires its bound evidence', async () => {
   const ctx = harness(); ctx.state.epoch = { kind: 'reopened', anchor: 'reopen' };
-  ctx.state.witness = { version: 2, kind: 'reentry', phase: 'ready', epoch: structuredClone(ctx.state.epoch), previous: null, fromStatus: 'done' };
+  ctx.state.witness = { version: 3, kind: 'reentry', phase: 'ready', epoch: structuredClone(ctx.state.epoch), previous: null, fromStatus: 'done', cutoverAt: ctx.state.cutoverAt };
   const missing = await runFlowCycle({ mode: 'reentry', ...ctx });
   assert.deepEqual(missing, { kind: 'blocked', reason: 'unverified-native-reopen', steps: [] });
-  ctx.state.nativeReopenEvidence = { kind: 'native-reopen-evidence', issueNodeId: 'issue', epoch: structuredClone(ctx.state.epoch) };
+  ctx.state.nativeReopenEvidence = { kind: 'native-reopen-evidence', issueNodeId: 'issue', epoch: structuredClone(ctx.state.epoch), reopenedAt: '2026-01-01T00:00:01Z' };
   const ready = await runFlowCycle({ mode: 'reentry', ...ctx });
   assert.deepEqual(ready, { kind: 'complete', outcome: 'already-reentered', steps: [] }); assert.equal(ctx.writes(), 0);
+});
+
+test('never resets a real-looking active card for a historical reopen', async () => {
+  const ctx = harness(); ctx.state.epoch = { kind: 'reopened', anchor: 'old-event' };
+  ctx.state.currentStatus = 'smoke'; ctx.state.marker = null; ctx.state.witness = null;
+  ctx.state.cutoverAt = '2026-01-01T00:00:00Z';
+  ctx.state.nativeReopenEvidence = { kind: 'native-reopen-evidence', issueNodeId: 'issue',
+    epoch: structuredClone(ctx.state.epoch), reopenedAt: '2025-12-31T23:59:59Z' };
+  assert.deepEqual(await runFlowCycle({ mode: 'reentry', ...ctx }),
+    { kind: 'blocked', reason: 'reopen-before-or-at-cutover', steps: [] });
+  assert.equal(ctx.state.currentStatus, 'smoke'); assert.equal(ctx.writes(), 0);
 });
