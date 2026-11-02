@@ -1,0 +1,29 @@
+name: Rotation slot selection probe
+on:
+  workflow_call:
+    secrets:
+      PROBE_A:
+        required: false
+      PROBE_B:
+        required: false
+permissions:
+  contents: read
+jobs:
+  selected-slot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: rotation-probe
+    steps:
+      - name: Verify selected synthetic slot
+        env:
+          PROBE_SLOT: ${{ vars.PROBE_SLOT }}
+          PROBE_VALUE: ${{ secrets[vars.PROBE_SLOT] }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$PROBE_SLOT" in
+            PROBE_A) [[ "$PROBE_VALUE" == "dummy-a-for-rotation-probe" ]] ;;
+            PROBE_B) [[ "$PROBE_VALUE" == "dummy-b-for-rotation-probe" ]] ;;
+            *) echo 'Invalid slot'; exit 1 ;;
+          esac
+          echo 'Selected synthetic slot matched'
