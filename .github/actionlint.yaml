@@ -1,0 +1,8 @@
+# actionlint 1.7.12 lacks these documented GitHub.com job context fields:
+# https://github.com/rhysd/actionlint/issues/757
+# Limit the exception to this workflow and these two exact diagnostics.
+paths:
+  .github/workflows/flow-relay.yml:
+    ignore:
+      - '^property "workflow_repository" is not defined in object type '
+      - '^property "workflow_sha" is not defined in object type '

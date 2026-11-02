@@ -8,3 +8,4 @@
 - [Odczytowy preflight dostępów](docs/access-preflight.md) — kontrakt przygotowywanego workflow i granice dowodów.
 - [CI repozytorium](docs/ci.md) — zakres kontroli, bootstrap i odzyskiwanie.
 - [Odczytowy odbiornik zdarzeń](docs/event-preflight.md) — zakres diagnostyki, prywatność i warunki wdrożenia.
+- [Współdzielony nadawca sygnału](docs/shared-relay.md) — konfiguracja, granice i testy.
