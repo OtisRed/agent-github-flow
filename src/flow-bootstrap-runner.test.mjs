@@ -30,7 +30,11 @@ function harness() {
     else { assert.equal(variables.field, 'status-field'); assert.equal(variables.value.singleSelectOptionId, 'ready-id'); state.currentStatus = 'agent-ready'; }
     return { data: { updateProjectV2ItemFieldValue: { projectV2Item: { id: 'item' } } } };
   };
-  return { state, mutations, readSnapshot: async () => structuredClone(state),
+  return { state, mutations, readSnapshot: async options => ({ ...structuredClone(state), ...(options?.readbackCheckpoint ? {
+    readbackPreviousComment: structuredClone(state.previousComment),
+    readbackPreviousEpochEvidence: structuredClone(state.checkpointEpochEvidence ?? state.previousEpochEvidence),
+    readbackNativeReopenEvidence: structuredClone(state.nativeReopenEvidence ?? null),
+  } : {}) }),
     writeStep: (snapshot, plan) => writeBootstrapGitHubStep({ graphql, snapshot, plan }) };
 }
 

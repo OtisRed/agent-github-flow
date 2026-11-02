@@ -23,16 +23,27 @@ const initial = () => {
 };
 function harness() {
   const state = initial(); const mutations = [];
+  const originalComment = state.previousComment; const originalEvidence = state.previousEpochEvidence;
   const graphql = async (query, variables) => {
     mutations.push({ query, variables: structuredClone(variables) });
     if (query === ISSUE_WRITE) { state.issueBody = variables.body; state.marker = readFlowMarker(variables.body).marker;
       return { data: { updateIssue: { issue: { id: 'issue' } } } }; }
     assert.equal(query, PROJECT_WRITE); assert.equal(variables.project, 'project'); assert.equal(variables.item, 'item');
-    if (variables.field === 'checkpoint-field') state.witness = JSON.parse(variables.value.text);
+    if (variables.field === 'checkpoint-field') {
+      state.witness = JSON.parse(variables.value.text);
+      if (state.witness.current.phase === 'committed') {
+        const { kind, ...currentComment } = state.handoff; state.previousComment = currentComment;
+        state.previousEpochEvidence = structuredClone(state.handoffEpochEvidence);
+      }
+    }
     else { assert.equal(variables.field, 'status-field'); assert.equal(variables.value.singleSelectOptionId, 'review-id'); state.currentStatus = 'review'; }
     return { data: { updateProjectV2ItemFieldValue: { projectV2Item: { id: 'item' } } } };
   };
-  return { state, mutations, readSnapshot: async () => structuredClone(state),
+  return { state, mutations, readSnapshot: async options => ({ ...structuredClone(state), ...(options?.readbackCheckpoint ? {
+    readbackPreviousComment: structuredClone(options.readbackCheckpoint.marker.commentId === originalComment.id ? originalComment : state.previousComment),
+    readbackPreviousEpochEvidence: structuredClone(options.readbackCheckpoint.marker.commentId === originalComment.id ? originalEvidence : state.previousEpochEvidence),
+    readbackNativeReopenEvidence: structuredClone(state.nativeReopenEvidence ?? null),
+  } : {}) }),
     writeStep: (snapshot, plan) => writeTransitionGitHubStep({ graphql, snapshot, plan }) };
 }
 

@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { planNextHandoff } from './flow-next-handoff.mjs';
 import { planWitnessRecovery } from './flow-witness.mjs';
 import { replaceFlowMarker } from './flow-marker.mjs';
+import { makeReadbackCheckpoint } from './flow-readback-evidence.mjs';
 
 const blocked = reason => ({ kind: 'blocked', reason });
 const projectSteps = new Set(['start-handoff', 'commit-project-checkpoint']);
@@ -41,15 +42,20 @@ export async function runTransitionStep({ readSnapshot, writeStep }) {
     if (update.kind !== 'updated') return blocked('marker-conflict');
     expectedBody = update.body;
   }
+  const readbackCheckpoint = makeReadbackCheckpoint(fresh);
+  if (fresh.previousComment && !readbackCheckpoint) return blocked('invalid-readback-checkpoint');
   try { await writeStep(fresh, plan); } catch { return blocked('write-uncertain'); }
   let after;
   // The committed Project checkpoint discards `previous`; the reader must
   // nevertheless re-read the exact previous comment once after that write.
-  try { after = await readSnapshot({ checkpointCommentId: fresh.previousComment?.id }); } catch { return blocked('readback-failed'); }
+  try { after = await readSnapshot({ readbackCheckpoint }); } catch { return blocked('readback-failed'); }
   if (after?.kind !== 'snapshot') return blocked('readback-failed');
   const stableKeys = ['projectId', 'itemId', 'issueNodeId', 'repository', 'statusFieldId', 'checkpointFieldId',
-    'issueState', 'epoch', 'handoff', 'handoffEpochEvidence', 'previousComment', 'previousEpochEvidence'];
+    'issueState', 'epoch', 'handoff', 'handoffEpochEvidence'];
   if (stableKeys.some(key => !isDeepStrictEqual(fresh[key], after[key]))) return blocked('readback-conflict');
+  if (readbackCheckpoint && (!isDeepStrictEqual(fresh.previousComment, after.readbackPreviousComment)
+    || !isDeepStrictEqual(readbackCheckpoint.epochEvidence, after.readbackPreviousEpochEvidence)
+    || !isDeepStrictEqual(readbackCheckpoint.nativeReopenEvidence, after.readbackNativeReopenEvidence ?? null))) return blocked('readback-conflict');
   const expectedWitness = projectSteps.has(plan.kind) ? transitionProjectValue(plan) : fresh.witness;
   const expectedMarker = issueSteps.has(plan.kind) ? plan.marker : fresh.marker;
   const expectedStatus = plan.kind === 'update-status' ? plan.targetStatus : fresh.currentStatus;
