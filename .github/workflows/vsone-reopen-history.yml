@@ -1,0 +1,85 @@
+name: VSone historical reopen probe
+on:
+  push:
+    branches: [spike/workflow-call-allowed]
+    paths: [.github/workflows/vsone-reopen-history.yml]
+permissions:
+  contents: read
+jobs:
+  historical-replay:
+    if: github.ref == 'refs/heads/spike/workflow-call-allowed'
+    runs-on: ubuntu-24.04
+    environment: split-app-probe
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact read-only candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 3e98c71dffd4e2b53831535dd6c6725f4a8afdef
+          persist-credentials: false
+      - name: Verify exact revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$(git rev-parse HEAD)" != '3e98c71dffd4e2b53831535dd6c6725f4a8afdef' ]]; then
+            echo 'Probe: revision mismatch'; exit 1
+          fi
+      - name: Create read-only App token
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: '4681815'
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: OtisRed
+          repositories: ${{ secrets.VSONE_PROBE_REPOSITORY }}
+          permission-issues: read
+      - name: Replay a past reopen without mutating the issue
+        env:
+          ISSUE_TOKEN: ${{ steps.app.outputs.token }}
+          TARGET_ISSUE: ${{ secrets.VSONE_HISTORY_ISSUE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { spawnSync } from 'node:child_process';
+          import { isDeepStrictEqual } from 'node:util';
+          import { verifyNativeReopen } from './src/flow-epoch.mjs';
+          import { planReentry } from './src/flow-reentry.mjs';
+          try {
+            const e = process.env;
+            const issue = /^([A-Za-z0-9-]+)\/([A-Za-z0-9_.-]+)\/issues\/([1-9][0-9]*)$/.exec(e.TARGET_ISSUE ?? '');
+            if (!issue || !e.ISSUE_TOKEN) throw Error('configuration');
+            const query = 'query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){issue(number:$number){id state createdAt updatedAt timelineItems(first:100,itemTypes:[CLOSED_EVENT,REOPENED_EVENT]){totalCount pageInfo{hasNextPage} nodes{__typename ... on ClosedEvent{id createdAt} ... on ReopenedEvent{id createdAt}}}}}}';
+            function readIssue() {
+              const env = { PATH: e.PATH, HOME: e.HOME, GH_TOKEN: e.ISSUE_TOKEN, GH_PROMPT_DISABLED: '1' };
+              const result = spawnSync('gh', ['api', 'graphql', '--input', '-'], { env,
+                input: JSON.stringify({ query, variables: { owner: issue[1], repo: issue[2], number: Number(issue[3]) } }),
+                encoding: 'utf8', timeout: 30000, maxBuffer: 8000000 });
+              if (result.status !== 0) throw Error('read');
+              const response = JSON.parse(result.stdout);
+              if (response.errors?.length) throw Error('read');
+              return response.data?.repository?.issue;
+            }
+            const first = readIssue();
+            if (first?.state !== 'CLOSED' || first.timelineItems?.pageInfo?.hasNextPage !== false
+              || first.timelineItems.nodes.length !== first.timelineItems.totalCount) throw Error('history');
+            const events = first.timelineItems.nodes.map(node => ({ id: node.id, at: node.createdAt,
+              type: node.__typename === 'ClosedEvent' ? 'CLOSED' : node.__typename === 'ReopenedEvent' ? 'REOPENED' : 'UNKNOWN' }));
+            const lastReopen = events.findLastIndex(event => event.type === 'REOPENED');
+            if (lastReopen < 0) throw Error('history');
+            // Only replay the past prefix in memory; the actual issue remains closed.
+            const native = verifyNativeReopen({ complete: true, issueNodeId: first.id, issueState: 'OPEN',
+              issueCreatedAt: first.createdAt, observedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+              events: events.slice(0, lastReopen + 1) });
+            if (native.kind !== 'native-reopen-evidence') throw Error('evidence');
+            // Fixture trust flags are inputs to the pure planner, not operational authorization.
+            const result = planReentry({ complete: true, singleWriterVerified: true, projectSourceVerified: true, singleCardVerified: true,
+              nativeReopenEvidence: native, issueNodeId: first.id, issueState: 'OPEN', currentStatus: 'smoke',
+              epoch: native.epoch, marker: null, witness: null, cutoverAt: '2026-11-02T00:00:00Z' });
+            if (result.kind !== 'blocked' || result.reason !== 'reopen-before-or-at-cutover') throw Error('result');
+            if (!isDeepStrictEqual(first, readIssue())) throw Error('changed');
+            console.log('Probe: historical reopen blocked; issue remained closed');
+          } catch {
+            console.error('Probe: historical replay unavailable'); process.exitCode = 1;
+          }
+          NODE
