@@ -44,5 +44,6 @@ jobs:
           const checkpoint = fields.nodes.filter(field => field.name === 'FLOW checkpoint');
           if (checkpoint.length === 0) console.log('Readiness blocked: checkpoint field missing');
           else if (checkpoint.length > 1) console.log('Readiness blocked: ambiguous checkpoint field');
-          else console.log('Readiness: checkpoint field present; type and trust remain unverified');
+          else if (checkpoint[0].__typename !== 'ProjectV2Field' || checkpoint[0].dataType !== 'TEXT') console.log('Readiness blocked: checkpoint field has wrong type');
+          else console.log('Readiness: checkpoint text field present; trust and ownership remain unverified');
           NODE
