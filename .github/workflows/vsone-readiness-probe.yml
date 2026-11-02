@@ -26,7 +26,7 @@ jobs:
           node --input-type=module <<'NODE'
           import { readFile } from 'node:fs/promises';
           const document = JSON.parse(await readFile(process.env.RUNNER_TEMP + '/project-fields.json', 'utf8'));
-          if (!Array.isArray(document.fields)) throw Error('Readiness: incomplete field list');
+          if (!Array.isArray(document.fields) || document.fields.length >= 100) throw Error('Readiness: incomplete field list');
           const status = document.fields.filter(field => field.name === 'Status');
           const expected = ['decision-gate', 'needs-design', 'audit', 'spike', 'agent-ready', 'review', 'smoke', 'done'];
           if (status.length !== 1 || status[0].type !== 'ProjectV2SingleSelectField'
@@ -38,5 +38,6 @@ jobs:
           console.log('Readiness: Status options match the common model');
           const checkpoint = document.fields.filter(field => field.name === 'FLOW checkpoint');
           if (checkpoint.length === 0) console.log('Readiness blocked: checkpoint field missing');
+          else if (checkpoint.length > 1) console.log('Readiness blocked: ambiguous checkpoint field');
           else console.log('Readiness: checkpoint field present; type and trust remain unverified');
           NODE
