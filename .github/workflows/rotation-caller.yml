@@ -1,0 +1,12 @@
+name: Rotation probe caller
+on:
+  push:
+    branches: [spike/rotation-caller, spike/rotation-denied]
+permissions:
+  contents: read
+jobs:
+  call-rotation-probe:
+    uses: OtisRed/agent-github-flow/.github/workflows/rotation-probe.yml@446e20f40fcd6dd477936f3953b93d6cd16a8099
+    secrets:
+      PROBE_A: ${{ secrets.PROBE_A }}
+      PROBE_B: ${{ secrets.PROBE_B }}
