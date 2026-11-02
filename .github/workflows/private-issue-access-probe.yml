@@ -32,5 +32,8 @@ jobs:
           issue=$(gh api graphql -f query='query { node(id:"I_kwDOVf8g0M8AAAABbyzYEg") { ... on Issue { number repository { nameWithOwner isPrivate } } } }' \
             --jq '.data.node | select(.number == 1 and .repository.isPrivate == true and .repository.nameWithOwner == "OtisRed/agf-isolated-bootstrap-test-20261102") | .number' 2>/dev/null) || issue=''
           if [[ "$issue" == '1' ]]; then echo 'Probe: private issue metadata read confirmed'; else echo 'Probe: private issue unavailable or mismatched'; failed=1; fi
+          rest_binding=$(gh api -H 'X-GitHub-Api-Version: 2026-03-10' 'users/OtisRed/projectsV2/13/items?per_page=100' \
+            --jq '[.[] | select(.node_id == "PVTI_lAHOAbWL0M4Bp0LzzhFWfD8" and .content_type == "Issue" and .content.node_id == "I_kwDOVf8g0M8AAAABbyzYEg")] | length' 2>/dev/null) || rest_binding=''
+          if [[ "$rest_binding" == '1' ]]; then echo 'Probe: REST private issue binding confirmed'; else echo 'Probe: REST private issue binding unavailable'; failed=1; fi
           if [[ "$item_meta" != 'PVTI_lAHOAbWL0M4Bp0LzzhFWfD8' ]]; then failed=1; fi
           exit "$failed"
