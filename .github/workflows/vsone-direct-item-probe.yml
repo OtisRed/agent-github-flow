@@ -1,0 +1,43 @@
+name: VSone direct Project item probe
+on:
+  push:
+    branches: [spike/workflow-call-allowed]
+    paths: [.github/workflows/vsone-direct-item-probe.yml]
+permissions: {}
+jobs:
+  direct-item:
+    if: github.ref == 'refs/heads/spike/workflow-call-allowed'
+    runs-on: ubuntu-24.04
+    environment: split-app-probe
+    timeout-minutes: 5
+    steps:
+      - name: Check one Project item without mutation
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_ACCESS_TOKEN }}
+          ITEM_ID: ${{ secrets.VSONE_PROBE_ITEM_ID }}
+          ISSUE_ID: ${{ secrets.VSONE_PROBE_ISSUE_ID }}
+          PROJECT_ID: ${{ secrets.VSONE_PROBE_PROJECT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" || -z "${ITEM_ID:-}" || -z "${ISSUE_ID:-}" || -z "${PROJECT_ID:-}" ]]; then
+            echo 'Probe: missing configuration'; exit 1
+          fi
+          gh api graphql \
+            -f query='query($item:ID!) { node(id:$item) { ... on ProjectV2Item { id isArchived project { id } content { __typename ... on Issue { id } } } } }' \
+            -f item="$ITEM_ID" > "$RUNNER_TEMP/direct-item.json" 2>/dev/null || {
+              echo 'Probe: direct item unavailable'; exit 0
+            }
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          const result = JSON.parse(await readFile(process.env.RUNNER_TEMP + '/direct-item.json', 'utf8'));
+          const item = result?.data?.node;
+          if (result.errors?.length || !item || item.id !== process.env.ITEM_ID
+            || item.project?.id !== process.env.PROJECT_ID || item.isArchived !== false) {
+            console.log('Probe: direct item unverified');
+          } else if (item.content?.__typename === 'Issue' && item.content.id === process.env.ISSUE_ID) {
+            console.log('Probe: direct item identity matched');
+          } else {
+            console.log('Probe: direct content identity unavailable');
+          }
+          NODE
