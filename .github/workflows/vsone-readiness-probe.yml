@@ -23,29 +23,25 @@ jobs:
           fi
           project_number="${PROJECT_BINDING##*/}"
           project_owner="${PROJECT_BINDING%%/*}"
-          gh project field-list "$project_number" --owner "$project_owner" --format json --limit 100 \
-            > "$RUNNER_TEMP/project-fields.json" 2>"$RUNNER_TEMP/project-error.txt" || {
-            if grep -qi 'unknown owner type' "$RUNNER_TEMP/project-error.txt"; then echo 'Readiness: gh owner-type error';
-            elif grep -qiE '401|bad credentials|authentication' "$RUNNER_TEMP/project-error.txt"; then echo 'Readiness: authentication error';
-            elif grep -qiE '403|forbidden|scope' "$RUNNER_TEMP/project-error.txt"; then echo 'Readiness: authorization error';
-            elif grep -qiE '404|not found|could not resolve' "$RUNNER_TEMP/project-error.txt"; then echo 'Readiness: Project not found or hidden';
-            else echo 'Readiness: unclassified Project read failure'; fi
-            exit 1
-          }
+          gh api graphql \
+            -f query='query($owner:String!,$number:Int!) { user(login:$owner) { projectV2(number:$number) { fields(first:100) { nodes { __typename ... on ProjectV2Field { name dataType } ... on ProjectV2SingleSelectField { name dataType options { name } } ... on ProjectV2IterationField { name dataType } } pageInfo { hasNextPage } } } } }' \
+            -f owner="$project_owner" -F number="$project_number" \
+            > "$RUNNER_TEMP/project-fields.json" 2>/dev/null || { echo 'Readiness: Project GraphQL read failed'; exit 1; }
           node --input-type=module <<'NODE'
           import { readFile } from 'node:fs/promises';
           const document = JSON.parse(await readFile(process.env.RUNNER_TEMP + '/project-fields.json', 'utf8'));
-          if (!Array.isArray(document.fields) || document.fields.length >= 100) throw Error('Readiness: incomplete field list');
-          const status = document.fields.filter(field => field.name === 'Status');
+          const fields = document?.data?.user?.projectV2?.fields;
+          if (!fields || fields.pageInfo?.hasNextPage !== false || !Array.isArray(fields.nodes)) throw Error('Readiness: incomplete field list');
+          const status = fields.nodes.filter(field => field.name === 'Status');
           const expected = ['decision-gate', 'needs-design', 'audit', 'spike', 'agent-ready', 'review', 'smoke', 'done'];
-          if (status.length !== 1 || status[0].type !== 'ProjectV2SingleSelectField'
+          if (status.length !== 1 || status[0].__typename !== 'ProjectV2SingleSelectField'
             || !Array.isArray(status[0].options)
             || new Set(status[0].options.map(option => option.name)).size !== expected.length
             || expected.some(name => !status[0].options.some(option => option.name === name))) {
             throw Error('Readiness: Status configuration mismatched');
           }
           console.log('Readiness: Status options match the common model');
-          const checkpoint = document.fields.filter(field => field.name === 'FLOW checkpoint');
+          const checkpoint = fields.nodes.filter(field => field.name === 'FLOW checkpoint');
           if (checkpoint.length === 0) console.log('Readiness blocked: checkpoint field missing');
           else if (checkpoint.length > 1) console.log('Readiness blocked: ambiguous checkpoint field');
           else console.log('Readiness: checkpoint field present; type and trust remain unverified');
