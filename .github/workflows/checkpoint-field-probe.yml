@@ -1,0 +1,75 @@
+name: Isolated checkpoint field probe
+on:
+  push:
+    branches: [spike/workflow-call-allowed]
+    paths: [.github/workflows/checkpoint-field-probe.yml]
+permissions: {}
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    environment: pat-probe
+    timeout-minutes: 4
+    steps:
+      - name: Write and verify synthetic checkpoint on test card
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const project = 'PVT_kwHOAbWL0M4BpzuL';
+          const item = 'PVTI_lAHOAbWL0M4BpzuLzhFVo4c';
+          const field = 'PVTF_lAHOAbWL0M4BpzuLzhoNmGM';
+          const prior = { version: 1, phase: 'committed', commentId: '10001', digest: 'a'.repeat(64), fromStatus: 'needs-design', targetStatus: 'agent-ready' };
+          const current = { version: 1, phase: 'pending', commentId: '10002', digest: 'b'.repeat(64), fromStatus: 'agent-ready', targetStatus: 'review' };
+          const readQuery = `query($item: ID!, $field: ID!) {
+            node(id: $item) { ... on ProjectV2Item {
+            id isArchived project { id public number title }
+            content { __typename ... on DraftIssue { title body } }
+            checkpoint: fieldValueByName(name: "Flow checkpoint probe") { ... on ProjectV2ItemFieldTextValue { text } }
+            status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+            } }
+            configuredField: node(id: $field) { ... on ProjectV2Field { id name dataType project { id } } }
+          }`;
+          const writeQuery = `mutation($project: ID!, $item: ID!, $field: ID!, $value: String!) {
+            updateProjectV2ItemFieldValue(input: { projectId: $project, itemId: $item, fieldId: $field, value: { text: $value } }) { projectV2Item { id } }
+          }`;
+          async function api(query, variables) {
+            const response = await fetch('https://api.github.com/graphql', {
+              method: 'POST', headers: { Authorization: `Bearer ${process.env.GH_TOKEN}`, 'Content-Type': 'application/json', 'User-Agent': 'agent-github-flow-checkpoint-probe' },
+              body: JSON.stringify({ query, variables }),
+            });
+            if (!response.ok) throw new Error('GraphQL request failed');
+            const result = await response.json();
+            if (result.errors?.length || !result.data) throw new Error('GraphQL request failed');
+            return result.data;
+          }
+          async function read(expected) {
+            const data = await api(readQuery, { item, field });
+            const node = data.node;
+            const configuredField = data.configuredField;
+            if (!node || node.id !== item || node.isArchived !== false || node.project?.id !== project || node.project?.public !== false
+              || node.project?.number !== 12 || node.project?.title !== 'AGF Actions checkpoint probe (temporary)'
+              || node.content?.__typename !== 'DraftIssue' || node.content?.title !== 'Temporary Actions checkpoint probe card'
+              || node.content?.body !== 'Synthetic data only' || node.status?.name !== 'Todo'
+              || configuredField?.id !== field || configuredField?.name !== 'Flow checkpoint probe'
+              || configuredField?.dataType !== 'TEXT' || configuredField?.project?.id !== project
+              || (node.checkpoint?.text ?? null) !== expected) throw new Error('Unexpected test card state');
+          }
+          async function write(value) {
+            const data = await api(writeQuery, { project, item, field, value });
+            if (data.updateProjectV2ItemFieldValue?.projectV2Item?.id !== item) throw new Error('Unexpected write result');
+          }
+          (async () => {
+            if (!process.env.GH_TOKEN) throw new Error('Missing credential');
+            const pending = JSON.stringify({ version: 1, current, previous: prior });
+            const committed = JSON.stringify({ version: 1, current: { ...current, phase: 'committed' }, previous: null });
+            await read(null);
+            await write(pending);
+            await read(pending);
+            console.log('Pending checkpoint: exact readback; status unchanged');
+            await write(committed);
+            await read(committed);
+            console.log('Committed checkpoint: exact readback; status unchanged');
+          })().catch(() => { console.error('Probe failed; inspect test card before any retry'); process.exitCode = 1; });
+          NODE
