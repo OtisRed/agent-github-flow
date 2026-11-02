@@ -1,0 +1,45 @@
+name: VSone Project readiness probe
+on:
+  push:
+    branches: [spike/workflow-call-allowed]
+    paths: [.github/workflows/vsone-readiness-probe.yml]
+permissions: {}
+jobs:
+  read-project-fields:
+    if: github.ref == 'refs/heads/spike/workflow-call-allowed'
+    runs-on: ubuntu-24.04
+    environment: pat-probe
+    timeout-minutes: 5
+    steps:
+      - name: Read Project schema without mutation
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_ACCESS_TOKEN }}
+          PROJECT_BINDING: ${{ secrets.AGF_PROBE_PROJECT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" || ! "${PROJECT_BINDING:-}" =~ ^[a-zA-Z0-9_-]+/project/[0-9]+$ ]]; then
+            echo 'Readiness: missing credentials or configuration'; exit 1
+          fi
+          project_number="${PROJECT_BINDING##*/}"
+          project_owner="${PROJECT_BINDING%%/*}"
+          gh project field-list "$project_number" --owner "$project_owner" --format json --limit 100 \
+            > "$RUNNER_TEMP/project-fields.json" 2>/dev/null || { echo 'Readiness: Project read failed'; exit 1; }
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          const document = JSON.parse(await readFile(process.env.RUNNER_TEMP + '/project-fields.json', 'utf8'));
+          if (!Array.isArray(document.fields) || document.fields.length >= 100) throw Error('Readiness: incomplete field list');
+          const status = document.fields.filter(field => field.name === 'Status');
+          const expected = ['decision-gate', 'needs-design', 'audit', 'spike', 'agent-ready', 'review', 'smoke', 'done'];
+          if (status.length !== 1 || status[0].type !== 'ProjectV2SingleSelectField'
+            || !Array.isArray(status[0].options)
+            || new Set(status[0].options.map(option => option.name)).size !== expected.length
+            || expected.some(name => !status[0].options.some(option => option.name === name))) {
+            throw Error('Readiness: Status configuration mismatched');
+          }
+          console.log('Readiness: Status options match the common model');
+          const checkpoint = document.fields.filter(field => field.name === 'FLOW checkpoint');
+          if (checkpoint.length === 0) console.log('Readiness blocked: checkpoint field missing');
+          else if (checkpoint.length > 1) console.log('Readiness blocked: ambiguous checkpoint field');
+          else console.log('Readiness: checkpoint field present; type and trust remain unverified');
+          NODE
