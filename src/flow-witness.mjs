@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isFlowMarker, planRecovery } from './flow-recovery.mjs';
+import { matchesHandoffEpoch } from './flow-epoch-proof.mjs';
 
 const blocked = reason => ({ kind: 'blocked', reason });
 const same = (a, b) => isFlowMarker(a) && isFlowMarker(b)
@@ -26,14 +27,15 @@ export function planWitnessRecovery(input) {
     if (!isFlowMarker(witness.previous) || witness.previous.phase !== 'committed'
       || witness.previous.targetStatus !== current.fromStatus
       || witness.previous.commentId === current.commentId) return blocked('invalid-project-checkpoint');
-    if (snapshot.previousEpochVerified !== true) return blocked('unverified-previous-epoch');
     if (!previousComment || previousComment.id !== witness.previous.commentId || typeof previousComment.body !== 'string') {
       return blocked('missing-previous-comment');
     }
     if (createHash('sha256').update(previousComment.body, 'utf8').digest('hex') !== witness.previous.digest) {
       return blocked('previous-comment-changed');
     }
-    const recovery = planRecovery({ ...snapshot, marker: current, markerProvenanceVerified: true });
+    if (!matchesHandoffEpoch(input, previousComment, input.previousEpochEvidence)) return blocked('unverified-previous-epoch');
+    if (!matchesHandoffEpoch(input, snapshot.latestComment, input.handoffEpochEvidence)) return blocked('unverified-reopen-history');
+    const recovery = planRecovery({ ...snapshot, currentEpochVerified: true, marker: current, markerProvenanceVerified: true });
     if (recovery.kind === 'blocked') return recovery;
     if (same(marker, witness.previous)) {
       if (snapshot.currentStatus !== current.fromStatus) return blocked('unexpected-status');
@@ -45,7 +47,8 @@ export function planWitnessRecovery(input) {
     return blocked('unexpected-recovery');
   }
   if (witness.previous !== null) return blocked('invalid-project-checkpoint');
-  const recovery = planRecovery({ ...snapshot, marker: current, markerProvenanceVerified: true });
+  if (!matchesHandoffEpoch(input, snapshot.latestComment, input.handoffEpochEvidence)) return blocked('unverified-reopen-history');
+  const recovery = planRecovery({ ...snapshot, currentEpochVerified: true, marker: current, markerProvenanceVerified: true });
   if (recovery.kind === 'blocked') return recovery;
   if (same(marker, current)) return recovery.kind === 'update-status' ? mutation(recovery, witness, marker, snapshot) : recovery;
   if (same(marker, withPhase(current, 'pending')) && recovery.kind === 'unchanged') {

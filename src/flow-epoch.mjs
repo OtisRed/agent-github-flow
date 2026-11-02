@@ -43,3 +43,41 @@ export function verifyHandoffEpoch(input) {
   if (lastReopen !== null && handoff <= lastReopen) return blocked('handoff-before-or-at-reopen');
   return { kind: 'verified' };
 }
+
+// The anchor reuses GitHub's issue ID or the last native reopen event ID; it
+// is not an operation ID. The caller must bind the snapshot to that issue.
+export function verifyHandoffEpochAndAnchor(input) {
+  if (!input || typeof input.issueNodeId !== 'string' || !input.issueNodeId) return blocked('invalid-issue-id');
+  const verified = verifyHandoffEpoch(input);
+  if (verified.kind !== 'verified') return verified;
+  const reopened = [...input.events].reverse().find(event => event.type === 'REOPENED');
+  return { kind: 'verified', epoch: reopened
+    ? { kind: 'reopened', anchor: reopened.id }
+    : { kind: 'initial', anchor: input.issueNodeId } };
+}
+
+// Observation time is used only as an upper bound for the native timeline.
+export function verifyNativeReopen(input) {
+  if (!input || typeof input.issueNodeId !== 'string' || !input.issueNodeId) return blocked('invalid-issue-id');
+  const result = verifyHandoffEpochAndAnchor({ ...input, handoffCreatedAt: input.observedAt });
+  if (result.kind !== 'verified') return result;
+  if (result.epoch.kind !== 'reopened') return blocked('no-reopen-event');
+  return { kind: 'native-reopen-evidence', issueNodeId: input.issueNodeId, epoch: result.epoch };
+}
+
+// Classifies the exact checkpointed comment relative to the latest reopen.
+// Equal-second ordering is unknowable and therefore never becomes evidence.
+export function classifyCheckpointEpoch(input) {
+  if (!input || typeof input.issueNodeId !== 'string' || !input.issueNodeId
+    || typeof input.commentNodeId !== 'string' || !input.commentNodeId
+    || typeof input.commentId !== 'string' || !/^[1-9][0-9]*$/.test(input.commentId)
+    || typeof input.commentDigest !== 'string' || !/^[a-f0-9]{64}$/.test(input.commentDigest)) return blocked('invalid-identity');
+  const verdict = verifyHandoffEpoch(input);
+  if (verdict.kind === 'blocked' && verdict.reason !== 'handoff-before-or-at-reopen') return verdict;
+  const reopened = [...input.events].reverse().find(event => event.type === 'REOPENED');
+  if (!reopened) return blocked('no-reopen-event');
+  if (input.handoffCreatedAt === reopened.at) return blocked('ambiguous-reopen-order');
+  return { kind: 'checkpoint-epoch-evidence', relation: input.handoffCreatedAt < reopened.at ? 'prior' : 'current',
+    issueNodeId: input.issueNodeId, commentNodeId: input.commentNodeId, commentId: input.commentId, commentDigest: input.commentDigest,
+    epoch: { kind: 'reopened', anchor: reopened.id } };
+}

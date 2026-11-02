@@ -42,3 +42,15 @@ export function replaceFlowMarker(body, expected, next) {
   const end = body.indexOf(END, start + START.length) + END.length;
   return { kind: 'updated', body: `${body.slice(0, start)}${block}${body.slice(end)}` };
 }
+
+// Remove only the verified managed block; do not normalize or trim user text.
+// A missing marker is a no-op only when the caller explicitly expects null.
+export function removeFlowMarker(body, expected) {
+  const result = readFlowMarker(body);
+  if (result.kind === 'blocked') return result;
+  if (result.kind === 'absent') return expected === null ? { kind: 'unchanged', body } : blocked('marker-conflict');
+  if (expected === null || encode(expected) === null || encode(expected) !== encode(result.marker)) return blocked('marker-conflict');
+  const start = body.indexOf(START);
+  const end = body.indexOf(END, start + START.length) + END.length;
+  return { kind: 'updated', body: `${body.slice(0, start)}${body.slice(end)}` };
+}

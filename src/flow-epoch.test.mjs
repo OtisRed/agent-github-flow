@@ -1,10 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyHandoffEpoch } from './flow-epoch.mjs';
+import { verifyHandoffEpoch, verifyHandoffEpochAndAnchor, classifyCheckpointEpoch, verifyNativeReopen } from './flow-epoch.mjs';
 
 const input = () => ({ complete: true, issueState: 'OPEN', issueCreatedAt: '2026-01-01T10:00:00Z', handoffCreatedAt: '2026-01-01T10:00:01Z', observedAt: '2026-01-01T10:10:00Z', events: [] });
 const close = { id: 'close-1', type: 'CLOSED', at: '2026-01-01T10:01:00Z' };
 const reopen = { id: 'reopen-1', type: 'REOPENED', at: '2026-01-01T10:02:00Z' };
+
+test('binds native reopen evidence to the issue and latest complete event history', () => {
+  const value = { ...input(), issueNodeId: 'issue', events: [close, reopen] };
+  assert.deepEqual(verifyNativeReopen(value), { kind: 'native-reopen-evidence', issueNodeId: 'issue',
+    epoch: { kind: 'reopened', anchor: 'reopen-1' } });
+  value.observedAt = reopen.at;
+  assert.deepEqual(verifyNativeReopen(value), { kind: 'blocked', reason: 'handoff-before-or-at-reopen' });
+  value.events = []; value.observedAt = '2026-01-01T10:10:00Z';
+  assert.deepEqual(verifyNativeReopen(value), { kind: 'blocked', reason: 'no-reopen-event' });
+});
 
 test('verifies a current handoff on a never-closed issue or after reopen', () => {
   assert.deepEqual(verifyHandoffEpoch(input()), { kind: 'verified' });
@@ -41,4 +51,26 @@ test('blocks malformed, impossible and future timestamps', () => {
     assert.deepEqual(verifyHandoffEpoch(value), { kind: 'blocked', reason: 'invalid-timestamp' });
   }
   assert.deepEqual(verifyHandoffEpoch(null), { kind: 'blocked', reason: 'invalid-input' });
+});
+
+test('anchors the epoch to the existing issue or last native reopen event', () => {
+  const value = { ...input(), issueNodeId: 'issue-node' };
+  assert.deepEqual(verifyHandoffEpochAndAnchor(value), { kind: 'verified', epoch: { kind: 'initial', anchor: 'issue-node' } });
+  value.events = [close, reopen]; value.handoffCreatedAt = '2026-01-01T10:03:00Z';
+  assert.deepEqual(verifyHandoffEpochAndAnchor(value), { kind: 'verified', epoch: { kind: 'reopened', anchor: 'reopen-1' } });
+  value.handoffCreatedAt = '2026-01-01T10:02:00Z';
+  assert.deepEqual(verifyHandoffEpochAndAnchor(value), { kind: 'blocked', reason: 'handoff-before-or-at-reopen' });
+  assert.deepEqual(verifyHandoffEpochAndAnchor({ ...input(), issueNodeId: '' }), { kind: 'blocked', reason: 'invalid-issue-id' });
+});
+
+test('classifies a specific checkpointed comment relative to the latest reopen', () => {
+  const value = { ...input(), issueNodeId: 'issue-node', commentNodeId: 'comment-node', commentId: '123', commentDigest: 'a'.repeat(64), events: [close, reopen] };
+  assert.deepEqual(classifyCheckpointEpoch(value), { kind: 'checkpoint-epoch-evidence', relation: 'prior', issueNodeId: 'issue-node',
+    commentNodeId: 'comment-node', commentId: '123', commentDigest: 'a'.repeat(64), epoch: { kind: 'reopened', anchor: 'reopen-1' } });
+  value.handoffCreatedAt = '2026-01-01T10:03:00Z';
+  assert.equal(classifyCheckpointEpoch(value).relation, 'current');
+  value.handoffCreatedAt = '2026-01-01T10:02:00Z';
+  assert.deepEqual(classifyCheckpointEpoch(value), { kind: 'blocked', reason: 'ambiguous-reopen-order' });
+  delete value.commentNodeId;
+  assert.deepEqual(classifyCheckpointEpoch(value), { kind: 'blocked', reason: 'invalid-identity' });
 });

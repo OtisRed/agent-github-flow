@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFlowMarker, replaceFlowMarker } from './flow-marker.mjs';
+import { readFlowMarker, replaceFlowMarker, removeFlowMarker } from './flow-marker.mjs';
 
 const marker = () => ({ version: 1, phase: 'pending', commentId: '123', digest: 'a'.repeat(64), fromStatus: 'agent-ready', targetStatus: 'review' });
 
@@ -36,4 +36,15 @@ test('requires the expected previous marker and never initializes implicitly', (
   assert.deepEqual(replaceFlowMarker('body', marker(), marker()), { kind: 'blocked', reason: 'marker-conflict' });
   assert.deepEqual(replaceFlowMarker('body', undefined, marker()), { kind: 'blocked', reason: 'marker-conflict' });
   assert.deepEqual(replaceFlowMarker('body', null, { ...marker(), phase: 'bad' }), { kind: 'blocked', reason: 'invalid-marker' });
+});
+
+test('removes only the expected managed marker and preserves all surrounding text', () => {
+  const inserted = replaceFlowMarker('Początek\r\n', null, marker()).body;
+  const body = `${inserted}\nKoniec`;
+  const removed = removeFlowMarker(body, marker());
+  assert.deepEqual(removed, { kind: 'updated', body: 'Początek\r\n\n\n\nKoniec' });
+  assert.deepEqual(removeFlowMarker(removed.body, null), { kind: 'unchanged', body: removed.body });
+  assert.deepEqual(removeFlowMarker(body, { ...marker(), commentId: '124' }), { kind: 'blocked', reason: 'marker-conflict' });
+  assert.deepEqual(removeFlowMarker(body, null), { kind: 'blocked', reason: 'marker-conflict' });
+  assert.deepEqual(removeFlowMarker(removed.body, marker()), { kind: 'blocked', reason: 'marker-conflict' });
 });

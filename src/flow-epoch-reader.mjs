@@ -1,4 +1,5 @@
-import { verifyHandoffEpoch } from './flow-epoch.mjs';
+import { createHash } from 'node:crypto';
+import { verifyHandoffEpochAndAnchor, classifyCheckpointEpoch } from './flow-epoch.mjs';
 
 export const EPOCH_QUERY = `query FlowEpoch($owner: String!, $repo: String!, $number: Int!, $comment: ID!, $after: String) {
   repository(owner: $owner, name: $repo) {
@@ -15,7 +16,7 @@ export const EPOCH_QUERY = `query FlowEpoch($owner: String!, $repo: String!, $nu
     }
   }
   node(id: $comment) {
-    ... on IssueComment { id createdAt issue { id } }
+    ... on IssueComment { id fullDatabaseId body createdAt issue { id } }
   }
 }`;
 
@@ -23,15 +24,16 @@ const blocked = reason => ({ kind: 'blocked', reason });
 const metadata = (issue, comment) => JSON.stringify([
   issue.id, issue.state, issue.createdAt, issue.updatedAt,
   issue.timelineItems.totalCount, issue.timelineItems.updatedAt,
-  comment.id, comment.createdAt, comment.issue.id,
+  comment.id, comment.fullDatabaseId, createHash('sha256').update(comment.body, 'utf8').digest('hex'), comment.createdAt, comment.issue.id,
 ]);
 
 // Read-only collector. graphql(query, variables) must return the full GraphQL
 // response, including errors. Evidence is never a write permit.
-export async function collectEpochEvidence(input) {
+async function collect(input, checkpointMode) {
   if (!input || typeof input.graphql !== 'function' || typeof input.owner !== 'string' || !input.owner
     || typeof input.repo !== 'string' || !input.repo || !Number.isSafeInteger(input.number) || input.number < 1
-    || typeof input.commentNodeId !== 'string' || !input.commentNodeId) return blocked('invalid-input');
+    || typeof input.commentNodeId !== 'string' || !input.commentNodeId
+    || (checkpointMode && (typeof input.commentId !== 'string' || !/^[1-9][0-9]*$/.test(input.commentId)))) return blocked('invalid-input');
   const { graphql, owner, repo, number, commentNodeId, observedAt } = input;
   const variables = { owner, repo, number, comment: commentNodeId };
   const fetchPage = async after => {
@@ -43,7 +45,9 @@ export async function collectEpochEvidence(input) {
     const timeline = issue?.timelineItems;
     if (!issue || typeof issue.id !== 'string' || !issue.id || typeof issue.updatedAt !== 'string'
       || !comment || comment.id !== commentNodeId
-      || comment.issue?.id !== issue.id || typeof comment.createdAt !== 'string'
+      || comment.issue?.id !== issue.id || typeof comment.createdAt !== 'string' || typeof comment.body !== 'string'
+      || typeof comment.fullDatabaseId !== 'string' || !/^[1-9][0-9]*$/.test(comment.fullDatabaseId)
+      || (checkpointMode && comment.fullDatabaseId !== input.commentId)
       || !timeline || !Array.isArray(timeline.nodes) || !Number.isSafeInteger(timeline.totalCount)
       || timeline.totalCount < 0 || typeof timeline.updatedAt !== 'string'
       || typeof timeline.pageInfo?.hasNextPage !== 'boolean') return null;
@@ -69,10 +73,19 @@ export async function collectEpochEvidence(input) {
       const confirmation = await fetchPage(null);
       if (!confirmation || metadata(confirmation.issue, confirmation.comment) !== baseline
         || JSON.stringify([confirmation.timeline.nodes, confirmation.timeline.pageInfo]) !== firstNodes) return blocked('snapshot-changed');
-      const epoch = verifyHandoffEpoch({ complete: true, issueState: result.issue.state,
-        issueCreatedAt: result.issue.createdAt, handoffCreatedAt: result.comment.createdAt, observedAt, events });
+      const epochInput = { complete: true, issueNodeId: result.issue.id, issueState: result.issue.state,
+        issueCreatedAt: result.issue.createdAt, handoffCreatedAt: result.comment.createdAt, observedAt, events };
+      if (checkpointMode) {
+        const evidence = classifyCheckpointEpoch({ ...epochInput, commentNodeId: result.comment.id,
+          commentId: result.comment.fullDatabaseId, commentDigest: createHash('sha256').update(result.comment.body, 'utf8').digest('hex') });
+        return evidence.kind === 'checkpoint-epoch-evidence' ? { ...evidence, eventCount: events.length } : evidence;
+      }
+      const epoch = verifyHandoffEpochAndAnchor(epochInput);
       if (epoch.kind !== 'verified') return epoch;
-      return { kind: 'evidence', epoch: 'consistent', eventCount: events.length };
+      return { kind: 'handoff-epoch-evidence', issueNodeId: result.issue.id, commentNodeId: result.comment.id,
+        commentId: result.comment.fullDatabaseId, commentCreatedAt: result.comment.createdAt,
+        commentDigest: createHash('sha256').update(result.comment.body, 'utf8').digest('hex'),
+        epoch: epoch.epoch, eventCount: events.length };
     }
     const cursor = result.timeline.pageInfo.endCursor;
     if (typeof cursor !== 'string' || !cursor || seenCursors.has(cursor)) return blocked('invalid-cursor');
@@ -80,3 +93,6 @@ export async function collectEpochEvidence(input) {
   }
   return blocked('page-limit');
 }
+
+export const collectEpochEvidence = input => collect(input, false);
+export const collectCheckpointEpochEvidence = input => collect(input, true);

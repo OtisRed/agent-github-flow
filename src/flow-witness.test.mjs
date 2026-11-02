@@ -9,9 +9,15 @@ const oldBody = '[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: P
 const prior = { version: 1, phase: 'committed', commentId: '1', digest: createHash('sha256').update(oldBody).digest('hex'), fromStatus: 'needs-design', targetStatus: 'agent-ready' };
 const pending = { version: 1, phase: 'pending', commentId: '2', digest, fromStatus: 'agent-ready', targetStatus: 'review' };
 const committed = { ...pending, phase: 'committed' };
+const epoch = { kind: 'initial', anchor: 'issue' };
+const proof = comment => ({ kind: 'handoff-epoch-evidence', issueNodeId: 'issue', commentId: comment.id, commentNodeId: comment.nodeId,
+  commentCreatedAt: comment.createdAt, commentDigest: createHash('sha256').update(comment.body).digest('hex'), epoch: structuredClone(epoch) });
+const previousComment = { id: '1', nodeId: 'old', createdAt: '2026-01-01T00:00:01Z', body: oldBody };
+const latestComment = { id: '2', nodeId: 'new', createdAt: '2026-01-01T00:00:02Z', body };
 const input = () => ({ witness: { version: 1, current: pending, previous: prior }, marker: prior,
-  projectSourceVerified: true, complete: true, trusted: true, currentEpochVerified: true, previousEpochVerified: true, singleWriterVerified: true,
-  issueState: 'OPEN', currentStatus: 'agent-ready', previousComment: { id: '1', body: oldBody }, latestComment: { id: '2', body } });
+  projectSourceVerified: true, complete: true, trusted: true, singleWriterVerified: true, issueNodeId: 'issue', epoch: structuredClone(epoch),
+  previousEpochEvidence: proof(previousComment), handoffEpochEvidence: proof(latestComment),
+  issueState: 'OPEN', currentStatus: 'agent-ready', previousComment: structuredClone(previousComment), latestComment: structuredClone(latestComment) });
 
 test('plans each interrupted step in the permitted two-copy ordering', () => {
   const value = input();
@@ -54,8 +60,8 @@ test('blocks unexpected ordering, inconsistent status, untrusted checkpoint and 
     [v => { v.marker = null; }, 'invalid-issue-marker'],
     [v => { v.witness.previous = { ...prior, targetStatus: 'smoke' }; }, 'invalid-project-checkpoint'],
     [v => { v.currentStatus = 'review'; }, 'unexpected-status'],
-    [v => { v.currentEpochVerified = false; }, 'unverified-reopen-history'],
-    [v => { v.previousEpochVerified = false; }, 'unverified-previous-epoch'],
+    [v => { v.handoffEpochEvidence.commentId = 'other'; }, 'unverified-reopen-history'],
+    [v => { v.previousEpochEvidence.epoch.anchor = 'old'; }, 'unverified-previous-epoch'],
     [v => { v.issueState = 'CLOSED'; }, 'issue-closed'],
   ];
   for (const [mutate, reason] of cases) {
