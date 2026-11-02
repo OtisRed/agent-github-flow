@@ -1,0 +1,38 @@
+name: Personal Project access preflight
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      project-owner:
+        required: true
+        type: string
+      project-number:
+        required: true
+        type: number
+    secrets:
+      PROJECT_ACCESS_TOKEN:
+        required: true
+permissions: {}
+jobs:
+  project-read:
+    name: Verify personal Project read
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 3
+    steps:
+      - name: Read personal Project
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_ACCESS_TOKEN }}
+          PROJECT_OWNER: ${{ inputs.project-owner }}
+          PROJECT_NUMBER: ${{ inputs.project-number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]] || [[ ! "$PROJECT_OWNER" =~ ^[A-Za-z0-9-]{1,39}$ ]] || [[ ! "$PROJECT_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]; then
+            echo 'Project preflight: missing credential or invalid configuration'; exit 1
+          fi
+          result=$(gh api graphql -f query='query($owner: String!, $number: Int!) { user(login: $owner) { projectV2(number: $number) { number } } }' -f owner="$PROJECT_OWNER" -F number="$PROJECT_NUMBER" --jq '.data.user.projectV2.number' 2>/dev/null) || { echo 'Project preflight: read failed'; exit 1; }
+          if [[ "$result" != "$PROJECT_NUMBER" ]]; then echo 'Project preflight: incomplete response'; exit 1; fi
+          echo 'Project preflight: read OK'
