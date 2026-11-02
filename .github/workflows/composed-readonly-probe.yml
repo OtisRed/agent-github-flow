@@ -1,0 +1,95 @@
+name: Composed read-only flow probe
+on:
+  push:
+    branches: [spike/workflow-call-allowed]
+    paths: [.github/workflows/composed-readonly-probe.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    if: github.ref == 'refs/heads/spike/workflow-call-allowed'
+    runs-on: ubuntu-24.04
+    environment: split-app-probe
+    timeout-minutes: 8
+    steps:
+      - name: Check out independently reviewed code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ca044bd2e60e402f24834c2449f18aa8695ea57b
+          persist-credentials: false
+      - name: Verify exact checked-out revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$(git rev-parse HEAD)" != 'ca044bd2e60e402f24834c2449f18aa8695ea57b' ]]; then echo 'Probe: revision mismatch'; exit 1; fi
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Check Project credential and test configuration
+        env:
+          PROJECT_CREDENTIAL: ${{ secrets.PROJECT_ACCESS_TOKEN }}
+          PROBE_PROJECT_ID: ${{ vars.COMPOSED_PROJECT_ID }}
+          PROBE_ITEM_ID: ${{ vars.COMPOSED_ITEM_ID }}
+          PROBE_ISSUE_ID: ${{ vars.COMPOSED_ISSUE_ID }}
+          PROBE_STATUS_FIELD_ID: ${{ vars.COMPOSED_STATUS_FIELD_ID }}
+          PROBE_CHECKPOINT_FIELD_ID: ${{ vars.COMPOSED_CHECKPOINT_FIELD_ID }}
+          PROBE_AUTHOR_ID: ${{ vars.COMPOSED_AUTHOR_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${PROJECT_CREDENTIAL:-}" ]]; then echo 'Probe: Project credential unavailable'; exit 1; fi
+          if [[ -z "${PROBE_PROJECT_ID:-}" || -z "${PROBE_ITEM_ID:-}" || -z "${PROBE_ISSUE_ID:-}" || -z "${PROBE_STATUS_FIELD_ID:-}" || -z "${PROBE_CHECKPOINT_FIELD_ID:-}" || -z "${PROBE_AUTHOR_ID:-}" ]]; then echo 'Probe: test configuration unavailable'; exit 1; fi
+          echo 'Probe: Project credential and test configuration available'
+      - name: Check App key availability
+        env:
+          APP_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${APP_KEY:-}" ]]; then echo 'Probe: App key unavailable'; exit 1; fi
+          echo 'Probe: App key available'
+      - name: Create read-only token for real repository
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: '4681815'
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: OtisRed
+          repositories: agent-github-flow
+          permission-issues: read
+      - name: Run composed preflight
+        env:
+          PROJECT_CREDENTIAL: ${{ secrets.PROJECT_ACCESS_TOKEN }}
+          ISSUE_CREDENTIAL: ${{ steps.app.outputs.token }}
+          PROBE_PROJECT_ID: ${{ vars.COMPOSED_PROJECT_ID }}
+          PROBE_ITEM_ID: ${{ vars.COMPOSED_ITEM_ID }}
+          PROBE_ISSUE_ID: ${{ vars.COMPOSED_ISSUE_ID }}
+          PROBE_STATUS_FIELD_ID: ${{ vars.COMPOSED_STATUS_FIELD_ID }}
+          PROBE_CHECKPOINT_FIELD_ID: ${{ vars.COMPOSED_CHECKPOINT_FIELD_ID }}
+          PROBE_AUTHOR_ID: ${{ vars.COMPOSED_AUTHOR_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createFlowReadTransports } from './src/flow-read-transports.mjs';
+          import { runReadOnlyFlowPreflight } from './src/flow-readonly-preflight.mjs';
+          try {
+            const e = process.env;
+            const transports = createFlowReadTransports({ projectToken: e.PROJECT_CREDENTIAL, issueToken: e.ISSUE_CREDENTIAL });
+            const result = await runReadOnlyFlowPreflight({ mode: 'handoff', owner: 'OtisRed', repo: 'agent-github-flow',
+              repository: 'OtisRed/agent-github-flow', number: 5, issueId: e.PROBE_ISSUE_ID,
+              projectId: e.PROBE_PROJECT_ID, itemId: e.PROBE_ITEM_ID, statusFieldId: e.PROBE_STATUS_FIELD_ID,
+              statusFieldName: 'Flow Status', checkpointFieldId: e.PROBE_CHECKPOINT_FIELD_ID,
+              checkpointFieldName: 'FLOW checkpoint', projectOwner: 'OtisRed', projectNumber: 13,
+              trustedAuthorIds: [e.PROBE_AUTHOR_ID], cutoverAt: '2026-01-01T00:00:00Z', ...transports });
+            if (result.kind !== 'blocked' || result.reason !== 'unverified-snapshot' || result.steps?.length !== 0) {
+              console.error('Probe: composed preflight did not reach expected safety gate'); process.exitCode = 1;
+            } else {
+              console.log('Probe: both identities read the same test card and write gate stayed closed');
+            }
+          } catch {
+            console.error('Probe: composed preflight unavailable'); process.exitCode = 1;
+          }
+          NODE
