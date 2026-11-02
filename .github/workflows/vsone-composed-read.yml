@@ -1,0 +1,86 @@
+name: VSone composed read-only probe
+on:
+  push:
+    branches: [spike/workflow-call-allowed]
+    paths: [.github/workflows/vsone-composed-read.yml]
+permissions:
+  contents: read
+jobs:
+  read-only:
+    if: github.ref == 'refs/heads/spike/workflow-call-allowed'
+    runs-on: ubuntu-24.04
+    environment: split-app-probe
+    timeout-minutes: 12
+    steps:
+      - name: Check out reviewed read-only implementation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ca044bd2e60e402f24834c2449f18aa8695ea57b
+          persist-credentials: false
+      - name: Verify revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$(git rev-parse HEAD)" != 'ca044bd2e60e402f24834c2449f18aa8695ea57b' ]]; then
+            echo 'Probe: revision mismatch'; exit 1
+          fi
+      - name: Create read-only installation token
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: '4681815'
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: OtisRed
+          repositories: ${{ secrets.VSONE_PROBE_REPOSITORY }}
+          permission-issues: read
+      - name: Read actual Project and issue without mutation
+        env:
+          PROJECT_TOKEN: ${{ secrets.PROJECT_ACCESS_TOKEN }}
+          ISSUE_TOKEN: ${{ steps.app.outputs.token }}
+          TARGET_PROJECT: ${{ secrets.VSONE_PROBE_PROJECT }}
+          TARGET_ISSUE: ${{ secrets.VSONE_PROBE_ISSUE }}
+          PROJECT_ID: ${{ secrets.VSONE_PROBE_PROJECT_ID }}
+          ITEM_ID: ${{ secrets.VSONE_PROBE_ITEM_ID }}
+          ISSUE_ID: ${{ secrets.VSONE_PROBE_ISSUE_ID }}
+          STATUS_FIELD_ID: ${{ secrets.VSONE_PROBE_STATUS_FIELD }}
+          CHECKPOINT_FIELD_ID: ${{ secrets.VSONE_PROBE_CHECKPOINT_FIELD }}
+          AUTHOR_ID: ${{ secrets.VSONE_PROBE_AUTHOR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createFlowReadTransports } from './src/flow-read-transports.mjs';
+          import { readSplitProjectIssue } from './src/flow-github-split-project.mjs';
+          import { collectFlowSnapshot } from './src/flow-snapshot.mjs';
+          import { runReadOnlyFlowPreflight } from './src/flow-readonly-preflight.mjs';
+          try {
+            const e = process.env;
+            const project = /^([A-Za-z0-9-]+)\/project\/([1-9][0-9]*)$/.exec(e.TARGET_PROJECT ?? '');
+            const issue = /^([A-Za-z0-9-]+)\/([A-Za-z0-9_.-]+)\/issues\/([1-9][0-9]*)$/.exec(e.TARGET_ISSUE ?? '');
+            if (!project || !issue || project[1] !== issue[1]) throw Error('invalid configuration');
+            const transports = createFlowReadTransports({ projectToken: e.PROJECT_TOKEN, issueToken: e.ISSUE_TOKEN });
+            const input = { mode: 'handoff', owner: issue[1], repo: issue[2], repository: issue[1] + '/' + issue[2],
+              number: Number(issue[3]), issueId: e.ISSUE_ID, projectOwner: project[1], projectNumber: Number(project[2]),
+              projectId: e.PROJECT_ID, itemId: e.ITEM_ID, statusFieldId: e.STATUS_FIELD_ID, statusFieldName: 'Status',
+              checkpointFieldId: e.CHECKPOINT_FIELD_ID, checkpointFieldName: 'FLOW checkpoint',
+              trustedAuthorIds: [e.AUTHOR_ID], cutoverAt: '2026-01-01T00:00:00Z', ...transports };
+            const split = await readSplitProjectIssue(input);
+            if (split.kind !== 'snapshot') { console.error('Probe: Project/issue binding could not be verified'); process.exitCode = 1; }
+            else {
+              console.log('Probe: split identities and actual Project/issue binding verified');
+              const snapshot = await collectFlowSnapshot({ ...input, observedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z') });
+              const safe = new Set(['handoff-read-failed', 'handoff-epoch-read-failed', 'project-read-failed', 'project-snapshot-changed']);
+              if (snapshot.kind === 'snapshot') console.log('Probe: complete read-only snapshot obtained');
+              else if (snapshot.kind === 'awaiting-handoff') console.log('Probe: awaiting a valid handoff');
+              else if (snapshot.kind === 'blocked' && safe.has(snapshot.reason)) console.log('Probe: snapshot blocked at ' + snapshot.reason);
+              else { console.error('Probe: snapshot unavailable'); process.exitCode = 1; }
+              const cycle = await runReadOnlyFlowPreflight(input);
+              if (!Array.isArray(cycle.steps) || cycle.steps.length !== 0) { console.error('Probe: unexpected write step'); process.exitCode = 1; }
+              else if (cycle.kind === 'blocked') console.log('Probe: read-only cycle blocked safely');
+              else if (cycle.kind === 'complete' && cycle.outcome === 'awaiting-handoff') console.log('Probe: read-only cycle awaiting handoff');
+              else { console.error('Probe: unexpected cycle result'); process.exitCode = 1; }
+            }
+          } catch {
+            console.error('Probe: read-only check unavailable'); process.exitCode = 1;
+          }
+          NODE
