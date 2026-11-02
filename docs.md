@@ -5,3 +5,5 @@
 - [Format przekazania FLOW](docs/flow.md) — składnia i granice parsera.
 - [README](README.md) — cel i stan projektu.
 - [AGENTS.md](AGENTS.md) — instrukcje pracy w tym repozytorium.
+
+- [CI repozytorium](docs/ci.md) — zakres kontroli, bootstrap i odzyskiwanie.

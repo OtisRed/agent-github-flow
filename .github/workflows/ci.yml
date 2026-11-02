@@ -1,0 +1,48 @@
+name: Repository CI
+on:
+  pull_request:
+    branches: [main, smoke]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  push:
+    branches: [main, smoke]
+permissions:
+  contents: read
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out event revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Verify Node tests
+        run: node --test src/*.test.mjs
+      - name: Download and verify actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$archive" | sha256sum --check --status
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+      - name: Validate GitHub Actions workflows
+        shell: bash
+        run: '"$RUNNER_TEMP/actionlint" -shellcheck='
+      - name: Confirm invalid workflow is rejected
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/actionlint-invalid.yml"
+          printf 'name: invalid fixture\non: [not_a_real_event]\njobs:\n  invalid:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo fixture\n' > "$fixture"
+          if "$RUNNER_TEMP/actionlint" -shellcheck= "$fixture" > /dev/null 2>&1; then
+            echo 'actionlint unexpectedly accepted an invalid workflow'; exit 1
+          fi
+          echo 'Invalid workflow rejected'
