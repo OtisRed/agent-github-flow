@@ -14,14 +14,16 @@ jobs:
       - name: Read Project schema without mutation
         env:
           GH_TOKEN: ${{ secrets.PROJECT_ACCESS_TOKEN }}
-          PROJECT_NUMBER: ${{ secrets.AGF_PROBE_PROJECT_NUMBER }}
+          PROJECT_BINDING: ${{ secrets.AGF_PROBE_PROJECT }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${GH_TOKEN:-}" || ! "${PROJECT_NUMBER:-}" =~ ^[0-9]+$ ]]; then
+          if [[ -z "${GH_TOKEN:-}" || ! "${PROJECT_BINDING:-}" =~ ^[a-zA-Z0-9_-]+/project/[0-9]+$ ]]; then
             echo 'Readiness: missing credentials or configuration'; exit 1
           fi
-          gh project field-list "$PROJECT_NUMBER" --owner OtisRed --format json --limit 100 \
+          project_number="${PROJECT_BINDING##*/}"
+          project_owner="${PROJECT_BINDING%%/*}"
+          gh project field-list "$project_number" --owner "$project_owner" --format json --limit 100 \
             > "$RUNNER_TEMP/project-fields.json" 2>/dev/null || { echo 'Readiness: Project read failed'; exit 1; }
           node --input-type=module <<'NODE'
           import { readFile } from 'node:fs/promises';
