@@ -22,6 +22,11 @@ jobs:
         run: |
           set -euo pipefail
           case "$PROBE_SLOT" in
+            PROBE_A|PROBE_B) ;;
+            *) echo 'Invalid slot'; exit 1 ;;
+          esac
+          if [[ -z "$PROBE_VALUE" ]]; then echo 'Selected slot unavailable'; exit 1; fi
+          case "$PROBE_SLOT" in
             PROBE_A) [[ "$PROBE_VALUE" == "dummy-a-for-rotation-probe" ]] ;;
             PROBE_B) [[ "$PROBE_VALUE" == "dummy-b-for-rotation-probe" ]] ;;
             *) echo 'Invalid slot'; exit 1 ;;
