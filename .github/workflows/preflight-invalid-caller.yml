@@ -1,0 +1,14 @@
+name: Preflight invalid credential probe
+on:
+  push:
+    branches: [spike/preflight-invalid-caller]
+permissions: {}
+jobs:
+  project:
+    uses: OtisRed/agent-github-flow/.github/workflows/project-access-preflight.yml@95e637a6f940af88c547cc30e8fe3d62b150bc22
+    with:
+      environment: rotation-probe
+      project-owner: OtisRed
+      project-number: 10
+    secrets:
+      PROJECT_ACCESS_TOKEN: ${{ secrets.PROJECT_ACCESS_TOKEN }}
