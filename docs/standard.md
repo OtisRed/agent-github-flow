@@ -36,7 +36,7 @@ Dokładny format maszynowy, zaufani autorzy, jednoczesne aktualizacje, zachowani
 ## Dostarczanie zmiany
 
 - `smoke` integruje zwykłe zmiany, `main` jest stabilną gałęzią. Zwykły PR do `smoke` zaczyna jako draft i ma jedno główne issue oraz jedną samodzielną linię `Refs #…`.
-- Review i kontrole są proporcjonalne do zmiany. Gdy potrzebny jest niezależny review, wynik pierwszego agenta sprawdza subagent; formalny GitHub Approve nie jest wspólnym wymogiem. Kontrole muszą odpowiadać właściwej wersji zmiany.
+- Review i kontrole są proporcjonalne do zmiany. Niezależny przegląd wyniku pierwszego agenta wykonuje subagent; nie stosujemy formalnych zatwierdzeń GitHub Approve. Kontrole muszą odpowiadać właściwej wersji zmiany.
 - Smoke wykonuje właściciel wspólnie z agentem. Zamknięcie issue następuje po decyzji właściciela; samo przejście stanu lub zielone CI nie jest takim werdyktem.
 - Kolejka promocji działa raz na dobę w nocy i promuje najdłuższy ciągły zamknięty prefiks `smoke`. Promocja do `main` przygotowuje wydanie; samo wydanie jest osobnym krokiem.
 - Po zakończeniu całego właściwego flow porządkujemy worktree i gałąź zadania po potwierdzeniu zachowania pracy i zakończenia użycia. Docelowo repozytoria pod `C:\Offline\Repozytoria` używają ignorowanego katalogu `worktrees/` w głównym checkoutcie.
