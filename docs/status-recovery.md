@@ -161,6 +161,8 @@ jobs:
 
 Przykład wymaga uruchomienia w celu sprawdzenia przepływu sekretów środowiska i skuteczności ochrony. Nie należy zastępować jawnego mapowania przez `secrets: inherit`.
 
+Walidator actionlint 1.7.12 nie rozpoznaje jeszcze udokumentowanych pól `job.workflow_repository` i `job.workflow_sha` ([issue narzędzia](https://github.com/rhysd/actionlint/issues/757)). Konfiguracja wycisza wyłącznie te dwie diagnozy, tylko dla workflow relay; pozostałe kontrole oraz ujemna próba walidatora pozostają w CI. Wynik CI nie potwierdza rzeczywistej dostępności pól podczas wywołania reusable workflow.
+
 Testy modułu używają atrap transportu, nie wykonują zapytań. Wynik 204 znaczy jedynie, że GitHub przyjął sygnał; nie potwierdza wykonania odbiornika, dostarczenia ani zmiany stanu. Błąd lub timeout daje niejednoznaczny wynik bez automatycznego ponowienia. Ponieważ `repository_dispatch` wymaga workflow na gałęzi domyślnej odbiorcy, pełna kontrolowana próba wymaga najpierw przygotowania i przyjęcia odbiornika zgodnie ze zwykłym procesem, oraz osobnej konfiguracji repozytorium źródłowego. Sam współdzielony workflow nie jest włączonym relayem VSone.
 
 ### Współbieżność, odzyskiwanie i wymagane próby
