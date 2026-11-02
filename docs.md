@@ -9,3 +9,4 @@
 - [CI repozytorium](docs/ci.md) — zakres kontroli, bootstrap i odzyskiwanie.
 - [Projekt odzyskiwania FLOW](docs/status-recovery.md) — plan zapisu znacznika, przerwań i granic współbieżności.
 - [Odczytowy odbiornik zdarzeń](docs/event-preflight.md) — zakres diagnostyki, prywatność i warunki wdrożenia.
+- [Współdzielony nadawca sygnału](docs/shared-relay.md) — konfiguracja, granice i testy.
