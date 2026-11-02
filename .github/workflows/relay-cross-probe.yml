@@ -1,0 +1,32 @@
+name: Isolated cross-repository relay probe
+on:
+  push:
+    branches: [spike/central-relay-probe]
+    paths: [.github/workflows/relay-cross-probe.yml]
+permissions: {}
+jobs:
+  relay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: relay-cross-probe
+    env:
+      RELAY_TOKEN: ${{ secrets.RELAY_PROBE_TOKEN }}
+      RELAY_TARGET: ${{ secrets.RELAY_PROBE_TARGET }}
+    steps:
+      - name: Send a synthetic event without logging credentials or target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$RELAY_TOKEN" || -z "$RELAY_TARGET" ]]; then
+            echo 'Probe credentials or target are not configured'; exit 1
+          fi
+          if [[ ! "$RELAY_TARGET" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]]; then
+            echo 'Invalid probe target'; exit 1
+          fi
+          payload='{"event_type":"agf-wakeup-probe-20261102","client_payload":{"repository":"example/project","issueNumber":17}}'
+          code=$(curl -sS -o "$RUNNER_TEMP/relay-response.json" -w '%{http_code}' \
+            -X POST -H "Authorization: Bearer $RELAY_TOKEN" -H 'Accept: application/vnd.github+json' \
+            -H 'Content-Type: application/json' -d "$payload" \
+            "https://api.github.com/repos/$RELAY_TARGET/dispatches")
+          if [ "$code" != 204 ]; then echo "Synthetic dispatch failed: HTTP $code"; exit 1; fi
+          echo 'Synthetic cross-repository dispatch accepted'
