@@ -5,6 +5,7 @@ import { SPLIT_PROJECT_QUERY, SPLIT_ISSUE_QUERY } from './flow-github-split-proj
 import { HANDOFF_QUERY } from './flow-handoff-reader.mjs';
 import { EPOCH_QUERY } from './flow-epoch-reader.mjs';
 import { NATIVE_EPOCH_QUERY } from './flow-native-epoch-reader.mjs';
+import { createFlowReadTransports } from './flow-read-transports.mjs';
 
 const text = '[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Dalej';
 const timestamp = '2026-01-01T00:00:00Z';
@@ -79,4 +80,27 @@ test('reads native reopen evidence without granting authority to write', async (
   assert.deepEqual(await runReadOnlyFlowPreflight(input), { kind: 'blocked', reason: 'unverified-snapshot', steps: [] });
   assert.ok(calls.includes(NATIVE_EPOCH_QUERY));
   assert.ok(calls.every(query => [SPLIT_PROJECT_QUERY, SPLIT_ISSUE_QUERY, HANDOFF_QUERY, NATIVE_EPOCH_QUERY].includes(query)));
+});
+
+test('composes HTTP transport adapters with the split preflight without performing mutations', async () => {
+  const { input, calls } = fixture(); const requests = [];
+  const request = async (url, options) => {
+    requests.push({ url, method: options.method, authorization: options.headers.Authorization });
+    let value;
+    if (options.method === 'GET') {
+      assert.equal(options.headers.Authorization, 'Bearer project-token');
+      value = [{ node_id: 'item', content_type: 'Issue', archived_at: null, content: { node_id: 'issue' } }];
+    } else {
+      const { query, variables } = JSON.parse(options.body);
+      const project = options.headers.Authorization === 'Bearer project-token';
+      assert.equal(options.headers.Authorization, project ? 'Bearer project-token' : 'Bearer issue-token');
+      value = await (project ? input.projectGraphql(query, variables) : input.issueGraphql(query, variables));
+    }
+    return { status: 200, text: async () => JSON.stringify(value), headers: { get: () => null } };
+  };
+  const transports = createFlowReadTransports({ projectToken: 'project-token', issueToken: 'issue-token', request });
+  assert.deepEqual(await runReadOnlyFlowPreflight({ ...input, ...transports }),
+    { kind: 'blocked', reason: 'unverified-snapshot', steps: [] });
+  assert.ok(requests.some(r => r.method === 'GET')); assert.ok(calls.includes(HANDOFF_QUERY));
+  assert.ok(requests.every(r => r.url === 'https://api.github.com/graphql' || r.url.startsWith('https://api.github.com/users/board-owner/')));
 });
