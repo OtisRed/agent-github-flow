@@ -22,6 +22,9 @@ jobs:
             --jq '.data.user.projectV2 | select(.id == "PVT_kwHOAbWL0M4Bp0Lz" and .public == false) | .number' 2>/dev/null) || { echo 'Probe: Project read failed'; exit 1; }
           if [[ "$project" != '13' ]]; then echo 'Probe: Project unavailable or mismatched'; exit 1; fi
           echo 'Probe: isolated Project read confirmed'
+          split_query=$(gh api graphql -f query='query { user(login:"OtisRed") { projectV2(number:13) { id } } node(id:"PVTI_lAHOAbWL0M4Bp0LzzhFWfD8") { ... on ProjectV2Item { id isArchived project { id statusField:field(name:"Flow Status") { ... on ProjectV2SingleSelectField { id name dataType options { id name } } } checkpointField:field(name:"FLOW checkpoint") { ... on ProjectV2Field { id name dataType } } } status:fieldValueByName(name:"Flow Status") { ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2SingleSelectField { id } } } } checkpoint:fieldValueByName(name:"FLOW checkpoint") { ... on ProjectV2ItemFieldTextValue { field { ... on ProjectV2Field { id } } } } } } }' \
+            --jq 'if .data.user.projectV2.id == "PVT_kwHOAbWL0M4Bp0Lz" and .data.node.id == "PVTI_lAHOAbWL0M4Bp0LzzhFWfD8" and .data.node.isArchived == false and .data.node.project.id == "PVT_kwHOAbWL0M4Bp0Lz" and .data.node.project.statusField.id == "PVTSSF_lAHOAbWL0M4Bp0LzzhoOB0g" and .data.node.project.checkpointField.id == "PVTF_lAHOAbWL0M4Bp0LzzhoOB3I" and .data.node.status.field.id == "PVTSSF_lAHOAbWL0M4Bp0LzzhoOB0g" and .data.node.checkpoint.field.id == "PVTF_lAHOAbWL0M4Bp0LzzhoOB3I" then "ok" else "bad" end' 2>/dev/null) || split_query=''
+          if [[ "$split_query" == 'ok' ]]; then echo 'Probe: split Project fields confirmed'; else echo 'Probe: split Project fields unavailable'; fi
           item_meta=$(gh api graphql -f query='query { node(id:"PVTI_lAHOAbWL0M4Bp0LzzhFWfD8") { ... on ProjectV2Item { id isArchived project { id } } } }' \
             --jq '.data.node | select(.id == "PVTI_lAHOAbWL0M4Bp0LzzhFWfD8" and .isArchived == false and .project.id == "PVT_kwHOAbWL0M4Bp0Lz") | .id' 2>/dev/null) || item_meta=''
           if [[ "$item_meta" == 'PVTI_lAHOAbWL0M4Bp0LzzhFWfD8' ]]; then echo 'Probe: private Project item metadata confirmed'; else echo 'Probe: private Project item metadata unavailable'; fi
@@ -36,4 +39,5 @@ jobs:
             --jq '[.[] | select(.node_id == "PVTI_lAHOAbWL0M4Bp0LzzhFWfD8" and .content_type == "Issue" and .content.node_id == "I_kwDOVf8g0M8AAAABbyzYEg")] | length' 2>/dev/null) || rest_binding=''
           if [[ "$rest_binding" == '1' ]]; then echo 'Probe: REST private issue binding confirmed'; else echo 'Probe: REST private issue binding unavailable'; failed=1; fi
           if [[ "$item_meta" != 'PVTI_lAHOAbWL0M4Bp0LzzhFWfD8' ]]; then failed=1; fi
+          if [[ "$split_query" != 'ok' ]]; then failed=1; fi
           exit "$failed"
