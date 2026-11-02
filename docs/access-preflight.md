@@ -1,0 +1,11 @@
+# Read-only access preflight
+
+`project-access-preflight.yml` and `app-access-preflight.yml` are separate reusable workflows that check access before a project adopts the shared flow. It does not change repository contents, comments, issues, Project cards, or release state. A successful run is not proof that write permissions, rotation, reconciliation, or production deployment work.
+
+Each caller supplies a fixed environment name. The Project workflow also takes the personal Project owner and number. The App workflow takes the repository owner and name, GitHub App ID and expected app slug. The named environment belongs to the calling repository. Before adding real secrets, configure and verify its branch protections, ensure the allowed branch and workflow are trusted, and pin the reviewed shared workflow to its full commit SHA. Do not use test-branch code as a production release.
+
+Map only `PROJECT_ACCESS_TOKEN` in the Project caller and only `APP_PRIVATE_KEY` in the App caller. GitHub environment secrets cannot be selected directly on a caller job that invokes a reusable workflow; the called jobs specify the environment. Each relevant name must be mapped even if its value is supplied by the called job's environment. Do not use `secrets: inherit`. A `required` declaration does not prove that a value exists: the Project job rejects a missing PAT at runtime and the App token action rejects a missing private key.
+
+The Project job reads the specified personal Project number with the user PAT. The App job creates a short-lived installation token scoped to the named repository and `contents: read`, checks its app slug and single-repository scope, and reads repository metadata. The official token action revokes its token after the job. The configured App installation may have broader permissions than this test token: this check proves neither write permissions nor the absence of broader installation access.
+
+Each project owns its environment and credentials. Never place token values, private keys, or copied secrets in the repository, logs, issues, or chat. Keep the existing workflow owner active during migration until a separate, verified handover. For token rotation and recovery follow issue #3; this preflight is not yet a rotation mechanism.
