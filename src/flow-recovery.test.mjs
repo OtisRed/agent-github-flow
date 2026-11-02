@@ -7,7 +7,7 @@ const body = '[FLOW]\nRola: Coder\nStan docelowy: review\nWykonano: Zmiana\nNast
 const digest = text => createHash('sha256').update(text, 'utf8').digest('hex');
 const snapshot = () => ({
   marker: { version: 1, phase: 'pending', commentId: '123', digest: digest(body), fromStatus: 'agent-ready', targetStatus: 'review' },
-  latestComment: { id: '123', body }, complete: true, trusted: true, currentEpochVerified: true, singleWriterVerified: true,
+  latestComment: { id: '123', body }, complete: true, trusted: true, markerProvenanceVerified: true, currentEpochVerified: true, singleWriterVerified: true,
   issueState: 'OPEN', currentStatus: 'agent-ready',
 });
 
@@ -35,6 +35,7 @@ test('blocks a deleted, superseded, modified, malformed or untrusted comment', (
     [i => { i.latestComment.body = 'invalid'; i.marker.digest = digest('invalid'); }, 'invalid-comment'],
     [i => { i.marker.targetStatus = 'smoke'; }, 'invalid-comment'],
     [i => { i.trusted = false; }, 'untrusted-comment'],
+    [i => { i.markerProvenanceVerified = false; }, 'unverified-marker-provenance'],
     [i => { i.complete = false; }, 'incomplete-snapshot'],
     [i => { i.currentEpochVerified = false; }, 'unverified-reopen-history'],
     [i => { i.singleWriterVerified = false; }, 'unverified-writer'],
@@ -54,6 +55,7 @@ test('does not replay a committed handoff from before native reopen', () => {
 test('blocks invalid markers and never decides native closure', () => {
   for (const mutate of [
     i => { i.marker = null; }, i => { i.marker.version = 2; }, i => { i.marker.phase = 'unknown'; },
+    i => { i.marker.extra = true; }, i => { const { version, ...rest } = i.marker; i.marker = Object.assign(Object.create({ version }), rest); },
     i => { i.marker.commentId = '0'; }, i => { i.marker.digest = 'bad'; },
     i => { i.marker.fromStatus = 'done'; }, i => { i.marker.targetStatus = 'done'; },
   ]) {

@@ -5,20 +5,27 @@ import { planActiveStatus } from './flow-transition.mjs';
 const active = status => FLOW_STATUSES.includes(status) && status !== 'done';
 const blocked = reason => ({ kind: 'blocked', reason });
 
+export function isFlowMarker(marker) {
+  const keys = ['version', 'phase', 'commentId', 'digest', 'fromStatus', 'targetStatus'];
+  return !!marker && typeof marker === 'object' && !Array.isArray(marker)
+    && Object.keys(marker).length === keys.length && keys.every(key => Object.hasOwn(marker, key))
+    && marker.version === 1 && (marker.phase === 'pending' || marker.phase === 'committed')
+    && typeof marker.commentId === 'string' && /^[1-9][0-9]*$/.test(marker.commentId)
+    && typeof marker.digest === 'string' && /^[a-f0-9]{64}$/.test(marker.digest)
+    && active(marker.fromStatus) && active(marker.targetStatus);
+}
+
 // The caller owns full pagination, authentication and fresh readbacks. This
 // pure decision does not write anything or make the subsequent write atomic.
 export function planRecovery(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return blocked('invalid-input');
-  const { marker, latestComment, complete, trusted, currentEpochVerified, singleWriterVerified, issueState, currentStatus } = input;
+  const { marker, latestComment, complete, trusted, markerProvenanceVerified, currentEpochVerified, singleWriterVerified, issueState, currentStatus } = input;
   if (complete !== true) return blocked('incomplete-snapshot');
   if (trusted !== true) return blocked('untrusted-comment');
+  if (markerProvenanceVerified !== true) return blocked('unverified-marker-provenance');
   if (currentEpochVerified !== true) return blocked('unverified-reopen-history');
   if (singleWriterVerified !== true) return blocked('unverified-writer');
-  if (!marker || typeof marker !== 'object' || Array.isArray(marker)
-    || marker.version !== 1 || (marker.phase !== 'pending' && marker.phase !== 'committed')
-    || typeof marker.commentId !== 'string' || !/^[1-9][0-9]*$/.test(marker.commentId)
-    || typeof marker.digest !== 'string' || !/^[a-f0-9]{64}$/.test(marker.digest)
-    || !active(marker.fromStatus) || !active(marker.targetStatus)) return blocked('invalid-marker');
+  if (!isFlowMarker(marker)) return blocked('invalid-marker');
   if (!latestComment || typeof latestComment !== 'object'
     || typeof latestComment.id !== 'string' || typeof latestComment.body !== 'string') {
     return blocked('missing-comment');
