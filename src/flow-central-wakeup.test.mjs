@@ -13,6 +13,8 @@ test('rejects malformed payloads without echoing private data', () => {
   for (const payload of [null, [], {}, { repository: 'a/b', issueNumber: 0 },
     { repository: 'a/b', issueNumber: Number.MAX_SAFE_INTEGER + 1 },
     { repository: 'a/b', issueNumber: '1' }, { repository: '../bad/path', issueNumber: 1 },
+    { repository: '../repo', issueNumber: 1 }, { repository: 'owner/..', issueNumber: 1 },
+    { repository: 'owner/.', issueNumber: 1 }, { repository: 'invalid_owner/repo', issueNumber: 1 },
     { repository: 'a/b', issueNumber: 1, targetStatus: 'done' },
     { repository: 'a/b', issueNumber: 1, secret: 'do-not-echo' }]) {
     assert.deepEqual(selectCentralWakeup(payload, ['a/b']), { kind: 'blocked', reason: 'invalid-wakeup' });
