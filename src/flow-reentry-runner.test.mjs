@@ -15,6 +15,7 @@ const initial = () => {
     complete: true, singleWriterVerified: true, projectSourceVerified: true, singleCardVerified: true,
     currentStatus: 'smoke', statusOptions: [{ id: 'smoke-id', name: 'smoke' }, { id: 'design-id', name: 'needs-design' }],
     epoch, marker, witness: { version: 1, current: marker, previous: null }, previousComment: { id: '1', nodeId: 'node1', body },
+    handoff: { kind: 'absent' },
     nativeReopenEvidence: { kind: 'native-reopen-evidence', issueNodeId: 'issue', epoch },
     checkpointEpochEvidence: { kind: 'checkpoint-epoch-evidence', relation: 'prior', issueNodeId: 'issue', commentId: '1',
       commentNodeId: 'node1', commentDigest: digest, epoch } };
@@ -52,5 +53,16 @@ test('rejects stale native evidence, changing snapshots and altered readback', a
   ctx.state.nativeReopenEvidence.epoch = ctx.state.epoch;
   const writeStep = async (snapshot, plan) => { await ctx.writeStep(snapshot, plan); ctx.state.previousComment.body += ' changed'; };
   assert.deepEqual(await runReentryStep({ readSnapshot: ctx.readSnapshot, writeStep }), { kind: 'blocked', reason: 'readback-conflict' });
+  assert.equal(ctx.mutations.length, 1);
+});
+
+test('reports a conflict if a new handoff appears during the reentry write', async () => {
+  const ctx = harness();
+  const writeStep = async (snapshot, plan) => {
+    await ctx.writeStep(snapshot, plan);
+    ctx.state.handoff = { kind: 'handoff', id: '2', nodeId: 'node2', body };
+  };
+  assert.deepEqual(await runReentryStep({ readSnapshot: ctx.readSnapshot, writeStep }),
+    { kind: 'blocked', reason: 'readback-conflict' });
   assert.equal(ctx.mutations.length, 1);
 });

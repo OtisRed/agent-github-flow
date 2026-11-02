@@ -27,7 +27,7 @@ export async function runReentryStep({ readSnapshot, writeStep }) {
   try { after = await readSnapshot(); } catch { return blocked('readback-failed'); }
   if (after?.kind !== 'snapshot') return blocked('readback-failed');
   const stableKeys = ['projectId', 'itemId', 'issueNodeId', 'repository', 'statusFieldId', 'checkpointFieldId',
-    'issueState', 'epoch', 'nativeReopenEvidence', 'previousComment', 'checkpointEpochEvidence'];
+    'issueState', 'epoch', 'nativeReopenEvidence', 'previousComment', 'checkpointEpochEvidence', 'handoff'];
   if (stableKeys.some(key => !isDeepStrictEqual(fresh[key], after[key]))) return blocked('readback-conflict');
   const expectedWitness = projectSteps.has(plan.kind) ? plan.witness : fresh.witness;
   const expectedMarker = plan.kind === 'remove-issue-marker' ? null : fresh.marker;
