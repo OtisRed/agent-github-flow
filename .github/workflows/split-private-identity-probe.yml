@@ -1,0 +1,64 @@
+name: Split private identity probe
+on:
+  push:
+    branches: [spike/workflow-call-allowed]
+    paths: [.github/workflows/split-private-identity-probe.yml]
+permissions: {}
+jobs:
+  project-probe:
+    if: github.ref == 'refs/heads/spike/workflow-call-allowed'
+    runs-on: ubuntu-24.04
+    environment: pat-probe
+    timeout-minutes: 4
+    steps:
+      - name: Check private Project binding with PAT
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then echo 'Probe: Project credential unavailable'; exit 1; fi
+          project=$(gh api graphql -f query='query { user(login:"OtisRed") { projectV2(number:13) { id public } } }' \
+            --jq '.data.user.projectV2 | select(.id == "PVT_kwHOAbWL0M4Bp0Lz" and .public == false) | .id' 2>/dev/null) || { echo 'Probe: Project unavailable'; exit 1; }
+          if [[ "$project" != 'PVT_kwHOAbWL0M4Bp0Lz' ]]; then echo 'Probe: Project mismatch'; exit 1; fi
+          binding=$(gh api -H 'X-GitHub-Api-Version: 2026-03-10' 'users/OtisRed/projectsV2/13/items?per_page=100' \
+            --jq '[.[] | select(.node_id == "PVTI_lAHOAbWL0M4Bp0LzzhFWfD8" and .content_type == "Issue" and .content.node_id == "I_kwDOVf8g0M8AAAABbyzYEg" and .archived_at == null)] | length' 2>/dev/null) || { echo 'Probe: Project binding unavailable'; exit 1; }
+          if [[ "$binding" != '1' ]]; then echo 'Probe: Project binding mismatch'; exit 1; fi
+          echo 'Probe: PAT Project binding confirmed'
+  app-probe:
+    needs: project-probe
+    if: github.ref == 'refs/heads/spike/workflow-call-allowed'
+    runs-on: ubuntu-24.04
+    environment: split-app-probe
+    timeout-minutes: 4
+    steps:
+      - name: Check App key availability
+        env:
+          APP_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${APP_KEY:-}" ]]; then echo 'Probe: App key unavailable'; exit 1; fi
+          echo 'Probe: App key available'
+      - name: Create token for the isolated test repository
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: '4681815'
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: OtisRed
+          repositories: agf-isolated-bootstrap-test-20261102
+          permission-issues: read
+      - name: Check private issue with App token
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then echo 'Probe: App identity unavailable'; exit 1; fi
+          repository=$(gh api /installation/repositories --jq 'if .total_count == 1 and (.repositories | length) == 1 then .repositories[0].full_name else "" end' 2>/dev/null) || { echo 'Probe: App repository read failed'; exit 1; }
+          if [[ "$repository" != 'OtisRed/agf-isolated-bootstrap-test-20261102' ]]; then echo 'Probe: App repository mismatch'; exit 1; fi
+          issue=$(gh api graphql -f query='query { node(id:"I_kwDOVf8g0M8AAAABbyzYEg") { ... on Issue { id number state repository { nameWithOwner isPrivate } } } }' \
+            --jq '.data.node | select(.id == "I_kwDOVf8g0M8AAAABbyzYEg" and .number == 1 and .state == "OPEN" and .repository.isPrivate == true and .repository.nameWithOwner == "OtisRed/agf-isolated-bootstrap-test-20261102") | .id' 2>/dev/null) || { echo 'Probe: App issue read failed'; exit 1; }
+          if [[ "$issue" != 'I_kwDOVf8g0M8AAAABbyzYEg' ]]; then echo 'Probe: App issue unavailable or mismatched'; exit 1; fi
+          echo 'Probe: App private issue read confirmed'
