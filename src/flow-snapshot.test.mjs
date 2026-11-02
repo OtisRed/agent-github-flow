@@ -5,6 +5,9 @@ import { collectFlowSnapshot, createFlowSnapshotReader } from './flow-snapshot.m
 import { planBootstrap } from './flow-bootstrap.mjs';
 import { planTransitionSnapshot } from './flow-transition-runner.mjs';
 import { makeReadbackCheckpoint } from './flow-readback-evidence.mjs';
+import { SPLIT_PROJECT_QUERY, SPLIT_ISSUE_QUERY } from './flow-github-split-project.mjs';
+import { HANDOFF_QUERY } from './flow-handoff-reader.mjs';
+import { EPOCH_QUERY } from './flow-epoch-reader.mjs';
 
 const body = status => `[FLOW]\nRola: Designer\nStan docelowy: ${status}\nWykonano: Praca\nNastępny krok: Dalej`;
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -28,6 +31,51 @@ test('combines initial evidence but never grants production trust or writer owne
   assert.equal(result.kind, 'snapshot'); assert.equal(result.handoff.id, '2'); assert.deepEqual(result.epoch, epoch);
   assert.equal(result.singleWriterVerified, false); assert.equal(result.projectSourceVerified, false); assert.equal(result.trusted, false);
   assert.deepEqual(planBootstrap(result), { kind: 'blocked', reason: 'unverified-snapshot' });
+});
+
+test('uses the issue identity for comment and timeline readers when transports are split', async () => {
+  const r = readers(); const value = input();
+  const projectTransport = async () => ({}); const issueTransport = async () => ({});
+  value.projectGraphql = projectTransport; value.issueGraphql = issueTransport;
+  value.listItems = async () => ({}); value.projectNumber = 13; value.projectOwner = 'board-owner';
+  r.project = async config => { assert.equal(config.projectGraphql, projectTransport); return project(); };
+  r.handoff = async args => { assert.equal(args.graphql, issueTransport); return { kind: 'evidence', handoff }; };
+  r.epoch = async args => { assert.equal(args.graphql, issueTransport); return proof(handoff); };
+  const result = await collectFlowSnapshot(value, r);
+  assert.equal(result.kind, 'snapshot'); assert.equal(result.trusted, false);
+  delete value.issueGraphql;
+  assert.deepEqual(await collectFlowSnapshot(value, r), { kind: 'blocked', reason: 'invalid-split-transport' });
+});
+
+test('composes the actual split readers when Project and repository have different owners', async () => {
+  const value = input(); delete value.graphql; value.owner = 'org-owner'; value.repository = 'org-owner/repo';
+  value.projectOwner = 'board-owner'; value.projectNumber = 13;
+  value.projectGraphql = async (query, vars) => {
+    assert.equal(query, SPLIT_PROJECT_QUERY); assert.equal(vars.owner, 'board-owner');
+    return { data: { user: { projectV2: { id: 'project' } }, node: { id: 'item', isArchived: false,
+      project: { id: 'project', statusField: { id: 'status-field', name: 'Status', dataType: 'SINGLE_SELECT',
+        options: [{ id: 'design', name: 'needs-design' }] },
+      checkpointField: { id: 'checkpoint-field', name: 'FLOW checkpoint', dataType: 'TEXT' } },
+      status: { name: 'needs-design', optionId: 'design', field: { id: 'status-field' } }, checkpoint: null } } };
+  };
+  value.issueGraphql = async (query, vars) => {
+    if (query === SPLIT_ISSUE_QUERY) return { data: { node: { id: 'issue', number: 1, state: 'OPEN', body: 'issue body',
+      updatedAt: '2026-01-01T00:10:00Z', repository: { nameWithOwner: 'org-owner/repo' } } } };
+    assert.equal(vars.owner, 'org-owner');
+    if (query === HANDOFF_QUERY) return { data: { repository: { issue: { id: 'issue', state: 'OPEN',
+      createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:10:00Z', comments: { totalCount: 1,
+        pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ id: handoff.nodeId, fullDatabaseId: handoff.id, body: handoff.body,
+          createdAt: handoff.createdAt, updatedAt: handoff.createdAt, lastEditedAt: null, author: { __typename: 'User', id: 'author' } }] } } } } };
+    assert.equal(query, EPOCH_QUERY);
+    return { data: { repository: { issue: { id: 'issue', state: 'OPEN', createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:10:00Z', timelineItems: { totalCount: 0, updatedAt: '2026-01-01T00:10:00Z',
+        pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } },
+    node: { id: handoff.nodeId, fullDatabaseId: handoff.id, body: handoff.body, createdAt: handoff.createdAt, issue: { id: 'issue' } } } };
+  };
+  value.listItems = async vars => { assert.equal(vars.owner, 'board-owner'); return { items: [{ nodeId: 'item', contentNodeId: 'issue',
+    contentType: 'Issue', archived: false }], nextCursor: null }; };
+  const result = await collectFlowSnapshot(value);
+  assert.equal(result.kind, 'snapshot'); assert.equal(result.handoff.id, handoff.id); assert.equal(result.trusted, false);
 });
 
 test('binds both checkpoint and latest comment and detects a changed Project snapshot', async () => {

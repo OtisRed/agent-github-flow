@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { createHash } from 'node:crypto';
 import { readProjectIssue } from './flow-github-project.mjs';
+import { readSplitProjectIssue } from './flow-github-split-project.mjs';
 import { collectHandoffEvidence } from './flow-handoff-reader.mjs';
 import { collectEpochEvidence, collectCheckpointEpochEvidence } from './flow-epoch-reader.mjs';
 import { collectNativeReopenEvidence } from './flow-native-epoch-reader.mjs';
@@ -23,14 +24,18 @@ const checkpoint = witness => {
 // do not establish that those IDs, the Project field, or a writer are trusted.
 // Returned trust flags are deliberately false until independently established.
 export async function collectFlowSnapshot(input, readers = {}, options = {}) {
-  if (!input || typeof input.graphql !== 'function' || !nonempty(input.owner) || !nonempty(input.repo)
+  if (!input || typeof (input.issueGraphql ?? input.graphql) !== 'function' || !nonempty(input.owner) || !nonempty(input.repo)
     || !Number.isSafeInteger(input.number) || input.number < 1 || !nonempty(input.issueId)
     || !['projectId', 'itemId', 'statusFieldId', 'statusFieldName', 'checkpointFieldId', 'checkpointFieldName'].every(key => nonempty(input[key]))
     || !['handoff', 'reentry'].includes(input.mode) || !Array.isArray(input.trustedAuthorIds)
     || input.trustedAuthorIds.length === 0 || input.trustedAuthorIds.some(id => !nonempty(id)) || !nonempty(input.repository)
     || new Set(input.trustedAuthorIds).size !== input.trustedAuthorIds.length
     || input.repository?.toLowerCase() !== `${input.owner}/${input.repo}`.toLowerCase()) return blocked('invalid-input');
-  const projectReader = readers.project ?? readProjectIssue;
+  const split = ['projectGraphql', 'issueGraphql', 'listItems'].some(key => Object.hasOwn(input, key));
+  if (split && (typeof input.projectGraphql !== 'function' || typeof input.issueGraphql !== 'function'
+    || typeof input.listItems !== 'function' || !nonempty(input.projectOwner)
+    || !Number.isSafeInteger(input.projectNumber) || input.projectNumber < 1)) return blocked('invalid-split-transport');
+  const projectReader = readers.project ?? (typeof input.projectGraphql === 'function' ? readSplitProjectIssue : readProjectIssue);
   const handoffReader = readers.handoff ?? collectHandoffEvidence;
   const epochReader = readers.epoch ?? collectEpochEvidence;
   const checkpointReader = readers.checkpoint ?? collectCheckpointEpochEvidence;
@@ -41,7 +46,7 @@ export async function collectFlowSnapshot(input, readers = {}, options = {}) {
     || readback.marker.phase !== 'committed' || !nonempty(readback.commentNodeId)
     || !['checkpoint-epoch-evidence', 'handoff-epoch-evidence'].includes(readback.epochEvidence?.kind)
     || !(readback.nativeReopenEvidence === null || readback.nativeReopenEvidence?.kind === 'native-reopen-evidence'))) return blocked('invalid-readback-checkpoint');
-  const args = { graphql: input.graphql, owner: input.owner, repo: input.repo, number: input.number, observedAt: input.observedAt };
+  const args = { graphql: input.issueGraphql ?? input.graphql, owner: input.owner, repo: input.repo, number: input.number, observedAt: input.observedAt };
   let first;
   try { first = await projectReader(input); } catch { return blocked('project-read-failed'); }
   if (first?.kind !== 'snapshot') return blocked('project-read-failed');

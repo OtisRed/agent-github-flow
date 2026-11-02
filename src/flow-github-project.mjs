@@ -47,6 +47,7 @@ const dataOf = response => response && (!Object.hasOwn(response, 'errors')
 export async function readProjectIssue(input) {
   if (!input || typeof input.graphql !== 'function' || !['projectId', 'itemId', 'issueId', 'repository',
     'statusFieldId', 'statusFieldName', 'checkpointFieldId', 'checkpointFieldName'].every(key => nonempty(input[key]))
+    || !Number.isSafeInteger(input.number) || input.number < 1
     || input.statusFieldId === input.checkpointFieldId || input.statusFieldName === input.checkpointFieldName) return blocked('invalid-input');
   const variables = { item: input.itemId, statusName: input.statusFieldName, checkpointName: input.checkpointFieldName };
   const fetchItem = async () => {
@@ -55,7 +56,7 @@ export async function readProjectIssue(input) {
   const first = await fetchItem();
   if (!first || first.id !== input.itemId || first.isArchived !== false || first.project?.id !== input.projectId
     || first.content?.id !== input.issueId || first.content?.repository?.nameWithOwner !== input.repository
-    || !Number.isSafeInteger(first.content?.number) || typeof first.content?.body !== 'string'
+    || first.content?.number !== input.number || typeof first.content?.body !== 'string'
     || !['OPEN', 'CLOSED'].includes(first.content?.state) || !nonempty(first.content?.updatedAt)) return blocked('invalid-item');
   const statusField = first.project.statusField;
   const checkpointField = first.project.checkpointField;

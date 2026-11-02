@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { runBootstrapStep } from './flow-bootstrap-runner.mjs';
-import { PROJECT_WRITE, ISSUE_WRITE, writeBootstrapGitHubStep } from './flow-github-write.mjs';
+import { PROJECT_WRITE, ISSUE_WRITE, writeBootstrapGitHubStep, createSplitWriteTransport } from './flow-github-write.mjs';
 import { readFlowMarker } from './flow-marker.mjs';
 import { planBootstrap } from './flow-bootstrap.mjs';
 
@@ -86,4 +86,12 @@ test('blocks invalid options and GraphQL mutation errors', async () => {
     plan: { kind: 'update-status', expectedStatus: 'needs-design', targetStatus: 'unknown' } }), /plan-snapshot-mismatch/);
   await assert.rejects(writeBootstrapGitHubStep({ graphql: async () => ({ errors: [{ message: 'failed' }] }), snapshot,
     plan: planBootstrap(snapshot) }), /unconfirmed-project-write/);
+});
+
+test('routes only Project writes to the user token and issue writes to the App token', async () => {
+  const seen = []; const transport = createSplitWriteTransport({ projectGraphql: async () => { seen.push('project'); },
+    issueGraphql: async () => { seen.push('issue'); } });
+  await transport(PROJECT_WRITE, {}); await transport(ISSUE_WRITE, {});
+  assert.deepEqual(seen, ['project', 'issue']);
+  assert.throws(() => transport('unexpected query', {}), /unsupported-query/);
 });

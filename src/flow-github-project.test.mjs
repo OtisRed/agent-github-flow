@@ -11,7 +11,7 @@ const item = () => ({ id: 'item', isArchived: false, project: { id: 'project',
   status: { name: 'needs-design', optionId: 'design-id', field: { id: 'status-field' } }, checkpoint: null });
 const cards = () => ({ id: 'issue', updatedAt: '2026-01-01T00:00:00Z', projectItems: { totalCount: 1,
   pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ id: 'item', isArchived: false, project: { id: 'project' } }] } });
-const input = graphql => ({ graphql, projectId: 'project', itemId: 'item', issueId: 'issue', repository: 'owner/repo',
+const input = graphql => ({ graphql, number: 1, projectId: 'project', itemId: 'item', issueId: 'issue', repository: 'owner/repo',
   statusFieldId: 'status-field', statusFieldName: 'Status', checkpointFieldId: 'checkpoint-field', checkpointFieldName: 'FLOW checkpoint' });
 const fake = (itemFn = item, cardsFn = cards) => async query => ({ data: { node: query === PROJECT_ITEM_QUERY ? itemFn() : cardsFn() } });
 
@@ -55,6 +55,7 @@ test('reads and rechecks all card pages, rejects changes and cursor cycles', asy
 test('rejects another issue, archived card, wrong fields, invalid status or checkpoint', async () => {
   const cases = [
     [v => { v.content.id = 'other'; }, 'invalid-item'], [v => { v.isArchived = true; }, 'invalid-item'],
+    [v => { v.content.number = 2; }, 'invalid-item'],
     [v => { v.content.repository.nameWithOwner = 'other/repo'; }, 'invalid-item'],
     [v => { v.project.checkpointField.dataType = 'NUMBER'; }, 'invalid-fields'],
     [v => { v.project.statusField.options.push({ id: 'different', name: 'needs-design' }); }, 'invalid-options'],

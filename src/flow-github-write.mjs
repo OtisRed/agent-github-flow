@@ -16,6 +16,17 @@ const nonempty = value => typeof value === 'string' && value.length > 0;
 const dataOf = response => response && (!Object.hasOwn(response, 'errors')
   || (Array.isArray(response.errors) && response.errors.length === 0)) ? response.data : null;
 
+// Only the predefined Project mutation receives the user transport; only the
+// predefined issue mutation receives the App transport. Unknown queries fail.
+export function createSplitWriteTransport({ projectGraphql, issueGraphql }) {
+  if (typeof projectGraphql !== 'function' || typeof issueGraphql !== 'function') throw Error('invalid-transport');
+  return (query, variables) => {
+    if (query === PROJECT_WRITE) return projectGraphql(query, variables);
+    if (query === ISSUE_WRITE) return issueGraphql(query, variables);
+    throw Error('unsupported-query');
+  };
+}
+
 // Low-level write adapter, not an authorization or concurrency mechanism.
 // Call only with a freshly verified plan and re-read all state after writing.
 export async function writeBootstrapGitHubStep({ graphql, snapshot, plan }) {
