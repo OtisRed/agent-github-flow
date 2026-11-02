@@ -24,7 +24,9 @@ export async function collectHandoffEvidence(input) {
     || typeof input.repo !== 'string' || !input.repo || !Number.isSafeInteger(input.number) || input.number < 1
     || !Array.isArray(input.trustedAuthorIds) || input.trustedAuthorIds.length === 0
     || input.trustedAuthorIds.some(id => typeof id !== 'string' || !id)
-    || new Set(input.trustedAuthorIds).size !== input.trustedAuthorIds.length) return blocked('invalid-input');
+    || new Set(input.trustedAuthorIds).size !== input.trustedAuthorIds.length
+    || (input.checkpointCommentId !== undefined && (typeof input.checkpointCommentId !== 'string'
+      || !/^[1-9][0-9]*$/.test(input.checkpointCommentId)))) return blocked('invalid-input');
   const { graphql, owner, repo, number, trustedAuthorIds } = input;
   const fetchPage = async after => {
     let response;
@@ -75,6 +77,13 @@ export async function collectHandoffEvidence(input) {
       }
       const handoff = selectLatestHandoff({ complete: true, trustedAuthorIds, comments: all });
       if (handoff.kind === 'blocked') return handoff;
+      if (input.checkpointCommentId !== undefined) {
+        const previousComment = all.find(comment => comment.id === input.checkpointCommentId);
+        if (!previousComment || !trustedAuthorIds.includes(previousComment.authorId) || previousComment.lastEditedAt !== null) {
+          return blocked('checkpoint-comment-missing-or-untrusted');
+        }
+        return { kind: 'evidence', handoff, previousComment, commentCount: all.length };
+      }
       return { kind: 'evidence', handoff, commentCount: all.length };
     }
     const cursor = page.pageInfo.endCursor;

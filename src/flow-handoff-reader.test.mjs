@@ -54,3 +54,21 @@ test('preserves exact large database IDs and returns no false handoff for anothe
   big.author.id = 'different-user';
   assert.deepEqual(await collectHandoffEvidence(args(async () => one)), { kind: 'evidence', handoff: { kind: 'absent' }, commentCount: 1 });
 });
+
+test('retrieves the exact trusted checkpointed comment across all pages and blocks missing or edited history', async () => {
+  const graphql = async (_query, vars) => vars.after ? page([comment(12, '02')]) : page([comment(10, '01')], true, 'next');
+  const result = await collectHandoffEvidence({ ...args(graphql), checkpointCommentId: '10' });
+  assert.equal(result.previousComment.id, '10'); assert.equal(result.previousComment.nodeId, 'node-10');
+  assert.equal(result.handoff.id, '12');
+  assert.deepEqual(await collectHandoffEvidence({ ...args(graphql), checkpointCommentId: '11' }),
+    { kind: 'blocked', reason: 'checkpoint-comment-missing-or-untrusted' });
+  const edited = comment(10, '01'); edited.lastEditedAt = '2026-01-01T10:01:00Z';
+  const withEdit = async () => page([edited, comment(12, '02')]);
+  assert.deepEqual(await collectHandoffEvidence({ ...args(withEdit), checkpointCommentId: '10' }),
+    { kind: 'blocked', reason: 'checkpoint-comment-missing-or-untrusted' });
+});
+
+test('rejects duplicate comment IDs even when a repeated page appears stable', async () => {
+  const graphql = async (_query, vars) => vars.after ? page([comment(10, '01')]) : page([comment(10, '01')], true, 'next');
+  assert.deepEqual(await collectHandoffEvidence(args(graphql)), { kind: 'blocked', reason: 'invalid-comment-metadata' });
+});
