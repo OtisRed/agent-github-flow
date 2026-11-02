@@ -24,7 +24,14 @@ jobs:
           project_number="${PROJECT_BINDING##*/}"
           project_owner="${PROJECT_BINDING%%/*}"
           gh project field-list "$project_number" --owner "$project_owner" --format json --limit 100 \
-            > "$RUNNER_TEMP/project-fields.json" 2>/dev/null || { echo 'Readiness: Project read failed'; exit 1; }
+            > "$RUNNER_TEMP/project-fields.json" 2>"$RUNNER_TEMP/project-error.txt" || {
+            if grep -qi 'unknown owner type' "$RUNNER_TEMP/project-error.txt"; then echo 'Readiness: gh owner-type error';
+            elif grep -qiE '401|bad credentials|authentication' "$RUNNER_TEMP/project-error.txt"; then echo 'Readiness: authentication error';
+            elif grep -qiE '403|forbidden|scope' "$RUNNER_TEMP/project-error.txt"; then echo 'Readiness: authorization error';
+            elif grep -qiE '404|not found|could not resolve' "$RUNNER_TEMP/project-error.txt"; then echo 'Readiness: Project not found or hidden';
+            else echo 'Readiness: unclassified Project read failure'; fi
+            exit 1
+          }
           node --input-type=module <<'NODE'
           import { readFile } from 'node:fs/promises';
           const document = JSON.parse(await readFile(process.env.RUNNER_TEMP + '/project-fields.json', 'utf8'));
