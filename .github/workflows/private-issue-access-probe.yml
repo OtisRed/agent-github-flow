@@ -1,0 +1,32 @@
+name: Private issue access probe
+on:
+  push:
+    branches: [spike/workflow-call-allowed]
+    paths: [.github/workflows/private-issue-access-probe.yml]
+permissions: {}
+jobs:
+  private-read:
+    if: github.ref == 'refs/heads/spike/workflow-call-allowed'
+    runs-on: ubuntu-24.04
+    environment: pat-probe
+    timeout-minutes: 3
+    steps:
+      - name: Check Project and private issue visibility
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then echo 'Probe: credential unavailable'; exit 1; fi
+          project=$(gh api graphql -f query='query { user(login:"OtisRed") { projectV2(number:13) { id number public } } }' \
+            --jq '.data.user.projectV2 | select(.id == "PVT_kwHOAbWL0M4Bp0Lz" and .public == false) | .number' 2>/dev/null) || { echo 'Probe: Project read failed'; exit 1; }
+          if [[ "$project" != '13' ]]; then echo 'Probe: Project unavailable or mismatched'; exit 1; fi
+          echo 'Probe: isolated Project read confirmed'
+          item_issue=$(gh api graphql -f query='query { node(id:"PVTI_lAHOAbWL0M4Bp0LzzhFWfD8") { ... on ProjectV2Item { id isArchived project { id } content { ... on Issue { id } } } } }' \
+            --jq '.data.node | select(.id == "PVTI_lAHOAbWL0M4Bp0LzzhFWfD8" and .isArchived == false and .project.id == "PVT_kwHOAbWL0M4Bp0Lz") | .content.id // ""' 2>/dev/null) || { echo 'Probe: private Project item read failed'; exit 1; }
+          if [[ "$item_issue" != 'I_kwDOVf8g0M8AAAABbyzYEg' ]]; then echo 'Probe: private item content unavailable or mismatched'; exit 1; fi
+          echo 'Probe: private Project item identity confirmed'
+          issue=$(gh api graphql -f query='query { node(id:"I_kwDOVf8g0M8AAAABbyzYEg") { ... on Issue { number repository { nameWithOwner isPrivate } } } }' \
+            --jq '.data.node | select(.number == 1 and .repository.isPrivate == true and .repository.nameWithOwner == "OtisRed/agf-isolated-bootstrap-test-20261102") | .number' 2>/dev/null) || { echo 'Probe: private issue read failed'; exit 1; }
+          if [[ "$issue" != '1' ]]; then echo 'Probe: private issue unavailable or mismatched'; exit 1; fi
+          echo 'Probe: private issue metadata read confirmed'
