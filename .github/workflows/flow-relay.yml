@@ -1,0 +1,31 @@
+name: Flow relay (reusable)
+on:
+  workflow_call:
+    secrets:
+      FLOW_RELAY_SOURCE:
+        description: Opaque source route from the project environment
+        required: true
+      FLOW_RELAY_TOKEN:
+        description: Repository-scoped relay credential from the project environment
+        required: true
+permissions:
+  contents: read
+jobs:
+  relay:
+    name: Relay issue wakeup
+    runs-on: ubuntu-24.04
+    environment: flow-relay
+    timeout-minutes: 3
+    steps:
+      - name: Check out the exact reusable workflow source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - name: Send minimal wakeup
+        env:
+          FLOW_RELAY_TARGET: ${{ vars.FLOW_RELAY_TARGET }}
+          FLOW_RELAY_SOURCE: ${{ secrets.FLOW_RELAY_SOURCE }}
+          FLOW_RELAY_TOKEN: ${{ secrets.FLOW_RELAY_TOKEN }}
+        run: node src/flow-relay-cli.mjs

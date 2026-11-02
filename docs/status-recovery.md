@@ -136,6 +136,33 @@ Centralny rejestr powinien wiązać repozytorium i issue z właściwym Projectem
 
 Przed zapisaniem konfiguracji trzeba skonfigurować i zweryfikować ochronę środowiska oraz dostęp do niego. Workflow zadziała dopiero po umieszczeniu go na domyślnej gałęzi. Relay, poświadczenie do niego, faktyczne wyzwolenie z VSone, serializacja i produkcyjny kontroler nadal nie są gotowe ani potwierdzone. Testy jednostkowe i lokalne sprawdzają wyłącznie rozpoznawanie oraz logowanie, nie prywatność całej platformy ani uprawnienia nadawcy.
 
+### Przygotowany relay projektu
+
+Przygotowano współdzielony workflow `flow-relay.yml` i niewielki nadawca. W docelowym wariancie workflow projektu wywoła go po zdarzeniu dotyczącym issue; kod jest pobierany z dokładnego commitu współdzielonego workflow, a wywołanie powinno być przypięte do przejrzanego SHA. Nadawca wysyła do API GitHuba tylko alias i numer issue, nie treść komentarza ani nazwę prywatnego repozytorium; token, alias i docelowe repozytorium ma pobierać ze środowiska `flow-relay` repozytorium wywołującego. Workflow wywołujący musi jawnie przekazać nazwy sekretów `FLOW_RELAY_TOKEN` i `FLOW_RELAY_SOURCE`; sama deklaracja środowiska w workflow współdzielonym nie wystarczy. Wartość docelową dostarcza zmienna środowiska `FLOW_RELAY_TARGET`. Należy przedtem jawnie utworzyć i zabezpieczyć to środowisko oraz ograniczyć osobny token do centralnego repozytorium. `contents:write` jest szersze niż samo dispatch i nie jest równoważne ograniczeniu uprawnień do tego endpointu. Nie przekazywać PAT Projectu ani prywatnego klucza App do repozytorium projektu.
+
+Przykład wywołania po dopuszczeniu konkretnej wersji; `<SHA>` trzeba zastąpić pełnym, zweryfikowanym commitem, a środowisko i wartości skonfigurować wcześniej w repozytorium projektu:
+
+```yaml
+name: Flow wakeup
+on:
+  issue_comment:
+    types: [created, edited, deleted]
+  issues:
+    types: [opened, closed, reopened]
+permissions:
+  contents: read
+jobs:
+  relay:
+    uses: OtisRed/agent-github-flow/.github/workflows/flow-relay.yml@<SHA>
+    secrets:
+      FLOW_RELAY_SOURCE: ${{ secrets.FLOW_RELAY_SOURCE }}
+      FLOW_RELAY_TOKEN: ${{ secrets.FLOW_RELAY_TOKEN }}
+```
+
+Przykład wymaga uruchomienia w celu sprawdzenia przepływu sekretów środowiska i skuteczności ochrony. Nie należy zastępować jawnego mapowania przez `secrets: inherit`.
+
+Testy modułu używają atrap transportu, nie wykonują zapytań. Wynik 204 znaczy jedynie, że GitHub przyjął sygnał; nie potwierdza wykonania odbiornika, dostarczenia ani zmiany stanu. Błąd lub timeout daje niejednoznaczny wynik bez automatycznego ponowienia. Ponieważ `repository_dispatch` wymaga workflow na gałęzi domyślnej odbiorcy, pełna kontrolowana próba wymaga najpierw przygotowania i przyjęcia odbiornika zgodnie ze zwykłym procesem, oraz osobnej konfiguracji repozytorium źródłowego. Sam współdzielony workflow nie jest włączonym relayem VSone.
+
 ### Współbieżność, odzyskiwanie i wymagane próby
 
 Zdarzeniowy kontroler i nocny reconcile muszą współdzielić jedną zweryfikowaną serializację zapisu dla tej samej tablicy lub karty. Osobne tablice mogą działać równolegle. Wybór ziarna blokady i sposób przekazania tożsamości karty do grupy joba należy sprawdzić przed implementacją; ten sam issue może występować w wielu tablicach i zapis jego body może wymagać szerszej serializacji. Nie zakładać trwałości lub nieograniczonej pojemności kolejki Actions: [domyślnie oczekujące przebiegi mogą zostać zastąpione](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency); również skonfigurowana kolejka jest ograniczona. Nocna kontrola pomaga wykryć rozbieżności, ale harmonogram może się opóźnić albo nie wykonać.
