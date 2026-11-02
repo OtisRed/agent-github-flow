@@ -22,11 +22,15 @@ jobs:
             --jq '.data.user.projectV2 | select(.id == "PVT_kwHOAbWL0M4Bp0Lz" and .public == false) | .number' 2>/dev/null) || { echo 'Probe: Project read failed'; exit 1; }
           if [[ "$project" != '13' ]]; then echo 'Probe: Project unavailable or mismatched'; exit 1; fi
           echo 'Probe: isolated Project read confirmed'
+          item_meta=$(gh api graphql -f query='query { node(id:"PVTI_lAHOAbWL0M4Bp0LzzhFWfD8") { ... on ProjectV2Item { id isArchived project { id } } } }' \
+            --jq '.data.node | select(.id == "PVTI_lAHOAbWL0M4Bp0LzzhFWfD8" and .isArchived == false and .project.id == "PVT_kwHOAbWL0M4Bp0Lz") | .id' 2>/dev/null) || item_meta=''
+          if [[ "$item_meta" == 'PVTI_lAHOAbWL0M4Bp0LzzhFWfD8' ]]; then echo 'Probe: private Project item metadata confirmed'; else echo 'Probe: private Project item metadata unavailable'; fi
+          failed=0
           item_issue=$(gh api graphql -f query='query { node(id:"PVTI_lAHOAbWL0M4Bp0LzzhFWfD8") { ... on ProjectV2Item { id isArchived project { id } content { ... on Issue { id } } } } }' \
-            --jq '.data.node | select(.id == "PVTI_lAHOAbWL0M4Bp0LzzhFWfD8" and .isArchived == false and .project.id == "PVT_kwHOAbWL0M4Bp0Lz") | .content.id // ""' 2>/dev/null) || { echo 'Probe: private Project item read failed'; exit 1; }
-          if [[ "$item_issue" != 'I_kwDOVf8g0M8AAAABbyzYEg' ]]; then echo 'Probe: private item content unavailable or mismatched'; exit 1; fi
-          echo 'Probe: private Project item identity confirmed'
+            --jq '.data.node | select(.id == "PVTI_lAHOAbWL0M4Bp0LzzhFWfD8" and .isArchived == false and .project.id == "PVT_kwHOAbWL0M4Bp0Lz") | .content.id // ""' 2>/dev/null) || item_issue=''
+          if [[ "$item_issue" == 'I_kwDOVf8g0M8AAAABbyzYEg' ]]; then echo 'Probe: private Project item identity confirmed'; else echo 'Probe: private item content unavailable or mismatched'; failed=1; fi
           issue=$(gh api graphql -f query='query { node(id:"I_kwDOVf8g0M8AAAABbyzYEg") { ... on Issue { number repository { nameWithOwner isPrivate } } } }' \
-            --jq '.data.node | select(.number == 1 and .repository.isPrivate == true and .repository.nameWithOwner == "OtisRed/agf-isolated-bootstrap-test-20261102") | .number' 2>/dev/null) || { echo 'Probe: private issue read failed'; exit 1; }
-          if [[ "$issue" != '1' ]]; then echo 'Probe: private issue unavailable or mismatched'; exit 1; fi
-          echo 'Probe: private issue metadata read confirmed'
+            --jq '.data.node | select(.number == 1 and .repository.isPrivate == true and .repository.nameWithOwner == "OtisRed/agf-isolated-bootstrap-test-20261102") | .number' 2>/dev/null) || issue=''
+          if [[ "$issue" == '1' ]]; then echo 'Probe: private issue metadata read confirmed'; else echo 'Probe: private issue unavailable or mismatched'; failed=1; fi
+          if [[ "$item_meta" != 'PVTI_lAHOAbWL0M4Bp0LzzhFWfD8' ]]; then failed=1; fi
+          exit "$failed"
