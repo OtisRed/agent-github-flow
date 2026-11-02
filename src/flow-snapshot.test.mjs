@@ -26,6 +26,19 @@ const project = () => ({ kind: 'snapshot', issueNodeId: 'issue', repository: 'ow
 const readers = () => ({ project: async () => project(), handoff: async () => ({ kind: 'evidence', handoff }),
   epoch: async ({ commentNodeId }) => proof(commentNodeId === old.nodeId ? old : handoff) });
 
+test('applies the fixed cutover only to the first handoff without checkpoints', async () => {
+  const r = readers(); const value = input(); let seen;
+  r.handoff = async args => { seen = args; return { kind: 'evidence', handoff }; };
+  assert.equal((await collectFlowSnapshot(value, r)).kind, 'snapshot');
+  assert.equal(seen.cutoverAt, value.cutoverAt);
+  const current = project(); current.marker = marker; current.witness = { version: 1, current: marker, previous: null };
+  r.project = async () => current;
+  r.handoff = async args => { seen = args; return { kind: 'evidence', handoff, previousComment: old }; };
+  assert.equal((await collectFlowSnapshot(value, r)).kind, 'snapshot');
+  assert.equal(Object.hasOwn(seen, 'cutoverAt'), false);
+  assert.equal(seen.checkpointCommentId, old.id);
+});
+
 test('combines initial evidence but never grants production trust or writer ownership', async () => {
   const result = await collectFlowSnapshot(input(), readers());
   assert.equal(result.kind, 'snapshot'); assert.equal(result.handoff.id, '2'); assert.deepEqual(result.epoch, epoch);

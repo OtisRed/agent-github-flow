@@ -55,6 +55,7 @@ export async function collectFlowSnapshot(input, readers = {}, options = {}) {
   if (previousMarker === undefined || (previousMarker !== null && !isFlowMarker(previousMarker))) return blocked('invalid-checkpoint');
   let comments;
   try { comments = await handoffReader({ ...args, trustedAuthorIds: input.trustedAuthorIds,
+    ...(input.mode === 'handoff' && first.marker === null && first.witness === null ? { cutoverAt: input.cutoverAt } : {}),
     ...(previousMarker ? { checkpointCommentId: previousMarker.commentId } : {}) }); } catch { return blocked('handoff-read-failed'); }
   if (comments?.kind !== 'evidence') return blocked('handoff-read-failed');
   if (previousMarker && (!comments.previousComment || comments.previousComment.id !== previousMarker.commentId

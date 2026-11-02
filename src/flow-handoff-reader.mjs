@@ -25,6 +25,7 @@ export async function collectHandoffEvidence(input) {
     || !Array.isArray(input.trustedAuthorIds) || input.trustedAuthorIds.length === 0
     || input.trustedAuthorIds.some(id => typeof id !== 'string' || !id)
     || new Set(input.trustedAuthorIds).size !== input.trustedAuthorIds.length
+    || (input.cutoverAt !== undefined && input.checkpointCommentId !== undefined)
     || (input.checkpointCommentId !== undefined && (typeof input.checkpointCommentId !== 'string'
       || !/^[1-9][0-9]*$/.test(input.checkpointCommentId)))) return blocked('invalid-input');
   const { graphql, owner, repo, number, trustedAuthorIds } = input;
@@ -75,7 +76,8 @@ export async function collectHandoffEvidence(input) {
         const confirmation = await fetchPage(original.after);
         if (!confirmation || JSON.stringify(confirmation) !== original.snapshot) return blocked('snapshot-changed');
       }
-      const handoff = selectLatestHandoff({ complete: true, trustedAuthorIds, comments: all });
+      const handoff = selectLatestHandoff({ complete: true, trustedAuthorIds, comments: all,
+        ...(input.cutoverAt !== undefined ? { cutoverAt: input.cutoverAt } : {}) });
       if (handoff.kind === 'blocked') return handoff;
       if (input.checkpointCommentId !== undefined) {
         const previousComment = all.find(comment => comment.id === input.checkpointCommentId);

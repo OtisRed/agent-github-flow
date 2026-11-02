@@ -6,6 +6,20 @@ const body = status => `[FLOW]\nRola: Coder\nStan docelowy: ${status}\nWykonano:
 const item = (id, seconds, text = body('review'), authorId = 'trusted') => ({ id, nodeId: `node-${id}`, authorId, createdAt: `2026-01-01T10:00:${seconds}Z`, lastEditedAt: null, body: text });
 const args = comments => ({ complete: true, trustedAuthorIds: ['trusted'], comments });
 
+test('ignores legacy comments through the fixed cutover but never ignores new malformed handoffs', () => {
+  const cutoverAt = '2026-01-01T10:00:02Z';
+  const legacy = [item('10', '01', 'legacy'), item('11', '02', 'legacy at boundary')];
+  assert.deepEqual(selectLatestHandoff({ ...args(legacy), cutoverAt }), { kind: 'absent' });
+  assert.equal(selectLatestHandoff({ ...args([...legacy, item('12', '03')]), cutoverAt }).id, '12');
+  assert.deepEqual(selectLatestHandoff({ ...args([...legacy, item('12', '03', 'new malformed')]), cutoverAt }),
+    { kind: 'blocked', reason: 'invalid-latest-handoff' });
+  assert.deepEqual(selectLatestHandoff({ ...args(legacy), cutoverAt: 'tomorrow' }), { kind: 'blocked', reason: 'invalid-input' });
+  const invalidDate = item('10', '01', 'legacy'); invalidDate.createdAt = '2026-02-30T10:00:00Z';
+  assert.deepEqual(selectLatestHandoff({ ...args([invalidDate]), cutoverAt }), { kind: 'blocked', reason: 'invalid-comment-metadata' });
+  assert.deepEqual(selectLatestHandoff({ ...args([item('10', '01'), item('10', '03')]), cutoverAt }),
+    { kind: 'blocked', reason: 'invalid-comment-metadata' });
+});
+
 test('selects the newest trusted handoff regardless of input order', () => {
   const latest = item('12', '02', body('smoke'));
   const result = selectLatestHandoff(args([latest, item('10', '01'), item('13', '03', 'ignored', 'other')]));

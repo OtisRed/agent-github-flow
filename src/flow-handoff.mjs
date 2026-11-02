@@ -15,6 +15,8 @@ export function selectLatestHandoff(input) {
   if (!Array.isArray(input.comments) || !Array.isArray(input.trustedAuthorIds)
     || input.trustedAuthorIds.length === 0 || input.trustedAuthorIds.some(id => typeof id !== 'string' || !id)
     || new Set(input.trustedAuthorIds).size !== input.trustedAuthorIds.length) return blocked('invalid-input');
+  const cutover = input.cutoverAt === undefined ? null : timestamp(input.cutoverAt);
+  if (input.cutoverAt !== undefined && cutover === null) return blocked('invalid-input');
   const trusted = new Set(input.trustedAuthorIds);
   const selected = [];
   const ids = new Set();
@@ -30,6 +32,7 @@ export function selectLatestHandoff(input) {
     const created = timestamp(comment.createdAt);
     if (created === null || typeof comment.body !== 'string' || !Object.hasOwn(comment, 'lastEditedAt')
       || (comment.lastEditedAt !== null && timestamp(comment.lastEditedAt) === null)) return blocked('invalid-comment-metadata');
+    if (cutover !== null && created <= cutover) continue;
     selected.push({ comment, created });
   }
   if (!selected.length) return { kind: 'absent' };

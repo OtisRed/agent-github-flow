@@ -12,6 +12,15 @@ const page = (nodes, hasNextPage = false, endCursor = null, totalCount = 2) => (
 } } } });
 const args = graphql => ({ graphql, owner: 'owner', repo: 'repo', number: 1, trustedAuthorIds: ['user-1'] });
 
+test('uses cutover only for initial selection while preserving the complete audited history', async () => {
+  const graphql = async () => page([comment(10, '01', 'legacy')], false, null, 1);
+  const cutoverAt = '2026-01-01T10:00:02Z';
+  const result = await collectHandoffEvidence({ ...args(graphql), cutoverAt });
+  assert.deepEqual(result, { kind: 'evidence', handoff: { kind: 'absent' }, commentCount: 1 });
+  assert.deepEqual(await collectHandoffEvidence({ ...args(graphql), cutoverAt, checkpointCommentId: '10' }),
+    { kind: 'blocked', reason: 'invalid-input' });
+});
+
 test('reads and rechecks every page, then selects a bound numeric and node ID', async () => {
   const cursors = [];
   const graphql = async (_query, vars) => { cursors.push(vars.after); return vars.after ? page([comment(12, '02', text('smoke'))]) : page([comment(10, '01')], true, 'next'); };
