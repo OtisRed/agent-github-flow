@@ -68,7 +68,7 @@ jobs:
             if (split.kind !== 'snapshot') { console.error('Probe: Project/issue binding could not be verified'); process.exitCode = 1; }
             else {
               console.log('Probe: split identities and actual Project/issue binding verified');
-              const snapshot = await collectFlowSnapshot(input);
+              const snapshot = await collectFlowSnapshot({ ...input, observedAt: new Date().toISOString().replace(/\\.\\d{3}Z$/, 'Z') });
               const safe = new Set(['handoff-read-failed', 'handoff-epoch-read-failed', 'project-read-failed', 'project-snapshot-changed']);
               if (snapshot.kind === 'snapshot') console.log('Probe: complete read-only snapshot obtained');
               else if (snapshot.kind === 'awaiting-handoff') console.log('Probe: awaiting a valid handoff');
