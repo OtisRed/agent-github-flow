@@ -3,9 +3,9 @@ on:
   workflow_call:
     secrets:
       PROBE_A:
-        required: false
+        required: true
       PROBE_B:
-        required: false
+        required: true
 permissions:
   contents: read
 jobs:
