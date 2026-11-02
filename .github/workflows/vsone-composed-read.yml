@@ -12,16 +12,16 @@ jobs:
     environment: split-app-probe
     timeout-minutes: 12
     steps:
-      - name: Check out reviewed read-only implementation
+      - name: Check out exact read-only candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ca044bd2e60e402f24834c2449f18aa8695ea57b
+          ref: 680487edc4abf09ab75f21631eeaf8ca7fceaa92
           persist-credentials: false
       - name: Verify revision
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$(git rev-parse HEAD)" != 'ca044bd2e60e402f24834c2449f18aa8695ea57b' ]]; then
+          if [[ "$(git rev-parse HEAD)" != '680487edc4abf09ab75f21631eeaf8ca7fceaa92' ]]; then
             echo 'Probe: revision mismatch'; exit 1
           fi
       - name: Create read-only installation token
@@ -64,7 +64,7 @@ jobs:
               number: Number(issue[3]), issueId: e.ISSUE_ID, projectOwner: project[1], projectNumber: Number(project[2]),
               projectId: e.PROJECT_ID, itemId: e.ITEM_ID, statusFieldId: e.STATUS_FIELD_ID, statusFieldName: 'Status',
               checkpointFieldId: e.CHECKPOINT_FIELD_ID, checkpointFieldName: 'FLOW checkpoint',
-              trustedAuthorIds: [e.AUTHOR_ID], cutoverAt: '2026-01-01T00:00:00Z', ...transports };
+              trustedAuthorIds: [e.AUTHOR_ID], cutoverAt: '2026-11-02T00:00:00Z', ...transports };
             const split = await readSplitProjectIssue(input);
             if (split.kind !== 'snapshot') { console.error('Probe: Project/issue binding could not be verified'); process.exitCode = 1; }
             else {
