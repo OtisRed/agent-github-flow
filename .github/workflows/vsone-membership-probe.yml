@@ -1,0 +1,57 @@
+name: VSone membership read probe
+on:
+  push:
+    branches: [spike/workflow-call-allowed]
+    paths: [.github/workflows/vsone-membership-probe.yml]
+permissions: {}
+jobs:
+  membership:
+    if: github.ref == 'refs/heads/spike/workflow-call-allowed'
+    runs-on: ubuntu-24.04
+    environment: split-app-probe
+    timeout-minutes: 5
+    steps:
+      - name: Create read-only App token
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: '4681815'
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: OtisRed
+          repositories: ${{ secrets.VSONE_PROBE_REPOSITORY }}
+          permission-issues: read
+      - name: Check issue-to-Project membership without mutation
+        env:
+          PROJECT_TOKEN: ${{ secrets.PROJECT_ACCESS_TOKEN }}
+          ISSUE_TOKEN: ${{ steps.app.outputs.token }}
+          TARGET_ISSUE: ${{ secrets.VSONE_PROBE_ISSUE }}
+          PROJECT_ID: ${{ secrets.VSONE_PROBE_PROJECT_ID }}
+          ITEM_ID: ${{ secrets.VSONE_PROBE_ITEM_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { spawnSync } from 'node:child_process';
+          const e = process.env;
+          const issue = /^([A-Za-z0-9-]+)\/([A-Za-z0-9_.-]+)\/issues\/([1-9][0-9]*)$/.exec(e.TARGET_ISSUE ?? '');
+          if (!issue || !e.PROJECT_ID || !e.ITEM_ID || !e.PROJECT_TOKEN || !e.ISSUE_TOKEN) {
+            console.error('Probe: invalid configuration'); process.exit(1);
+          }
+          const query = 'query($owner:String!,$repo:String!,$number:Int!) { repository(owner:$owner,name:$repo) { issue(number:$number) { projectItems(first:100) { nodes { id project { id } } pageInfo { hasNextPage } } } } }';
+          function check(token) {
+            const env = { PATH: e.PATH, HOME: e.HOME, GH_TOKEN: token, GH_PROMPT_DISABLED: '1' };
+            const request = spawnSync('gh', ['api', 'graphql', '--input', '-'], { env,
+              input: JSON.stringify({ query, variables: { owner: issue[1], repo: issue[2], number: Number(issue[3]) } }),
+              encoding: 'utf8', timeout: 30000, maxBuffer: 8000000 });
+            if (request.status !== 0) return 'unavailable';
+            let response; try { response = JSON.parse(request.stdout); } catch { return 'unavailable'; }
+            if (response.errors?.length) return 'unavailable';
+            const items = response.data?.repository?.issue?.projectItems;
+            if (!items || !Array.isArray(items.nodes) || items.pageInfo?.hasNextPage !== false) return 'incomplete';
+            const matches = items.nodes.filter(item => item.project?.id === e.PROJECT_ID);
+            if (matches.length > 1) return 'ambiguous';
+            return matches.length === 1 && matches[0].id === e.ITEM_ID ? 'matching-card' : 'no-confirmed-match';
+          }
+          console.log('Project credential: ' + check(e.PROJECT_TOKEN));
+          console.log('App credential: ' + check(e.ISSUE_TOKEN));
+          NODE
