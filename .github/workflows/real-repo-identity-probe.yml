@@ -1,0 +1,79 @@
+name: Real repository split identity probe
+on:
+  push:
+    branches: [spike/workflow-call-allowed]
+    paths: [.github/workflows/real-repo-identity-probe.yml]
+permissions: {}
+jobs:
+  project-probe:
+    if: github.ref == 'refs/heads/spike/workflow-call-allowed'
+    runs-on: ubuntu-24.04
+    environment: pat-probe
+    timeout-minutes: 4
+    outputs:
+      binding-hash: ${{ steps.project.outputs.binding_hash }}
+    steps:
+      - name: Read private Project and card binding
+        id: project
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_ACCESS_TOKEN }}
+          PROBE_OWNER: ${{ vars.PROBE_OWNER }}
+          PROBE_PROJECT_NUMBER: ${{ vars.PROBE_PROJECT_NUMBER }}
+          PROBE_PROJECT_ID: ${{ vars.PROBE_PROJECT_ID }}
+          PROBE_ITEM_ID: ${{ vars.PROBE_ITEM_ID }}
+          PROBE_ITEM_NUMBER: ${{ vars.PROBE_ITEM_NUMBER }}
+          PROBE_ISSUE_ID: ${{ vars.PROBE_ISSUE_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" || -z "${PROBE_OWNER:-}" || ! "${PROBE_PROJECT_NUMBER:-}" =~ ^[0-9]+$ || -z "${PROBE_PROJECT_ID:-}" || -z "${PROBE_ITEM_ID:-}" || ! "${PROBE_ITEM_NUMBER:-}" =~ ^[0-9]+$ || -z "${PROBE_ISSUE_ID:-}" ]]; then echo 'Probe: Project configuration unavailable'; exit 1; fi
+          project=$(gh api graphql -f query='query($owner:String!,$number:Int!) { user(login:$owner) { projectV2(number:$number) { id public } } }' -f owner="$PROBE_OWNER" -F number="$PROBE_PROJECT_NUMBER" --jq '.data.user.projectV2 | select(.public == false) | .id' 2>/dev/null) || { echo 'Probe: Project unavailable'; exit 1; }
+          if [[ "$project" != "$PROBE_PROJECT_ID" ]]; then echo 'Probe: Project mismatch'; exit 1; fi
+          card=$(gh api -H 'X-GitHub-Api-Version: 2026-03-10' "users/$PROBE_OWNER/projectsV2/$PROBE_PROJECT_NUMBER/items/$PROBE_ITEM_NUMBER" --jq 'select(.content_type == "Issue" and .archived_at == null) | [.node_id,.content.node_id] | @tsv' 2>/dev/null) || { echo 'Probe: Project card unavailable'; exit 1; }
+          if [[ "$card" != "$PROBE_ITEM_ID"$'\t'"$PROBE_ISSUE_ID" ]]; then echo 'Probe: Project binding unavailable or mismatched'; exit 1; fi
+          binding_hash=$(printf '%s\0%s' "$PROBE_OWNER" "$PROBE_ISSUE_ID" | sha256sum | cut -d ' ' -f 1)
+          echo "binding_hash=$binding_hash" >> "$GITHUB_OUTPUT"
+          echo 'Probe: PAT real Project binding confirmed'
+  app-probe:
+    needs: project-probe
+    if: github.ref == 'refs/heads/spike/workflow-call-allowed'
+    runs-on: ubuntu-24.04
+    environment: split-app-probe
+    timeout-minutes: 4
+    steps:
+      - name: Check App key availability
+        env:
+          APP_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${APP_KEY:-}" ]]; then echo 'Probe: App key unavailable'; exit 1; fi
+          echo 'Probe: App key available'
+      - name: Create restricted App token
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: '4681815'
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ vars.PROBE_OWNER }}
+          repositories: ${{ vars.PROBE_REPOSITORY }}
+          permission-issues: read
+      - name: Read real private issue
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PROBE_OWNER: ${{ vars.PROBE_OWNER }}
+          PROBE_REPOSITORY: ${{ vars.PROBE_REPOSITORY }}
+          PROBE_ISSUE_ID: ${{ vars.PROBE_ISSUE_ID }}
+          PROBE_ISSUE_NUMBER: ${{ vars.PROBE_ISSUE_NUMBER }}
+          BINDING_HASH: ${{ needs.project-probe.outputs.binding-hash }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" || -z "${PROBE_OWNER:-}" || -z "${PROBE_REPOSITORY:-}" || -z "${PROBE_ISSUE_ID:-}" || ! "${PROBE_ISSUE_NUMBER:-}" =~ ^[0-9]+$ ]]; then echo 'Probe: App configuration unavailable'; exit 1; fi
+          binding_hash=$(printf '%s\0%s' "$PROBE_OWNER" "$PROBE_ISSUE_ID" | sha256sum | cut -d ' ' -f 1)
+          if [[ -z "${BINDING_HASH:-}" || "$binding_hash" != "$BINDING_HASH" ]]; then echo 'Probe: Identity binding mismatch'; exit 1; fi
+          repository=$(gh api /installation/repositories --jq 'if .total_count == 1 and (.repositories | length) == 1 then .repositories[0].full_name else "" end' 2>/dev/null) || { echo 'Probe: App repository unavailable'; exit 1; }
+          if [[ "$repository" != "$PROBE_OWNER/$PROBE_REPOSITORY" ]]; then echo 'Probe: App repository mismatch'; exit 1; fi
+          issue=$(gh api graphql -f query='query($id:ID!) { node(id:$id) { ... on Issue { id number repository { nameWithOwner isPrivate } } } }' -f id="$PROBE_ISSUE_ID" --jq '.data.node | select(.repository.isPrivate == true) | [.id,.number,.repository.nameWithOwner] | @tsv' 2>/dev/null) || { echo 'Probe: App issue unavailable'; exit 1; }
+          if [[ "$issue" != "$PROBE_ISSUE_ID"$'\t'"$PROBE_ISSUE_NUMBER"$'\t'"$PROBE_OWNER/$PROBE_REPOSITORY" ]]; then echo 'Probe: App issue mismatch'; exit 1; fi
+          echo 'Probe: App real private issue read confirmed'
