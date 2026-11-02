@@ -43,11 +43,13 @@ test('does not reset a checkpoint already verified in the current epoch', () => 
   assert.deepEqual(planReentry(value), { kind: 'blocked', reason: 'open-issue-in-done' });
 });
 
-test('does not let an older reopen sentinel reset a later epoch or accept unknown bootstrap', () => {
+test('does not accept a stale reopen sentinel without evidence or unknown bootstrap', () => {
   const value = input(); value.witness = planReentry(value).witness;
   value.epoch = { kind: 'reopened', anchor: 'later-event' };
   value.nativeReopenEvidence.epoch = value.epoch;
-  assert.deepEqual(planReentry(value), { kind: 'blocked', reason: 'epoch-changed' });
+  assert.deepEqual(planReentry(value), { kind: 'blocked', reason: 'unverified-checkpoint-epoch' });
+  value.checkpointEpochEvidence.epoch = structuredClone(value.epoch);
+  assert.equal(planReentry(value).kind, 'start-reentry');
   const newBody = '[FLOW]\nRola: Designer\nStan docelowy: review\nWykonano: Projekt\nNastępny krok: Review';
   value.currentStatus = 'needs-design'; value.marker = null; value.trusted = true; value.currentEpochVerified = true;
   value.cutoverAt = '2026-01-01T10:00:00Z';
@@ -63,14 +65,47 @@ test('does not let an older reopen sentinel reset a later epoch or accept unknow
   assert.deepEqual(planReentry(value), { kind: 'already-reentered' });
 });
 
+test('starts a fresh reentry after interruption and a later native reopen only from known partial states', () => {
+  for (const [status, marker] of [['done', old], ['needs-design', old], ['needs-design', null], ['done', null]]) {
+    const value = input(); value.witness = planReentry(value).witness;
+    value.epoch = { kind: 'reopened', anchor: 'reopen-2' }; value.nativeReopenEvidence.epoch = structuredClone(value.epoch);
+    value.checkpointEpochEvidence.epoch = structuredClone(value.epoch); value.currentStatus = status; value.marker = marker;
+    const result = planReentry(value); assert.equal(result.kind, 'start-reentry'); assert.equal(result.witness.epoch.anchor, 'reopen-2');
+  }
+  const value = input(); value.witness = planReentry(value).witness;
+  value.epoch = { kind: 'reopened', anchor: 'reopen-2' }; value.nativeReopenEvidence.epoch = structuredClone(value.epoch);
+  value.checkpointEpochEvidence.epoch = structuredClone(value.epoch); value.currentStatus = 'review';
+  assert.deepEqual(planReentry(value), { kind: 'blocked', reason: 'unexpected-status' });
+  value.currentStatus = 'done'; value.marker = { ...old, commentId: 'other' };
+  assert.deepEqual(planReentry(value), { kind: 'blocked', reason: 'checkpoint-mismatch' });
+});
+
+test('recovers the observed pending agent-ready fixture after a later reopen', () => {
+  const value = input(); value.currentStatus = 'agent-ready'; value.witness = planReentry(value).witness;
+  value.epoch = { kind: 'reopened', anchor: 'reopen-2' }; value.nativeReopenEvidence.epoch = structuredClone(value.epoch);
+  value.checkpointEpochEvidence.epoch = structuredClone(value.epoch);
+  const result = planReentry(value);
+  assert.equal(result.kind, 'start-reentry'); assert.equal(result.witness.fromStatus, 'agent-ready');
+  assert.equal(result.witness.epoch.anchor, 'reopen-2'); assert.deepEqual(result.witness.previous, old);
+});
+
 test('supersedes a finished older reopen after a second verified reopen', () => {
   const value = input(); value.marker = null; value.currentStatus = 'needs-design';
   value.witness = { version: 2, kind: 'reentry', phase: 'ready', epoch: structuredClone(value.epoch), previous: old, fromStatus: 'done' };
   value.epoch = { kind: 'reopened', anchor: 'reopen-2' };
   value.nativeReopenEvidence.epoch = structuredClone(value.epoch);
+  value.checkpointEpochEvidence.epoch = structuredClone(value.epoch);
   let plan = planReentry(value); assert.equal(plan.kind, 'start-reentry'); assert.equal(plan.witness.epoch.anchor, 'reopen-2');
   value.witness = plan.witness; plan = planReentry(value); assert.equal(plan.kind, 'finish-reentry');
   value.witness = plan.witness; assert.deepEqual(planReentry(value), { kind: 'already-reentered' });
+});
+
+test('never resumes a sentinel when its previous comment belongs to the current epoch', () => {
+  const value = input(); value.witness = planReentry(value).witness;
+  value.checkpointEpochEvidence.relation = 'current';
+  assert.deepEqual(planReentry(value), { kind: 'blocked', reason: 'unverified-checkpoint-epoch' });
+  value.checkpointEpochEvidence.relation = 'prior'; value.checkpointEpochEvidence.commentNodeId = 'foreign';
+  assert.deepEqual(planReentry(value), { kind: 'blocked', reason: 'unverified-checkpoint-epoch' });
 });
 
 test('blocks unverified, closed, conflicting, modified or missing data', () => {

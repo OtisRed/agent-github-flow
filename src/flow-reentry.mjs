@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { FLOW_STATUSES } from './flow.mjs';
 import { isFlowMarker } from './flow-recovery.mjs';
-import { isReentryWitness } from './flow-reentry-types.mjs';
+import { isReentryWitness, checkpointEvidenceMatches } from './flow-reentry-types.mjs';
 import { planBootstrap } from './flow-bootstrap.mjs';
 
 const blocked = reason => ({ kind: 'blocked', reason });
@@ -17,14 +17,6 @@ const validPrevious = (marker, comment) => marker === null || (isFlowMarker(mark
 const normalWitness = value => value && typeof value === 'object' && !Array.isArray(value)
   && Object.keys(value).length === 3 && ['version', 'current', 'previous'].every(key => Object.hasOwn(value, key))
   && value.version === 1 && value.previous === null && isFlowMarker(value.current) && value.current.phase === 'committed';
-const checkpointEvidenceMatches = (input, marker) => {
-  const proof = input.checkpointEpochEvidence;
-  return proof && proof.kind === 'checkpoint-epoch-evidence' && ['prior', 'current'].includes(proof.relation)
-    && proof.issueNodeId === input.issueNodeId && proof.commentId === marker.commentId && proof.commentDigest === marker.digest
-    && typeof input.previousComment?.nodeId === 'string' && !!input.previousComment.nodeId
-    && proof.commentNodeId === input.previousComment.nodeId && sameEpoch(proof.epoch, input.epoch);
-};
-
 const expected = input => ({ witness: structuredClone(input.witness), marker: structuredClone(input.marker),
   issueState: input.issueState, currentStatus: input.currentStatus, epoch: structuredClone(input.epoch) });
 const mutation = (input, plan) => ({ ...plan, expected: expected(input) });
@@ -47,10 +39,19 @@ export function planReentry(input) {
   const witness = input.witness;
   if (isReentryWitness(witness)) {
     if (!validPrevious(witness.previous, input.previousComment)) return blocked('previous-comment-missing-or-changed');
+    if (witness.previous !== null && (!checkpointEvidenceMatches(input, witness.previous)
+      || input.checkpointEpochEvidence.relation !== 'prior')) return blocked('unverified-checkpoint-epoch');
     if (!sameEpoch(witness.epoch, input.epoch)) {
-      // A finished older reentry may be superseded; never resume an older
-      // pending reset under a different native event.
-      if (witness.phase !== 'ready' || input.marker !== null) return blocked('epoch-changed');
+      // Start a new reset; never execute an older epoch's pending step.
+      // A partial older reset is admissible only at a known intermediate
+      // status and with its expected marker. Native done may follow closure.
+      if (witness.phase === 'ready' && input.marker !== null) return blocked('epoch-changed');
+      if (witness.phase === 'pending') {
+        if (input.marker !== null && !same(input.marker, witness.previous)) return blocked('checkpoint-mismatch');
+        if (![witness.fromStatus, 'needs-design', 'done'].includes(input.currentStatus)) return blocked('unexpected-status');
+        if (witness.previous !== null && input.marker === null && input.currentStatus === witness.fromStatus
+          && !['needs-design', 'done'].includes(input.currentStatus)) return blocked('unexpected-status');
+      }
       return mutation(input, { kind: 'start-reentry', witness: { version: 2, kind: 'reentry', phase: 'pending',
         epoch: structuredClone(input.epoch), previous: structuredClone(witness.previous), fromStatus: input.currentStatus } });
     }

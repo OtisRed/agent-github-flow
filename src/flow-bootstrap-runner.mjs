@@ -26,10 +26,13 @@ export async function runBootstrapStep({ readSnapshot, writeStep }) {
   }
   try { await writeStep(fresh, plan); } catch { return blocked('write-uncertain'); }
   let after;
-  try { after = await readSnapshot(); } catch { return blocked('readback-failed'); }
+  // After normalization the witness no longer contains the previous comment;
+  // require the reader to re-fetch it once for this step's readback.
+  try { after = await readSnapshot({ checkpointCommentId: fresh.previousComment?.id }); } catch { return blocked('readback-failed'); }
   if (after?.kind !== 'snapshot') return blocked('readback-failed');
   const stableKeys = ['projectId', 'itemId', 'issueNodeId', 'repository', 'statusFieldId', 'checkpointFieldId',
-    'issueState', 'epoch', 'handoff', 'handoffEpochEvidence', 'cutoverAt'];
+    'issueState', 'epoch', 'handoff', 'handoffEpochEvidence', 'cutoverAt',
+    'previousComment', 'checkpointEpochEvidence', 'nativeReopenEvidence'];
   if (stableKeys.some(key => !isDeepStrictEqual(fresh[key], after[key]))) return blocked('readback-conflict');
   const expectedWitness = projectSteps.has(plan.kind) ? plan.witness : fresh.witness;
   const expectedMarker = issueSteps.has(plan.kind) ? plan.marker : fresh.marker;

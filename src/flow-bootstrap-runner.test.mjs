@@ -61,6 +61,21 @@ test('rejects a successful API response if readback differs or another field cha
   assert.equal(ctx.mutations.length, 1);
 });
 
+test('readback also protects the old comment and epoch evidence after reopen', async () => {
+  const ctx = harness(); const oldBody = '[FLOW]\nRola: Smoker\nStan docelowy: smoke\nWykonano: Praca\nNastępny krok: Smoke';
+  const old = { version: 1, phase: 'committed', commentId: '9', digest: createHash('sha256').update(oldBody).digest('hex'),
+    fromStatus: 'review', targetStatus: 'smoke' };
+  ctx.state.epoch = { kind: 'reopened', anchor: 'reopen' }; ctx.state.handoffEpochEvidence.epoch = structuredClone(ctx.state.epoch);
+  ctx.state.witness = { version: 2, kind: 'reentry', phase: 'ready', epoch: structuredClone(ctx.state.epoch), previous: old, fromStatus: 'done' };
+  ctx.state.previousComment = { id: '9', nodeId: 'old-node', body: oldBody };
+  ctx.state.checkpointEpochEvidence = { kind: 'checkpoint-epoch-evidence', issueNodeId: 'issue', commentId: '9', commentNodeId: 'old-node',
+    commentDigest: old.digest, relation: 'prior', epoch: structuredClone(ctx.state.epoch) };
+  ctx.state.nativeReopenEvidence = { kind: 'native-reopen-evidence', issueNodeId: 'issue', epoch: structuredClone(ctx.state.epoch) };
+  const writeStep = async (snapshot, plan) => { await ctx.writeStep(snapshot, plan); ctx.state.previousComment.body += ' changed'; };
+  assert.deepEqual(await runBootstrapStep({ readSnapshot: ctx.readSnapshot, writeStep }), { kind: 'blocked', reason: 'readback-conflict' });
+  assert.equal(ctx.mutations.length, 1);
+});
+
 test('blocks invalid options and GraphQL mutation errors', async () => {
   const ctx = harness(); const snapshot = structuredClone(ctx.state);
   await assert.rejects(writeBootstrapGitHubStep({ graphql: async () => ({}), snapshot,

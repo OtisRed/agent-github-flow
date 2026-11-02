@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { parseFlowComment } from './flow.mjs';
 import { isFlowMarker, planRecovery } from './flow-recovery.mjs';
 import { planActiveStatus } from './flow-transition.mjs';
-import { isReentryWitness } from './flow-reentry-types.mjs';
+import { isReentryWitness, checkpointEvidenceMatches } from './flow-reentry-types.mjs';
 
 const blocked = reason => ({ kind: 'blocked', reason });
 const validTime = value => {
@@ -40,6 +40,8 @@ export function planBootstrap(input) {
   const reentryReady = isReentryWitness(input.witness) && input.witness.phase === 'ready'
     && input.epoch.kind === 'reopened' && input.witness.epoch.anchor === input.epoch.anchor && input.marker === null;
   if (reentryReady && !previousMatches(input.witness.previous, input.previousComment)) return blocked('previous-comment-missing-or-changed');
+  if (reentryReady && input.witness.previous !== null && (!checkpointEvidenceMatches(input, input.witness.previous)
+    || input.checkpointEpochEvidence.relation !== 'prior')) return blocked('unverified-checkpoint-epoch');
   if (!input.handoff || input.handoff.kind === 'blocked') return blocked('unverified-handoff');
   if (input.handoff.kind === 'absent') {
     return input.marker === null && (input.witness === null || reentryReady)
@@ -92,6 +94,8 @@ export function planBootstrap(input) {
   if (witness.epoch.kind !== input.epoch.kind || witness.epoch.anchor !== input.epoch.anchor) return blocked('epoch-changed');
   if (witness.cutoverAt !== input.cutoverAt) return blocked('cutover-changed');
   if (!previousMatches(witness.previous, input.previousComment)) return blocked('previous-comment-missing-or-changed');
+  if (witness.previous !== null && (!checkpointEvidenceMatches(input, witness.previous)
+    || input.checkpointEpochEvidence.relation !== 'prior')) return blocked('unverified-checkpoint-epoch');
   if (witness.previous?.commentId === witness.current.commentId) return blocked('old-handoff');
   const marker = witness.current;
   if (marker.commentId !== handoff.id || marker.digest !== digest || marker.targetStatus !== parsed.targetStatus) return blocked('handoff-changed');

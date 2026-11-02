@@ -146,7 +146,12 @@ test('retains the previous comment evidence until a post-reopen bootstrap is com
   value.epoch = { kind: 'reopened', anchor: 'reopen-node' };
   bindHandoff(value);
   value.witness = { version: 2, kind: 'reentry', phase: 'ready', epoch: value.epoch, previous: old, fromStatus: 'done' };
-  value.previousComment = { id: '1', body: oldBody };
+  value.previousComment = { id: '1', nodeId: 'old-node', body: oldBody };
+  value.checkpointEpochEvidence = { kind: 'checkpoint-epoch-evidence', relation: 'prior', issueNodeId: value.issueNodeId,
+    commentId: '1', commentNodeId: 'old-node', commentDigest: old.digest, epoch: structuredClone(value.epoch) };
+  value.checkpointEpochEvidence.relation = 'current';
+  assert.deepEqual(planBootstrap(value), { kind: 'blocked', reason: 'unverified-checkpoint-epoch' });
+  value.checkpointEpochEvidence.relation = 'prior';
   const plan = planBootstrap(value); assert.equal(plan.kind, 'write-bootstrap-witness'); value.witness = plan.witness;
   value.previousComment = null;
   assert.deepEqual(planBootstrap(value), { kind: 'blocked', reason: 'previous-comment-missing-or-changed' });

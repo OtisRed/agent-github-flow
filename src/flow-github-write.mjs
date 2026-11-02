@@ -1,7 +1,8 @@
-import { replaceFlowMarker } from './flow-marker.mjs';
+import { replaceFlowMarker, removeFlowMarker } from './flow-marker.mjs';
 import { planBootstrap } from './flow-bootstrap.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { planTransitionSnapshot, transitionProjectValue } from './flow-transition-runner.mjs';
+import { planReentry } from './flow-reentry.mjs';
 
 export const PROJECT_WRITE = `mutation FlowProjectWrite($project: ID!, $item: ID!, $field: ID!, $value: ProjectV2FieldValue!) {
   updateProjectV2ItemFieldValue(input: { projectId: $project, itemId: $item, fieldId: $field, value: $value }) { projectV2Item { id } }
@@ -62,6 +63,34 @@ export async function writeTransitionGitHubStep({ graphql, snapshot, plan }) {
   }
   if (issueSteps.has(plan.kind)) {
     const update = replaceFlowMarker(snapshot.issueBody, snapshot.marker, plan.marker);
+    if (update.kind !== 'updated') throw Error('marker-conflict');
+    const result = dataOf(await graphql(ISSUE_WRITE, { issue: snapshot.issueNodeId, body: update.body }));
+    if (result?.updateIssue?.issue?.id !== snapshot.issueNodeId) throw Error('unconfirmed-issue-write');
+    return;
+  }
+  if (plan.kind === 'update-status') {
+    const options = snapshot.statusOptions?.filter(option => option.name === plan.targetStatus) ?? [];
+    if (options.length !== 1 || !nonempty(options[0].id) || snapshot.currentStatus !== plan.expectedStatus) throw Error('invalid-target-status');
+    const result = dataOf(await graphql(PROJECT_WRITE, { project: snapshot.projectId, item: snapshot.itemId,
+      field: snapshot.statusFieldId, value: { singleSelectOptionId: options[0].id } }));
+    if (result?.updateProjectV2ItemFieldValue?.projectV2Item?.id !== snapshot.itemId) throw Error('unconfirmed-status-write');
+    return;
+  }
+  throw Error('unsupported-step');
+}
+
+export async function writeReentryGitHubStep({ graphql, snapshot, plan }) {
+  if (typeof graphql !== 'function' || snapshot?.kind !== 'snapshot'
+    || !['projectId', 'itemId', 'issueNodeId', 'statusFieldId', 'checkpointFieldId'].every(k => nonempty(snapshot[k]))) throw Error('invalid-snapshot');
+  if (!isDeepStrictEqual(plan, planReentry(snapshot))) throw Error('plan-snapshot-mismatch');
+  if (['start-reentry', 'finish-reentry'].includes(plan.kind)) {
+    const result = dataOf(await graphql(PROJECT_WRITE, { project: snapshot.projectId, item: snapshot.itemId,
+      field: snapshot.checkpointFieldId, value: { text: JSON.stringify(plan.witness) } }));
+    if (result?.updateProjectV2ItemFieldValue?.projectV2Item?.id !== snapshot.itemId) throw Error('unconfirmed-project-write');
+    return;
+  }
+  if (plan.kind === 'remove-issue-marker') {
+    const update = removeFlowMarker(snapshot.issueBody, plan.marker);
     if (update.kind !== 'updated') throw Error('marker-conflict');
     const result = dataOf(await graphql(ISSUE_WRITE, { issue: snapshot.issueNodeId, body: update.body }));
     if (result?.updateIssue?.issue?.id !== snapshot.issueNodeId) throw Error('unconfirmed-issue-write');
