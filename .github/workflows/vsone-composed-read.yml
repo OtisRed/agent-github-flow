@@ -52,6 +52,7 @@ jobs:
           import { createFlowReadTransports } from './src/flow-read-transports.mjs';
           import { readSplitProjectIssue } from './src/flow-github-split-project.mjs';
           import { collectFlowSnapshot } from './src/flow-snapshot.mjs';
+          import { collectHandoffEvidence } from './src/flow-handoff-reader.mjs';
           import { runReadOnlyFlowPreflight } from './src/flow-readonly-preflight.mjs';
           try {
             const e = process.env;
@@ -74,6 +75,15 @@ jobs:
               else if (snapshot.kind === 'awaiting-handoff') console.log('Probe: awaiting a valid handoff');
               else if (snapshot.kind === 'blocked' && safe.has(snapshot.reason)) console.log('Probe: snapshot blocked at ' + snapshot.reason);
               else { console.error('Probe: snapshot unavailable'); process.exitCode = 1; }
+              if (snapshot.kind === 'blocked' && snapshot.reason === 'handoff-read-failed') {
+                const handoff = await collectHandoffEvidence({ graphql: transports.issueGraphql,
+                  owner: input.owner, repo: input.repo, number: input.number, trustedAuthorIds: input.trustedAuthorIds });
+                const known = new Set(['unavailable-or-invalid-page', 'snapshot-changed', 'size-limit',
+                  'incomplete-comments', 'invalid-cursor', 'page-limit', 'invalid-input', 'invalid-comment-metadata',
+                  'ambiguous-order', 'edited-latest-handoff', 'invalid-latest-handoff']);
+                if (handoff.kind === 'blocked' && known.has(handoff.reason)) console.log('Probe: handoff category ' + handoff.reason);
+                else console.log('Probe: handoff requires further investigation');
+              }
               const cycle = await runReadOnlyFlowPreflight(input);
               if (!Array.isArray(cycle.steps) || cycle.steps.length !== 0) { console.error('Probe: unexpected write step'); process.exitCode = 1; }
               else if (cycle.kind === 'blocked') console.log('Probe: read-only cycle blocked safely');
