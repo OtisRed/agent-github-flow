@@ -109,6 +109,15 @@ lecz same nie uwierzytelniają dostarczonych danych, listy autorów, konfiguracj
 ani ochrony gałęzi. Caller musi ponowić odczyty i porównać plan przed mutacją.
 Plannery nie wykonują mutacji; testy używają fikcyjnych obserwacji.
 
+`src/flow-initial-publication-step.mjs` przygotowuje pojedynczy krok publikacji
+pierwszego `pending`: porównuje odczyty i konfigurację, wymaga pełnego audytu
+ochrony przed przygotowaniem obiektów oraz ponownie bezpośrednio przed jedną
+próbą publikacji, po której obserwuje refy i odczytuje stan. Niepewnego wyniku
+nie ponawia automatycznie. Kompozycja wymaga niezależnie zaufanych collectorów,
+transportów i serializacji; nie jest podłączona do Actions i była testowana
+wyłącznie z fikcyjnymi danymi. Nie eliminuje wyścigu między ostatnim audytem
+a zapisem ani nie dowodzi poprawności rzeczywistego CAS.
+
 `src/flow-project-status-step.mjs` przygotowuje pojedynczy krok zmiany opcji
 Projectu dla pierwszego `pending`: dwukrotnie porównuje dane, sprawdza
 niezależnie podaną konfigurację, wykonuje jedną próbę przez ograniczony
