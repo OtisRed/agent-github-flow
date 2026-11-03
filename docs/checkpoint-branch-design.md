@@ -58,6 +58,10 @@ drzewem i żąda rekurencyjnego odczytu oraz blobu indeksu. Testy używają
 fikcyjnego transportu; prawdziwy adapter musi wykonać te odczyty w wybranym
 repozytorium, a osobny mechanizm powiązać commit z zarejestrowanym refem.
 Plan jest danymi do dalszej weryfikacji, nie upoważnieniem do zapisu.
+Adapter `src/flow-checkpoint-git-reader.mjs` buduje wyłącznie adresy odczytowe
+GitHub API dla wskazanego repozytorium, a wspólny transport kieruje je przez
+token App i odrzuca przekierowania. Test kompozycji używa fikcyjnych odpowiedzi;
+adapter nie potwierdza jeszcze rzeczywistego dostępu ani zaufania do repozytorium.
 
 ## Rejestracja i utrata danych
 

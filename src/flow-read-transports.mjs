@@ -3,6 +3,7 @@ import { SPLIT_PROJECT_QUERY, SPLIT_ISSUE_QUERY } from './flow-github-split-proj
 import { HANDOFF_QUERY } from './flow-handoff-reader.mjs';
 import { EPOCH_QUERY } from './flow-epoch-reader.mjs';
 import { NATIVE_EPOCH_QUERY } from './flow-native-epoch-reader.mjs';
+import { createCheckpointGitReader } from './flow-checkpoint-git-reader.mjs';
 
 const GRAPHQL_URL = 'https://api.github.com/graphql';
 const issueQueries = new Set([SPLIT_ISSUE_QUERY, HANDOFF_QUERY, EPOCH_QUERY, NATIVE_EPOCH_QUERY]);
@@ -46,5 +47,7 @@ export function createFlowReadTransports({ projectToken, issueToken, request = f
     const result = await call(url, projectToken, 'GET');
     return { status: 200, json: async () => result.data, headers: { get: name => name === 'link' ? result.link : null } };
   } });
-  return Object.freeze({ projectGraphql, issueGraphql, listItems });
+  const checkpointGit = ({ owner, repo } = {}) => createCheckpointGitReader({ owner, repo,
+    request: async url => (await call(url, issueToken, 'GET')).data });
+  return Object.freeze({ projectGraphql, issueGraphql, listItems, checkpointGit });
 }
