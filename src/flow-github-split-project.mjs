@@ -100,7 +100,7 @@ async function readProjectIssue(input, branchCheckpoint) {
     const projectAgain = await getProject(); const issueAgain = await getIssue();
     if (JSON.stringify(projectAgain) !== JSON.stringify(first) || JSON.stringify(issueAgain) !== JSON.stringify(issue)) return blocked('snapshot-changed');
     if (branchCheckpoint) return { kind: 'branch-project-observed', projectId: input.projectId, itemId: input.itemId,
-      repository: input.repository, statusFieldId: input.statusFieldId, issueNodeId: input.issueId, issueState: issue.state,
+      repository: input.repository, statusFieldId: input.statusFieldId, statusFieldName: input.statusFieldName, issueNodeId: input.issueId, issueState: issue.state,
       issueUpdatedAt: issue.updatedAt, currentStatus: item.status.name, statusOptionId: item.status.optionId,
       statusOptions: structuredClone(statusField.options) };
     return { kind: 'snapshot', projectId: input.projectId, itemId: input.itemId, repository: input.repository,

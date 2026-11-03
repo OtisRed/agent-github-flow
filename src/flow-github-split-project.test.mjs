@@ -83,6 +83,7 @@ test('branch checkpoint reads the Project without legacy checkpoint fields or pa
   const result = await readBranchProjectIssue(value);
   assert.equal(result.kind, 'branch-project-observed');
   assert.equal(result.currentStatus, 'needs-design');
+  assert.equal(result.statusFieldName, value.statusFieldName);
   assert.equal(Object.hasOwn(result, 'marker'), false);
   assert.equal(Object.hasOwn(result, 'witness'), false);
   assert.equal(Object.hasOwn(result, 'issueBody'), false);

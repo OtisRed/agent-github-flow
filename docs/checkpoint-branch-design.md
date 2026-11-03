@@ -329,8 +329,10 @@ nie wdrożono v3; utrata klucza lub konfiguracji nie może powodować zgadywania
 Prototyp `src/flow-checkpoint-v3.mjs` zachowuje oba potwierdzenia i ich wersje
 klucza również po zakończeniu przekazania. Sama rezerwacja zawiera wyłącznie
 czas, a nie ID prywatnych opcji. Zmiana konfiguracji między przekazaniami jest
-blokowana do osobnej migracji; zgodność bieżących opcji Projectu z prywatną
-konfiguracją i same HMAC muszą być jeszcze sprawdzane przez przyszły collector.
+blokowana do osobnej migracji. Odłączony verifier sprawdza HMAC, dostępność
+zapisanych komentarzy, widoczność repozytorium i zgodność opcji Projectu z
+prywatną konfiguracją; collector musi mu jeszcze dostarczać uwierzytelnione,
+świeże dane. To nadal nie jest autoryzacja zapisu ani wdrożony kontroler.
 Format ma te same statusy i przebieg dla repozytoriów publicznych i prywatnych.
 
 Rejestracja projektu jest odrębnym, jawnym krokiem administracyjnym, nie
