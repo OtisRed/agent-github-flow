@@ -131,6 +131,16 @@ błędów nie są ujawniane. Kod nie jest podłączony do workflow ani prawdziwy
 poświadczeń; testy używają fikcyjnych danych i transportu. Uwierzytelniony
 collector, rejestracja, ochrona refów oraz serializacja pozostają konieczne.
 
+`src/flow-first-handoff-cycle.mjs` łączy przygotowane kroki pierwszego
+przekazania: publikację `pending`, ewentualną zmianę statusu i zatwierdzenie.
+Ta sama niezależna konfiguracja wiąże we wszystkich krokach repo, Project,
+pole statusu, issue, autorów, reguły, komentarz i checkpoint. Istniejący poprawny
+`pending` można rozpoznać po ponownym odczycie, a niepewnego zapisu nie ponawia
+się w ciemno. Przed każdym przebiegiem wymagany jest zaufany dowód, że żadne
+wcześniejsze niepewne żądanie dla tego wykonawcy nie jest w locie. Kod nie
+implementuje jeszcze tego dowodu ani serializacji i nie jest podłączony do
+Actions; test całego cyklu używa fikcyjnych transportów.
+
 ## Rejestracja i utrata danych
 
 Rejestracja projektu jest odrębnym, jawnym krokiem administracyjnym, nie

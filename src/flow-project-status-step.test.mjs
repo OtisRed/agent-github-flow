@@ -26,13 +26,17 @@ function fixture() {
   const setStatus = async args => { writes.push(args);
     state.project.currentStatus = 'agent-ready'; state.project.statusOptionId = 'ready';
     return { kind: 'status-write-acknowledged' }; };
-  const policy = { repositoryId: 'repo-id', repository: 'owner/project', projectId: 'project', statusFieldId: 'status', trustedAuthorIds: ['user'] };
-  return { state, writes, collect, transport: { projectId: 'project', statusFieldId: 'status', setStatus }, policy };
+  const policy = { repositoryId: 'repo-id', repository: 'owner/project', projectId: 'project', issueId:'issue', issueNumber:1,
+    statusFieldId: 'status', trustedAuthorIds: ['user'],appId:12,updateRulesetId:1,historyRulesetId:2 };
+  const expectedBinding={repositoryId:'repo-id',repository:'owner/project',projectId:'project',statusFieldId:'status',issueId:'issue',issueNumber:1,
+    appId:12,updateRulesetId:1,historyRulesetId:2,trustedAuthorIds:['user'],
+    commentId:'4',commentDigest:digest,checkpointOid:'b'.repeat(40)};
+  return { state, writes, collect, transport: { projectId: 'project', statusFieldId: 'status', setStatus }, policy, expectedBinding };
 }
 
 test('performs exactly one bounded status mutation and checks the resulting state', async () => {
   const f = fixture(); const result = await runPendingProjectStatusStep(f);
-  assert.deepEqual(result, { kind: 'status-target-observed', retryAllowed: false });
+  assert.deepEqual(result, { kind: 'status-target-observed', binding:f.expectedBinding, retryAllowed: false });
   assert.deepEqual(f.writes, [{ itemId: 'item', targetOptionId: 'ready' }]);
 });
 
@@ -75,8 +79,8 @@ test('blocks mismatched Project or status field in transport before any read or 
 });
 
 test('rejects a policy that does not match the independently collected project and author list', async () => {
-  for (const change of ['repositoryId', 'repository', 'projectId', 'statusFieldId', 'trustedAuthorIds']) {
-    const f = fixture(); f.policy[change] = change === 'trustedAuthorIds' ? ['other'] : 'other';
+  for (const change of ['repositoryId', 'repository', 'projectId', 'statusFieldId', 'trustedAuthorIds', 'issueId', 'issueNumber']) {
+    const f = fixture(); f.policy[change] = change === 'trustedAuthorIds' ? ['other'] : change==='issueNumber' ? 2 : 'other';
     const reason = ['projectId', 'statusFieldId'].includes(change) ? 'transport-policy-mismatch' : 'policy-mismatch';
     assert.deepEqual(await runPendingProjectStatusStep(f), { kind: 'blocked', reason });
     assert.equal(f.writes.length, 0);
@@ -90,6 +94,12 @@ test('blocks already complete or unavailable preflight without mutation', async 
   f = fixture(); f.collect = async () => { throw Error('private data'); };
   assert.deepEqual(await runPendingProjectStatusStep(f), { kind: 'blocked', reason: 'preflight-unavailable' });
 });
+test('rejects a binding from a different handoff before writing',async()=>{
+  for(const [key,value] of [['commentId','other'],['statusFieldId','other'],['appId',13],['issueNumber',2]]){
+    const f=fixture();f.expectedBinding[key]=value;
+    assert.deepEqual(await runPendingProjectStatusStep(f),{kind:'blocked',reason:'handoff-binding-mismatch'});assert.equal(f.writes.length,0);
+  }
+});
 
 test('composes the status step with the policy-bound PAT transport', async () => {
   const f = fixture(); const requests = [];
@@ -98,7 +108,7 @@ test('composes the status step with the policy-bound PAT transport', async () =>
       requests.push({ url, options }); f.state.project.currentStatus = 'agent-ready'; f.state.project.statusOptionId = 'ready';
       return { status: 200, text: async () => JSON.stringify({ data: { updateProjectV2ItemFieldValue: { projectV2Item: { id: 'item' } } } }) };
     } });
-  assert.deepEqual(await runPendingProjectStatusStep(f), { kind: 'status-target-observed', retryAllowed: false });
+  assert.equal((await runPendingProjectStatusStep(f)).kind, 'status-target-observed');
   assert.equal(requests.length, 1); assert.equal(requests[0].url, 'https://api.github.com/graphql');
   assert.equal(JSON.parse(requests[0].options.body).query, BRANCH_STATUS_UPDATE);
 });

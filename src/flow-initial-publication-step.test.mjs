@@ -18,7 +18,7 @@ function fixture() {
     handoffEvidence:{kind:'evidence',handoff},trustedAuthorIds:['user'],expectedProjectId:'project',
     epochProof:{kind:'handoff-epoch-evidence',issueNodeId:'issue',commentNodeId:'comment',commentId:'4',commentCreatedAt:createdAt,
       commentDigest:createHash('sha256').update(body).digest('hex'),epoch}};
-  const policy={repositoryId:'repo-id',repository:'owner/project',projectId:'project',statusFieldId:'status',trustedAuthorIds:['user'],
+  const policy={repositoryId:'repo-id',repository:'owner/project',projectId:'project',issueId:'issue',issueNumber:1,statusFieldId:'status',trustedAuthorIds:['user'],
     appId:12,updateRulesetId:1,historyRulesetId:2};
   const protection={kind:'checkpoint-protection-observed',repositoryId:'repo-id',appId:12,updateRulesetId:1,historyRulesetId:2};
   const plan=planInitialBranchHandoff(base);assert.equal(plan.kind,'initial-handoff-planned');
@@ -36,7 +36,8 @@ function fixture() {
   return {state,input};
 }
 test('publishes one pending checkpoint only after fresh full audits and verifies its readback',async()=>{
-  const f=fixture();assert.deepEqual(await runInitialPublicationStep(f.input),{kind:'initial-pending-observed',retryAllowed:false});
+  const f=fixture();const result=await runInitialPublicationStep(f.input);assert.equal(result.kind,'initial-pending-observed');
+  assert.equal(result.binding.issueId,'issue');assert.equal(result.binding.issueNumber,1);assert.equal(result.binding.checkpointOid,'c'.repeat(40));
   assert.deepEqual(f.state.calls,['collect','audit','collect','prepare','collect','audit','publish','observe','collect','audit']);
 });
 test('does not publish without protection or when the source changes during preparation',async()=>{
@@ -57,6 +58,10 @@ test('never retries an uncertain write and never reports success without readbac
 test('rejects mismatched routing before object creation',async()=>{
   const f=fixture();f.input.policy.projectId='other';assert.equal((await runInitialPublicationStep(f.input)).reason,'policy-mismatch');
   assert.deepEqual(f.state.calls,['collect']);
+  for(const [key,value] of [['issueId','different'],['issueNumber',2]]){
+    const other=fixture();other.input.policy[key]=value;
+    assert.equal((await runInitialPublicationStep(other.input)).reason,'policy-mismatch');assert.deepEqual(other.state.calls,['collect']);
+  }
 });
 test('does not publish if protection changes during final snapshot read',async()=>{
   const f=fixture();const original=f.input.collect;let count=0;
@@ -70,13 +75,26 @@ test('commits an existing pending checkpoint only after observing the target sta
   const plan=planPendingBranchHandoff(pending);assert.equal(plan.kind,'commit-handoff-planned');
   const committed=structuredClone(pending);committed.checkpoint.headOid='e'.repeat(40);committed.checkpoint.selectedRecord=structuredClone(plan.record);
   f.state.base=pending;f.state.after=committed;
+  f.input.expectedBinding={repositoryId:'repo-id',repository:'owner/project',projectId:'project',statusFieldId:'status',issueId:'issue',issueNumber:1,
+    appId:12,updateRulesetId:1,historyRulesetId:2,trustedAuthorIds:['user'],
+    commentId:plan.record.current.commentId,commentDigest:plan.record.current.digest,checkpointOid:'c'.repeat(40)};
   f.input.prepare=async({snapshot,after})=>{f.state.calls.push('prepare');assert.deepEqual(snapshot,pending.checkpoint);assert.deepEqual(after,plan.record);
     return {kind:'checkpoint-objects-prepared',expectedHeadOid:'c'.repeat(40),expectedTreeOid:'d'.repeat(40),
       commit:{sha:'e'.repeat(40),tree:{sha:'d'.repeat(40)},parents:[{sha:'c'.repeat(40)}]}};};
-  assert.deepEqual(await runPendingCommitPublicationStep(f.input),{kind:'pending-commit-observed',retryAllowed:false});
+  const result=await runPendingCommitPublicationStep(f.input);assert.equal(result.kind,'pending-commit-observed');
+  assert.equal(result.binding.issueId,'issue');assert.equal(result.binding.checkpointOid,'c'.repeat(40));
   const another=fixture();another.state.base=structuredClone(pending);another.state.base.project.currentStatus='needs-design';another.state.base.project.statusOptionId='design';
   assert.equal((await runPendingCommitPublicationStep(another.input)).reason,'pending-commit-not-applicable');
   assert.equal(another.state.calls.includes('publish'),false);
+});
+test('does not commit pending if the expected checkpoint belongs to another handoff',async()=>{
+  const f=fixture();const pending=structuredClone(f.state.after);pending.project.currentStatus='agent-ready';pending.project.statusOptionId='ready';
+  f.state.base=pending;const plan=planPendingBranchHandoff(pending);
+  f.input.expectedBinding={repositoryId:'repo-id',repository:'owner/project',projectId:'project',statusFieldId:'status',issueId:'issue',issueNumber:1,
+    appId:12,updateRulesetId:1,historyRulesetId:2,trustedAuthorIds:['user'],
+    commentId:'other',commentDigest:plan.record.current.digest,checkpointOid:'c'.repeat(40)};
+  assert.equal((await runPendingCommitPublicationStep(f.input)).reason,'handoff-binding-mismatch');
+  assert.equal(f.state.calls.includes('prepare'),false);assert.equal(f.state.calls.includes('publish'),false);
 });
 test('retains the initial-step refusal reason for an existing checkpoint',async()=>{
   const f=fixture();f.state.base=structuredClone(f.state.after);

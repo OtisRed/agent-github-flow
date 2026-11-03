@@ -1,18 +1,19 @@
 import { isDeepStrictEqual } from 'node:util';
 import { planInitialBranchHandoff } from './flow-checkpoint-initial-handoff.mjs';
 import { planPendingBranchHandoff } from './flow-checkpoint-pending-handoff.mjs';
+import { isHandoffSubject, matchesHandoffSubject, handoffBinding } from './flow-handoff-binding.mjs';
 
 const blocked = reason => ({ kind:'blocked', reason });
 const uncertain = () => ({ kind:'publication-uncertain', retryAllowed:false });
 const id = value => typeof value === 'string' && value.length > 0 && value.length <= 256 && value.trim() === value;
 const oid = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value) && value !== '0'.repeat(40);
 const positive = value => Number.isSafeInteger(value) && value > 0;
-const validPolicy = p => p && typeof p === 'object' && !Array.isArray(p)
+const validPolicy = p => isHandoffSubject(p)
   && ['repositoryId','repository','projectId','statusFieldId'].every(key => id(p[key]))
   && [p.appId,p.updateRulesetId,p.historyRulesetId].every(positive) && p.updateRulesetId !== p.historyRulesetId
   && Array.isArray(p.trustedAuthorIds) && p.trustedAuthorIds.length > 0 && p.trustedAuthorIds.every(id)
   && new Set(p.trustedAuthorIds).size === p.trustedAuthorIds.length;
-const matches = (o,p) => o?.checkpoint?.repositoryId === p.repositoryId && o.checkpoint.repositoryFullName === p.repository
+const matches = (o,p) => matchesHandoffSubject(o,p) && o?.checkpoint?.repositoryId === p.repositoryId && o.checkpoint.repositoryFullName === p.repository
   && o.project?.repository === p.repository && o.project.projectId === p.projectId && o.expectedProjectId === p.projectId
   && o.project.statusFieldId === p.statusFieldId && isDeepStrictEqual(o.trustedAuthorIds,p.trustedAuthorIds);
 const protectedBy = (value,p) => value?.kind === 'checkpoint-protection-observed' && value.repositoryId === p.repositoryId
@@ -26,7 +27,7 @@ const protectedBy = (value,p) => value?.kind === 'checkpoint-protection-observed
 // not wired into Actions and does not itself establish these trust conditions.
 // Project/issue mutations can race Git and there is no cross-system CAS.
 // Never log private inputs, plans or object identifiers.
-async function runPublication({ policy, collect, verifyProtection, prepare, publish, observe } = {}, planner, expectedKind, resultKind, notApplicable) {
+async function runPublication({ policy, collect, verifyProtection, prepare, publish, observe, expectedBinding } = {}, planner, expectedKind, resultKind, notApplicable) {
   if (!validPolicy(policy) || ![collect,verifyProtection,prepare,publish,observe].every(fn => typeof fn === 'function')) return blocked('invalid-input');
   policy = structuredClone(policy);
   let first, plan, prepared;
@@ -35,6 +36,10 @@ async function runPublication({ policy, collect, verifyProtection, prepare, publ
     if (!matches(first,policy)) return blocked('policy-mismatch');
     plan = planner(first);
     if (plan.kind !== expectedKind) return blocked(notApplicable);
+    if (expectedKind==='commit-handoff-planned') {
+      const binding=handoffBinding(policy,plan.record.current.commentId,plan.record.current.digest,first.checkpoint.headOid);
+      if (!binding || !isDeepStrictEqual(binding,expectedBinding)) return blocked('handoff-binding-mismatch');
+    }
     if (!protectedBy(await verifyProtection(),policy)) return blocked('protection-unverified');
     if (!isDeepStrictEqual(first,await collect())) return blocked('snapshot-changed');
     prepared = await prepare({ snapshot:structuredClone(first.checkpoint), after:structuredClone(plan.record) });
@@ -61,7 +66,10 @@ async function runPublication({ policy, collect, verifyProtection, prepare, publ
     expected.checkpoint.selectedRecord = plan.record;
     if (!isDeepStrictEqual(expected,await collect()) || !protectedBy(await verifyProtection(),policy)) return uncertain();
   } catch { return uncertain(); }
-  return { kind:resultKind, retryAllowed:false };
+  const binding=handoffBinding(policy,plan.record.current.commentId,plan.record.current.digest,
+    resultKind==='initial-pending-observed'?newOid:oldOid);
+  if (!binding) return uncertain();
+  return { kind:resultKind, binding, retryAllowed:false };
 }
 
 export async function runInitialPublicationStep(input) {
