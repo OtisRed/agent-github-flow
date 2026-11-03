@@ -40,3 +40,37 @@ test('fails closed on missing configuration, malformed events and unexpected act
   assert.deepEqual(run('issues', native('edited')), { kind: 'ignored' });
   assert.deepEqual(run('repository_dispatch', { action: 'other', repository: { full_name: centralRepository } }), { kind: 'ignored' });
 });
+
+test('accepts an independently configured route without modifying the legacy registry', () => {
+  const source = '0123456789abcdef0123456789abcdef';
+  const other = 'abcdef0123456789abcdef0123456789';
+  const routes = [{ source: other, repository: 'Owner/other' }];
+  const event = { action: 'flow-wakeup-v1', repository: { full_name: centralRepository }, client_payload: { source, issueNumber: 23 } };
+  assert.deepEqual(run('repository_dispatch', event, { routes, selectedRepository: 'Owner/project' }),
+    { kind: 'candidate', repository: 'Owner/project', issueNumber: 23 });
+  assert.deepEqual(routes, [{ source: other, repository: 'Owner/other' }]);
+  assert.deepEqual(run('repository_dispatch', event, { routes: [], selectedRepository: 'Owner/project' }),
+    { kind: 'candidate', repository: 'Owner/project', issueNumber: 23 });
+  assert.deepEqual(run('repository_dispatch', event, { selectedRepository: 'Owner/project' }),
+    { kind: 'blocked', reason: 'invalid-routes' });
+  assert.deepEqual(run('repository_dispatch', event, { routes, selectedRepository: '' }),
+    { kind: 'blocked', reason: 'source-not-allowed' });
+});
+
+test('rejects conflicting or malformed independently configured routes', () => {
+  const source = '0123456789abcdef0123456789abcdef';
+  const other = 'abcdef0123456789abcdef0123456789';
+  const event = { action: 'flow-wakeup-v1', repository: { full_name: centralRepository }, client_payload: { source, issueNumber: 23 } };
+  assert.deepEqual(run('repository_dispatch', event, { routes: null, selectedRepository: 'Owner/project' }),
+    { kind: 'blocked', reason: 'invalid-routes' });
+  assert.deepEqual(run('repository_dispatch', event, { routes: [{ source, repository: 'Owner/legacy' }], selectedRepository: 'Owner/project' }),
+    { kind: 'blocked', reason: 'invalid-routes' });
+  assert.deepEqual(run('repository_dispatch', event, { routes: [{ source: other, repository: 'OWNER/PROJECT' }], selectedRepository: 'Owner/project' }),
+    { kind: 'blocked', reason: 'invalid-allowlist' });
+  assert.deepEqual(run('repository_dispatch', event, { routes: [], selectedRepository: 'invalid repository' }),
+    { kind: 'blocked', reason: 'invalid-wakeup' });
+  assert.deepEqual(run('repository_dispatch', { ...event, client_payload: { source: 'bad', issueNumber: 23 } },
+    { routes: [], selectedRepository: 'Owner/project' }), { kind: 'blocked', reason: 'invalid-wakeup' });
+  assert.deepEqual(run('issues', native('opened'), { routes: null, selectedRepository: 'bad repository' }),
+    { kind: 'candidate', repository: centralRepository, issueNumber: 7 });
+});
