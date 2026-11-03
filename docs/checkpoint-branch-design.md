@@ -76,6 +76,11 @@ ostatniego reentry również po zatwierdzeniu nowego handoffu; blokuje m.in.
 historyczny komentarz initial w chwili cutover lub wcześniej. Walidacja jednego
 rekordu nie sprawdza, czy przejście ze starszego commitu było dozwolone ani czy
 poprzednie reentry zostało zakończone. Ten warunek należy egzekwować osobno.
+Prototyp `src/flow-checkpoint-continuity.mjs` porównuje dwa rekordy i blokuje
+m.in. zmianę cutover, utratę zapamiętanego komentarza, cofnięcie reentry i
+kolejne reopen przy niedokończonym wcześniejszym kroku. Jest to wyłącznie
+kontrola strukturalna: przed zapisem potrzebne są świeże dowody natywnej
+historii, komentarza i Projectu oraz powiązanie obu rekordów z właściwym HEAD.
 
 ## Rejestracja i utrata danych
 
