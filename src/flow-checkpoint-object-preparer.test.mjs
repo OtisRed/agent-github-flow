@@ -8,6 +8,7 @@ import { planCheckpointCommit, planCheckpointV2Commit, planCheckpointV3Commit } 
 import { encodeCheckpointV2 } from './flow-checkpoint-v2.mjs';
 import { createCheckpointKeyring } from './flow-checkpoint-keyring.mjs';
 import { FLOW_STATUSES } from './flow.mjs';
+import { createV3CheckpointRefTransport } from './flow-checkpoint-ref-transport.mjs';
 import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
 
 const hash = bytes => createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
@@ -157,6 +158,38 @@ test('v3 refuses invalid commitments, visibility or fork before object creation'
   assert.equal(f.state.calls.filter(call=>call.method==='POST').length,0);
   f=fixture(3);assert.throws(()=>createCheckpointObjectPreparer({owner:'owner',repo:'project',snapshot:f.snapshot,after:f.after,
     registration:f.registration,appToken:'synthetic-app-token',request:f.request}),/invalid-object-plan/);
+});
+
+function v3RefFixture(expectedPrivate=false){
+  const f=fixture(3,false,expectedPrivate),policy={repositoryId:'repo-id',repository:'owner/project',projectId:'project',statusFieldId:'status',
+    issueId:'issue',issueNumber:1,appId:12,updateRulesetId:1,historyRulesetId:2,trustedAuthorIds:['user']};
+  let writes=0;
+  const request=async(url,options)=>{
+    if(url.endsWith('/repos/owner/project'))return reply({node_id:'repo-id',full_name:'owner/project',private:f.state.scopePrivate,
+      fork:f.state.scopeFork,default_branch:'main'});
+    if(url==='https://api.github.com/graphql'){writes++;return reply({data:{updateRefs:{__typename:'UpdateRefsPayload'}}});}
+    return f.request(url,options);
+  };
+  const args={policy,projectRegistration:f.v3.projectRegistration,
+    registrationCommitment:{keyId:1,mac:f.v3.keyring.current().config(f.v3.projectRegistration)},keyring:f.v3.keyring,
+    snapshot:f.snapshot,after:f.after,v3:{...f.v3,checkpoint:f.snapshot},expectedTreeOid:oid('d'),commitOid:oid('a'),
+    appToken:'synthetic-app-token',request};
+  return {f,args,writes:()=>writes};
+}
+test('v3 ref transport verifies exact public and private tree changes before the atomic ref pair',async()=>{
+  for(const expectedPrivate of [false,true]){
+    const t=v3RefFixture(expectedPrivate),transport=createV3CheckpointRefTransport(t.args);
+    assert.deepEqual(await transport.publish(),{kind:'ref-update-acknowledged',retryAllowed:false});assert.equal(t.writes(),1);
+    assert.equal((await transport.publish()).kind,'blocked');assert.equal(t.writes(),1);
+  }
+});
+test('v3 ref transport blocks unrelated tree changes, wrong visibility and forged config',async()=>{
+  let t=v3RefFixture();t.f.state.newTree.tree.find(entry=>entry.path==='keep').sha=oid('9');
+  assert.equal((await createV3CheckpointRefTransport(t.args).publish()).reason,'prepared-tree-mismatch');assert.equal(t.writes(),0);
+  t=v3RefFixture();t.f.state.scopePrivate=true;
+  assert.equal((await createV3CheckpointRefTransport(t.args).publish()).reason,'scope-mismatch');assert.equal(t.writes(),0);
+  t=v3RefFixture();t.args.registrationCommitment.mac='0'.repeat(64);
+  assert.throws(()=>createV3CheckpointRefTransport(t.args),/invalid-v3-ref-context/);assert.equal(t.writes(),0);
 });
 
 test('rechecks the existing v2 record before preparing its reservation', async () => {
