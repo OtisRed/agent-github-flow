@@ -3,9 +3,11 @@ const id=value=>typeof value==='string'&&value.length>0&&value.length<=256&&valu
 
 // Read-only selection from the authenticated Project REST transport. The
 // complete list and every page are checked twice; transport must bound the
-// response body before JSON parsing. This does not authorize a mutation, prove
-// the App identity, or lock the card. Never log item IDs.
-export async function resolveProjectIssueItem({owner,projectNumber,issueId,listItems}={}) {
+// response body before JSON parsing. A captured item is only a candidate:
+// callers must await confirm() and check its result before using the binding.
+// This does not authorize a mutation, prove the App identity, or lock the card.
+// Never log item IDs.
+export async function captureProjectIssueItem({owner,projectNumber,issueId,listItems}={}) {
   if(!/^[A-Za-z0-9-]{1,39}$/.test(owner??'')||!Number.isSafeInteger(projectNumber)||projectNumber<1
       ||!id(issueId)||typeof listItems!=='function')return blocked('invalid-input');
   const pages=[],items=[],cursors=new Set();let after=null,size=0;
@@ -26,12 +28,21 @@ export async function resolveProjectIssueItem({owner,projectNumber,issueId,listI
         if(new Set(items.map(x=>x.nodeId)).size!==items.length)return blocked('duplicate-card');
         const matched=items.filter(x=>!x.archived&&x.contentType==='Issue'&&x.contentNodeId===issueId);
         if(matched.length!==1)return blocked('ambiguous-card');
-        for(const page of pages)if(JSON.stringify(await fetchPage(page.after))!==page.serialized)return blocked('snapshot-changed');
-        return {kind:'project-item-observed',issueId,itemId:matched[0].nodeId};
+        return {kind:'project-item-captured',issueId,itemId:matched[0].nodeId,confirm:async()=>{
+          try{for(const original of pages)if(JSON.stringify(await fetchPage(original.after))!==original.serialized)return blocked('snapshot-changed');
+            return {kind:'project-item-confirmed'};}catch{return blocked('project-items-unavailable');}
+        }};
       }
       if(cursors.has(page.nextCursor))return blocked('invalid-cursor');
       cursors.add(page.nextCursor);after=page.nextCursor;
     }
     return blocked('page-limit');
   }catch{return blocked('project-items-unavailable');}
+}
+
+export async function resolveProjectIssueItem(input={}) {
+  const captured=await captureProjectIssueItem(input);
+  if(captured.kind!=='project-item-captured')return captured;
+  const confirmed=await captured.confirm();if(confirmed.kind!=='project-item-confirmed')return confirmed;
+  return {kind:'project-item-observed',issueId:captured.issueId,itemId:captured.itemId};
 }

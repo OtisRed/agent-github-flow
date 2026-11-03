@@ -156,9 +156,11 @@ pełne przeglądanie dużej tablicy wymaga pomiaru wydajności przed wdrożeniem
 `src/flow-first-handoff-collector.mjs` łączy te odczyty z checkpointem,
 ostatnim przekazaniem i pełną historią epoki; weryfikuje zachowany komentarz
 również po jego ID i hashu. Całą obserwację wykonuje dwukrotnie. To nie jest
-atomowy snapshot ani pozwolenie na zapis. Przy `N` stronach kart pojedyncza
-obserwacja może wykonać `8N` odczytów stron, a pełny szczęśliwy cykl z jednym
-zapisem statusu w obecnej naiwnej kompozycji nawet `96N`, bez pozostałych API.
+atomowy snapshot ani pozwolenie na zapis. Odczyt Projectu korzysta z tego samego
+przechwyconego wykazu do wyboru karty i ponownego sprawdzenia po GraphQL. Przy
+`N` stronach kart pojedyncza obserwacja wykonuje do `4N` odczytów stron, a pełny
+szczęśliwy cykl z jednym zapisem statusu w obecnej kompozycji do `48N`, bez
+pozostałych API.
 Przed wdrożeniem potrzebny jest jawny budżet czasu i limitów, pomiar oraz
 ograniczenie kosztu bez utraty kontroli duplikatów i świeżości; kod nie jest
 podłączony do produkcyjnego workflow.

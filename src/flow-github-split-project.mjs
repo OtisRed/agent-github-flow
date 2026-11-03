@@ -1,4 +1,5 @@
 import { readFlowMarker } from './flow-marker.mjs';
+import { captureProjectIssueItem } from './flow-project-item-resolver.mjs';
 
 export const SPLIT_PROJECT_QUERY = `query FlowSplitProject($owner: String!, $number: Int!, $item: ID!, $statusName: String!, $checkpointName: String!) {
   user(login: $owner) { projectV2(number: $number) { id } }
@@ -50,12 +51,19 @@ export async function readBranchProjectIssue(input) { return readProjectIssue(in
 
 async function readProjectIssue(input, branchCheckpoint) {
   if (!input || typeof input.projectGraphql !== 'function' || typeof input.issueGraphql !== 'function'
-    || typeof input.listItems !== 'function' || !['projectId', 'itemId', 'issueId', 'repository', 'projectOwner',
+    || typeof input.listItems !== 'function' || !['projectId', 'issueId', 'repository', 'projectOwner',
       'statusFieldId', 'statusFieldName'].every(k => nonempty(input[k]))
     || !/^[A-Za-z0-9-]{1,39}$/.test(input.projectOwner) || !Number.isSafeInteger(input.projectNumber) || input.projectNumber < 1
     || !Number.isSafeInteger(input.number) || input.number < 1
+    || (input.itemId !== undefined && !nonempty(input.itemId)) || (!branchCheckpoint && !nonempty(input.itemId))
     || (!branchCheckpoint && (!nonempty(input.checkpointFieldId) || !nonempty(input.checkpointFieldName)
       || input.statusFieldId === input.checkpointFieldId || input.statusFieldName === input.checkpointFieldName))) return blocked('invalid-input');
+  let captured=null;
+  if (branchCheckpoint && input.itemId===undefined) {
+    captured=await captureProjectIssueItem({owner:input.projectOwner,projectNumber:input.projectNumber,issueId:input.issueId,listItems:input.listItems});
+    if(captured.kind!=='project-item-captured')return captured;
+    input={...input,itemId:captured.itemId};
+  }
   const projectVars = { owner: input.projectOwner, number: input.projectNumber, item: input.itemId,
     statusName: input.statusFieldName, ...(!branchCheckpoint ? { checkpointName: input.checkpointFieldName } : {}) };
   const getProject = async () => {
@@ -88,6 +96,20 @@ async function readProjectIssue(input, branchCheckpoint) {
   }
   const marker = branchCheckpoint ? null : readFlowMarker(issue.body);
   if (!branchCheckpoint && marker.kind === 'blocked') return marker;
+  const finish=async()=>{
+    const projectAgain = await getProject(); const issueAgain = await getIssue();
+    if (JSON.stringify(projectAgain) !== JSON.stringify(first) || JSON.stringify(issueAgain) !== JSON.stringify(issue)) return blocked('snapshot-changed');
+    if (branchCheckpoint) return { kind: 'branch-project-observed', projectId: input.projectId, itemId: input.itemId,
+      repository: input.repository, statusFieldId: input.statusFieldId, issueNodeId: input.issueId, issueState: issue.state,
+      issueUpdatedAt: issue.updatedAt, currentStatus: item.status.name, statusOptionId: item.status.optionId,
+      statusOptions: structuredClone(statusField.options) };
+    return { kind: 'snapshot', projectId: input.projectId, itemId: input.itemId, repository: input.repository,
+      statusFieldId: input.statusFieldId, checkpointFieldId: input.checkpointFieldId,
+      issueNodeId: input.issueId, issueState: issue.state, issueBody: issue.body, issueUpdatedAt: issue.updatedAt,
+      currentStatus: item.status.name, statusOptionId: item.status.optionId, statusOptions: structuredClone(statusField.options),
+      marker: marker.kind === 'found' ? marker.marker : null, witness, witnessText: item.checkpoint?.text ?? null };
+  };
+  if(captured){const confirmation=await captured.confirm();if(confirmation.kind!=='project-item-confirmed')return confirmation;return finish();}
   const fetchPage = async after => {
     let page;
     try { page = await input.listItems({ owner: input.projectOwner, projectNumber: input.projectNumber, after }); } catch { return null; }
@@ -114,17 +136,7 @@ async function readProjectIssue(input, branchCheckpoint) {
         const confirmation = await fetchPage(prior.after);
         if (!confirmation || JSON.stringify(confirmation) !== prior.serialized) return blocked('snapshot-changed');
       }
-      const projectAgain = await getProject(); const issueAgain = await getIssue();
-      if (JSON.stringify(projectAgain) !== JSON.stringify(first) || JSON.stringify(issueAgain) !== JSON.stringify(issue)) return blocked('snapshot-changed');
-      if (branchCheckpoint) return { kind: 'branch-project-observed', projectId: input.projectId, itemId: input.itemId,
-        repository: input.repository, statusFieldId: input.statusFieldId, issueNodeId: input.issueId, issueState: issue.state,
-        issueUpdatedAt: issue.updatedAt, currentStatus: item.status.name, statusOptionId: item.status.optionId,
-        statusOptions: structuredClone(statusField.options) };
-      return { kind: 'snapshot', projectId: input.projectId, itemId: input.itemId, repository: input.repository,
-        statusFieldId: input.statusFieldId, checkpointFieldId: input.checkpointFieldId,
-        issueNodeId: input.issueId, issueState: issue.state, issueBody: issue.body, issueUpdatedAt: issue.updatedAt,
-        currentStatus: item.status.name, statusOptionId: item.status.optionId, statusOptions: structuredClone(statusField.options),
-        marker: marker.kind === 'found' ? marker.marker : null, witness, witnessText: item.checkpoint?.text ?? null };
+      return finish();
     }
     if (cursors.has(page.nextCursor)) return blocked('invalid-cursor');
     cursors.add(page.nextCursor); after = page.nextCursor;

@@ -54,7 +54,7 @@ test('collects initial issue, card, latest handoff and epoch using separate trus
   const f=fixture();const result=await collectFirstHandoffSnapshot(f.input);
   assert.equal(result.checkpoint?.kind,'checkpoint-snapshot-observed');assert.equal(result.project?.kind,'branch-project-observed');
   assert.equal(result.handoffEvidence?.handoff?.id,'4');assert.equal(result.epochProof?.epoch?.anchor,'issue');
-  assert.equal(f.state.listCalls,8);assert.ok(f.state.appCalls.every(x=>[BRANCH_ISSUE_QUERY,HANDOFF_QUERY,EPOCH_QUERY].includes(x.query)));
+  assert.equal(f.state.listCalls,4);assert.ok(f.state.appCalls.every(x=>[BRANCH_ISSUE_QUERY,HANDOFF_QUERY,EPOCH_QUERY].includes(x.query)));
 });
 test('blocks a status or handoff change after local readers finish but before the full recheck',async()=>{
   for(const change of ['status','comment']){const f=fixture();f.state.mutateAfterEpoch=change;

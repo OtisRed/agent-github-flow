@@ -87,6 +87,31 @@ test('branch checkpoint reads the Project without legacy checkpoint fields or pa
   assert.equal(Object.hasOwn(result, 'witness'), false);
   assert.equal(Object.hasOwn(result, 'issueBody'), false);
 });
+test('branch reader resolves the issue card once and confirms the same paginated list after GraphQL reads',async()=>{
+  const value=input();delete value.itemId;let listCalls=0;
+  value.listItems=async()=>{listCalls++;return {items:[card()],nextCursor:null};};
+  value.projectGraphql=async(query,vars)=>{assert.equal(query,BRANCH_PROJECT_QUERY);assert.equal(vars.item,'item');return project();};
+  value.issueGraphql=async query=>{assert.equal(query,BRANCH_ISSUE_QUERY);return issue();};
+  const result=await readBranchProjectIssue(value);assert.equal(result.kind,'branch-project-observed');assert.equal(result.itemId,'item');
+  assert.equal(listCalls,2);
+});
+test('resolved branch reader rejects duplicate cards and changes during the GraphQL interval',async()=>{
+  let value=input();delete value.itemId;value.listItems=async()=>({items:[card(),{...card(),nodeId:'other'}],nextCursor:null});
+  value.projectGraphql=async()=>project();value.issueGraphql=async()=>issue();
+  assert.equal((await readBranchProjectIssue(value)).reason,'ambiguous-card');
+  value=input();delete value.itemId;let count=0;
+  value.listItems=async()=>({items:[{...card(),nodeId:++count===1?'item':'other'}],nextCursor:null});
+  value.projectGraphql=async()=>project();value.issueGraphql=async()=>issue();
+  assert.equal((await readBranchProjectIssue(value)).reason,'snapshot-changed');
+});
+test('resolved branch reader confirms every page in a multi-page Project',async()=>{
+  const value=input();delete value.itemId;const seen=[];
+  value.listItems=async args=>{seen.push(args.after);return args.after===null
+    ?{items:[{...card(),nodeId:'other',contentNodeId:'other'}],nextCursor:'next'}:{items:[card()],nextCursor:null};};
+  value.projectGraphql=async()=>project();value.issueGraphql=async()=>issue();
+  assert.equal((await readBranchProjectIssue(value)).kind,'branch-project-observed');
+  assert.deepEqual(seen,[null,'next',null,'next']);
+});
 
 test('branch Project reader rejects duplicate cards and changed issue data', async () => {
   let value = input(); value.projectGraphql = async () => project(); value.issueGraphql = async () => issue();

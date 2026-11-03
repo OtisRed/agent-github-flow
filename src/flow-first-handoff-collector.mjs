@@ -2,7 +2,6 @@ import { isDeepStrictEqual } from 'node:util';
 import { createHash } from 'node:crypto';
 import { isHandoffSubject, matchesHandoffSubject } from './flow-handoff-binding.mjs';
 import { readRegisteredCheckpointSnapshot } from './flow-checkpoint-registered-snapshot.mjs';
-import { resolveProjectIssueItem } from './flow-project-item-resolver.mjs';
 import { readBranchProjectIssue } from './flow-github-split-project.mjs';
 import { collectHandoffEvidence } from './flow-handoff-reader.mjs';
 import { collectEpochEvidence } from './flow-epoch-reader.mjs';
@@ -31,10 +30,8 @@ async function collectOnce(input={}) {
     const checkpoint=await readRegisteredCheckpointSnapshot(snapshotInput);
     if(checkpoint.kind!=='checkpoint-snapshot-observed')return blocked('checkpoint-unavailable');
     if(checkpoint.repositoryFullName!==policy.repository)return blocked('repository-mismatch');
-    const item=await resolveProjectIssueItem({owner:projectOwner,projectNumber,issueId:policy.issueId,listItems});
-    if(item.kind!=='project-item-observed')return blocked('project-item-unavailable');
     const project=await readBranchProjectIssue({projectOwner,projectNumber,number:policy.issueNumber,projectId:policy.projectId,
-      itemId:item.itemId,issueId:policy.issueId,repository:policy.repository,statusFieldId:policy.statusFieldId,statusFieldName,
+      issueId:policy.issueId,repository:policy.repository,statusFieldId:policy.statusFieldId,statusFieldName,
       projectGraphql,issueGraphql,listItems});
     if(project.kind!=='branch-project-observed')return blocked('project-unavailable');
     const record=checkpoint.selectedRecord;
