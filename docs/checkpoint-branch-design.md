@@ -193,6 +193,9 @@ odczycie inwentarza; sam nie przesuwa refów ani nie autoryzuje publikacji.
 Osobny planner rezerwacji sprawdza przekazanie oraz aktualne ID opcji źródłowej
 i docelowej, po czym przygotowuje zmianę v2 względem obserwowanego HEAD. Nie
 wykonuje zapisu ani nie potwierdza, że upłynęło wymagane oczekiwanie.
+Odłączony krok publikacji może wykonać pojedynczą próbę zapisu tej rezerwacji,
+poprzedzoną kontrolami i zakończoną ponownym odczytem; wynik niepewny zatrzymuje
+przebieg. Nie jest to jeszcze integracja z produkcyjnym runnerem.
 
 `src/flow-project-item-resolver.mjs` wyszukuje aktywną kartę issue przez pełną
 paginację osobistego Projectu, odrzuca brak, duplikaty lub niespójny drugi

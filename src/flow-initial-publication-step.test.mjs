@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { planInitialBranchHandoff } from './flow-checkpoint-initial-handoff.mjs';
 import { planPendingBranchHandoff } from './flow-checkpoint-pending-handoff.mjs';
-import { runInitialPublicationStep, runPendingCommitPublicationStep } from './flow-initial-publication-step.mjs';
+import { planStatusReservation } from './flow-checkpoint-reservation-plan.mjs';
+import { runInitialPublicationStep, runPendingCommitPublicationStep, runStatusReservationPublicationStep } from './flow-initial-publication-step.mjs';
 
 function fixture() {
   const body='[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
@@ -100,4 +101,44 @@ test('retains the initial-step refusal reason for an existing checkpoint',async(
   const f=fixture();f.state.base=structuredClone(f.state.after);
   assert.equal((await runInitialPublicationStep(f.input)).reason,'initial-step-not-applicable');
   assert.equal(f.state.calls.includes('publish'),false);
+});
+
+function reservationFixture(){
+  const f=fixture(); const pending=structuredClone(f.state.after); pending.checkpoint.schemaVersion=2;
+  pending.checkpoint.selectedRecord.version=2;pending.checkpoint.selectedRecord.reservation=null;
+  const registration={repositoryId:'repo-id',ref:'refs/heads/agent-github-flow/checkpoints',genesisOid:'a'.repeat(40),
+    cutoverAt:pending.checkpoint.cutoverAt,checkpointSchemaVersion:2};
+  const reservedAt='2026-01-01T10:02:00Z';const plan=planStatusReservation({...pending,registration,reservedAt});
+  assert.equal(plan.kind,'status-reservation-planned');
+  const after=structuredClone(pending);after.checkpoint.headOid='e'.repeat(40);after.checkpoint.selectedRecord=structuredClone(plan.record);
+  f.state.base=pending;f.state.after=after;f.input.registration=registration;f.input.reservedAt=reservedAt;
+  f.input.expectedBinding={...f.input.policy,commentId:'4',commentDigest:pending.checkpoint.selectedRecord.current.digest,checkpointOid:'c'.repeat(40)};
+  f.input.prepare=async({snapshot,after:record,registration:actual})=>{f.state.calls.push('prepare');assert.deepEqual(snapshot,pending.checkpoint);
+    assert.deepEqual(record,plan.record);assert.deepEqual(actual,registration);return {kind:'checkpoint-objects-prepared',expectedHeadOid:'c'.repeat(40),
+      expectedTreeOid:'d'.repeat(40),commit:{sha:'e'.repeat(40),tree:{sha:'d'.repeat(40)},parents:[{sha:'c'.repeat(40)}]}};};
+  return f;
+}
+test('publishes a v2 reservation exactly once and returns binding to the new HEAD',async()=>{
+  const f=reservationFixture();const result=await runStatusReservationPublicationStep(f.input);
+  assert.equal(result.kind,'status-reservation-observed');assert.equal(result.binding.checkpointOid,'e'.repeat(40));
+  assert.equal(f.state.calls.filter(x=>x==='publish').length,1);
+});
+
+test('reservation refuses changed binding, protection and observations before publishing',async()=>{
+  let f=reservationFixture();f.input.expectedBinding.commentId='other';
+  assert.equal((await runStatusReservationPublicationStep(f.input)).reason,'handoff-binding-mismatch');
+  assert.equal(f.state.calls.includes('prepare'),false);
+  f=reservationFixture();f.state.protection.historyRulesetId=9;
+  assert.equal((await runStatusReservationPublicationStep(f.input)).reason,'protection-unverified');
+  assert.equal(f.state.calls.includes('publish'),false);
+  f=reservationFixture();const collect=f.input.collect;let count=0;
+  f.input.collect=async()=>{const result=await collect();if(++count===3)result.project.statusOptionId='changed';return result;};
+  assert.equal((await runStatusReservationPublicationStep(f.input)).reason,'publication-preflight-changed');
+  assert.equal(f.state.calls.includes('publish'),false);
+});
+
+test('an uncertain reservation publication is not retried or accepted as observed',async()=>{
+  const f=reservationFixture();f.state.write='ref-update-uncertain';
+  assert.deepEqual(await runStatusReservationPublicationStep(f.input),{kind:'publication-uncertain',retryAllowed:false});
+  assert.equal(f.state.calls.filter(x=>x==='publish').length,1);
 });

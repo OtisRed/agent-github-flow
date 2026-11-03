@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { planInitialBranchHandoff } from './flow-checkpoint-initial-handoff.mjs';
 import { planPendingBranchHandoff } from './flow-checkpoint-pending-handoff.mjs';
+import { planStatusReservation } from './flow-checkpoint-reservation-plan.mjs';
 import { isHandoffSubject, matchesHandoffSubject, handoffBinding } from './flow-handoff-binding.mjs';
 
 const blocked = reason => ({ kind:'blocked', reason });
@@ -22,9 +23,10 @@ const protectedBy = (value,p) => value?.kind === 'checkpoint-protection-observed
 // Preparatory one-shot composition for the initial handoff only. All
 // dependencies must be trusted, authenticated and bound to policy: complete
 // collection, full fresh protection audit, object preparer, ref publisher and
-// publication observer. The caller must enforce one writer and guarantee that
-// no request from a previous uncertain attempt can still run. This function is
-// not wired into Actions and does not itself establish these trust conditions.
+// publication observer. The caller must enforce one writer and resolve any
+// prior uncertain Git ref publication before another Git publication. Project
+// mutations have a separate accepted late-request risk and waiting policy.
+// This function is not wired into Actions and does not establish these conditions.
 // Project/issue mutations can race Git and there is no cross-system CAS.
 // Never log private inputs, plans or object identifiers.
 async function runPublication({ policy, collect, verifyProtection, prepare, publish, observe, expectedBinding } = {}, planner, expectedKind, resultKind, notApplicable) {
@@ -36,7 +38,7 @@ async function runPublication({ policy, collect, verifyProtection, prepare, publ
     if (!matches(first,policy)) return blocked('policy-mismatch');
     plan = planner(first);
     if (plan.kind !== expectedKind) return blocked(notApplicable);
-    if (expectedKind==='commit-handoff-planned') {
+    if (expectedKind==='commit-handoff-planned' || expectedKind==='status-reservation-planned') {
       const binding=handoffBinding(policy,plan.record.current.commentId,plan.record.current.digest,first.checkpoint.headOid);
       if (!binding || !isDeepStrictEqual(binding,expectedBinding)) return blocked('handoff-binding-mismatch');
     }
@@ -67,7 +69,7 @@ async function runPublication({ policy, collect, verifyProtection, prepare, publ
     if (!isDeepStrictEqual(expected,await collect()) || !protectedBy(await verifyProtection(),policy)) return uncertain();
   } catch { return uncertain(); }
   const binding=handoffBinding(policy,plan.record.current.commentId,plan.record.current.digest,
-    resultKind==='initial-pending-observed'?newOid:oldOid);
+    ['initial-pending-observed','status-reservation-observed'].includes(resultKind)?newOid:oldOid);
   if (!binding) return uncertain();
   return { kind:resultKind, binding, retryAllowed:false };
 }
@@ -80,4 +82,17 @@ export async function runInitialPublicationStep(input) {
 // independently observed; it does not itself change a Project card.
 export async function runPendingCommitPublicationStep(input) {
   return runPublication(input, planPendingBranchHandoff, 'commit-handoff-planned', 'pending-commit-observed', 'pending-commit-not-applicable');
+}
+
+// This only publishes the reservation. The caller is responsible for waiting
+// before retries and for a complete fresh read before any Project mutation.
+// Neither this step nor a successful readback proves an old request ended.
+export async function runStatusReservationPublicationStep(input = {}) {
+  let registration;
+  try { registration = structuredClone(input.registration); } catch { return blocked('invalid-input'); }
+  if (typeof input.prepare !== 'function') return blocked('invalid-input');
+  const prepare = input.prepare;
+  return runPublication({ ...input, prepare: args => prepare({ ...args, registration: structuredClone(registration) }) },
+    observed => planStatusReservation({ ...observed, registration, reservedAt: input.reservedAt }),
+    'status-reservation-planned', 'status-reservation-observed', 'reservation-step-not-applicable');
 }
