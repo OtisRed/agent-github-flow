@@ -1,0 +1,75 @@
+name: Central credentials read-only probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  project-read:
+    if: github.ref == 'refs/heads/main'
+    name: Read selected personal Project
+    runs-on: ubuntu-24.04
+    environment: flow-controller
+    timeout-minutes: 3
+    permissions: {}
+    steps:
+      - name: Verify Project read without reporting target
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_ACCESS_TOKEN }}
+          TARGET_OWNER: ${{ secrets.FLOW_PROBE_PROJECT_OWNER }}
+          TARGET_NUMBER: ${{ secrets.FLOW_PROBE_PROJECT_NUMBER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$GH_TOKEN" || ! "$TARGET_OWNER" =~ ^[A-Za-z0-9-]{1,39}$ || ! "$TARGET_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]; then
+            echo 'Project probe: missing or invalid configuration'; exit 1
+          fi
+          printf '::add-mask::%s/%s\n' "$TARGET_OWNER" "$TARGET_NUMBER"
+          result=$(gh api graphql -f query='query($owner: String!, $number: Int!) { user(login: $owner) { projectV2(number: $number) { number } } }' -f owner="$TARGET_OWNER" -F number="$TARGET_NUMBER" --jq '.data.user.projectV2.number' 2>/dev/null) || { echo 'Project probe: read failed'; exit 1; }
+          if [[ "$result" != "$TARGET_NUMBER" ]]; then echo 'Project probe: unexpected result'; exit 1; fi
+          echo 'Project probe: read OK'
+  app-read:
+    if: github.ref == 'refs/heads/main'
+    name: Read selected repository with scoped App token
+    runs-on: ubuntu-24.04
+    environment: flow-controller
+    timeout-minutes: 3
+    permissions: {}
+    steps:
+      - name: Validate non-public target
+        env:
+          APP_ID: ${{ vars.FLOW_APP_ID }}
+          APP_SLUG: ${{ vars.FLOW_APP_SLUG }}
+          TARGET_OWNER: ${{ secrets.FLOW_PROBE_REPO_OWNER }}
+          TARGET_NAME: ${{ secrets.FLOW_PROBE_REPO_NAME }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$APP_ID" =~ ^[1-9][0-9]{0,19}$ || ! "$APP_SLUG" =~ ^[a-z0-9-]{1,100}$ || ! "$TARGET_OWNER" =~ ^[A-Za-z0-9-]{1,39}$ || ! "$TARGET_NAME" =~ ^[A-Za-z0-9_.-]{1,100}$ || "$TARGET_NAME" == '.' || "$TARGET_NAME" == '..' ]]; then
+            echo 'App probe: invalid configuration'; exit 1
+          fi
+          printf '::add-mask::%s/%s\n' "$TARGET_OWNER" "$TARGET_NAME"
+      - name: Create scoped token
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ vars.FLOW_APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ secrets.FLOW_PROBE_REPO_OWNER }}
+          repositories: ${{ secrets.FLOW_PROBE_REPO_NAME }}
+          permission-contents: read
+      - name: Verify App identity and repository scope
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ACTUAL_SLUG: ${{ steps.app.outputs.app-slug }}
+          EXPECTED_SLUG: ${{ vars.FLOW_APP_SLUG }}
+          TARGET_OWNER: ${{ secrets.FLOW_PROBE_REPO_OWNER }}
+          TARGET_NAME: ${{ secrets.FLOW_PROBE_REPO_NAME }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$GH_TOKEN" || "$ACTUAL_SLUG" != "$EXPECTED_SLUG" ]]; then echo 'App probe: identity mismatch'; exit 1; fi
+          selected=$(gh api /installation/repositories --jq 'if .total_count == 1 and (.repositories | length) == 1 then .repositories[0].full_name else "" end' 2>/dev/null) || { echo 'App probe: installation read failed'; exit 1; }
+          if [[ "$selected" != "$TARGET_OWNER/$TARGET_NAME" ]]; then echo 'App probe: repository scope mismatch'; exit 1; fi
+          actual=$(gh api "/repos/$TARGET_OWNER/$TARGET_NAME" --jq 'if .private == true then .full_name else "" end' 2>/dev/null) || { echo 'App probe: repository read failed'; exit 1; }
+          if [[ "$actual" != "$selected" ]]; then echo 'App probe: incomplete response'; exit 1; fi
+          echo 'App probe: scoped read OK'
