@@ -6,6 +6,8 @@ import { inspectV3ReservedHandoff, planV3StatusReservation, planV3HandoffCommit 
 import { createCheckpointKeyring } from './flow-checkpoint-keyring.mjs';
 import { FLOW_STATUSES } from './flow.mjs';
 import { verifyV3Preparation } from './flow-v3-preparation-guard.mjs';
+import { createV3ProjectStatusStep } from './flow-v3-project-status-step.mjs';
+import { v3HandoffBinding } from './flow-v3-handoff-binding.mjs';
 
 const body = '[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
 const digest = createHash('sha256').update(body).digest('hex');
@@ -130,4 +132,38 @@ test('v3 can commit an unchanged status without inventing a reservation',()=>{
   v.project.currentStatus='agent-ready';v.project.statusOptionId='ready';
   const done=planV3HandoffCommit(v);assert.equal(done.kind,'v3-commit-handoff-planned');assert.equal(done.record.reservation,null);
   assert.equal(planV3StatusReservation(v).kind,'blocked');
+});
+
+function statusFixture(){
+  const v=fixtureV3();v.checkpoint.selectedRecord.reservation={reservedAt:v.reservedAt};
+  const policy={repositoryId:'repo-id',repository:'owner/project',projectId:'project',statusFieldId:'status',issueId:'issue',issueNumber:1,
+    appId:12,updateRulesetId:1,historyRulesetId:2,trustedAuthorIds:['user']};
+  const state={reads:0,writes:0,change:null,changeAt:2,fail:false,protected:true};
+  const collectContext=async()=>{state.reads++;if(state.reads===state.changeAt&&state.change)state.change(v);
+    return {repository:v.repository,observation:{checkpoint:v.checkpoint,project:v.project,handoffEvidence:v.handoffEvidence,
+      epochProof:v.epochProof,trustedAuthorIds:v.trustedAuthorIds,expectedProjectId:v.expectedProjectId}};};
+  const verifyProtection=async()=>state.protected?{kind:'checkpoint-protection-observed',repositoryId:'repo-id',appId:12,updateRulesetId:1,historyRulesetId:2}:null;
+  const transport={projectId:'project',statusFieldId:'status',setStatus:async({itemId,targetOptionId})=>{
+    state.writes++;assert.equal(itemId,'item');assert.equal(targetOptionId,'ready');if(state.fail)throw Error('uncertain');
+    v.project.currentStatus='agent-ready';v.project.statusOptionId='ready';return {kind:'status-write-acknowledged'};}};
+  const registrationCommitment={keyId:1,mac:v.keyring.current().config(v.projectRegistration)};
+  const create=()=>createV3ProjectStatusStep({policy,projectRegistration:v.projectRegistration,registrationCommitment,keyring:v.keyring,
+    collectContext,verifyProtection,transport});
+  return {v,policy,state,transport,create,binding:v3HandoffBinding(policy,v.checkpoint.selectedRecord,v.checkpoint.headOid)};
+}
+test('v3 status step changes only the reserved card and verifies target with the same checkpoint',async()=>{
+  const f=statusFixture(),run=f.create(),result=await run({expectedBinding:f.binding});
+  assert.equal(result.kind,'status-target-observed');assert.deepEqual(result.binding,f.binding);assert.equal(f.state.writes,1);
+  assert.deepEqual(await run({expectedBinding:f.binding}),{kind:'blocked',reason:'status-step-already-used'});assert.equal(f.state.writes,1);
+});
+test('v3 status step blocks changed handoff or protection before write and does not retry uncertainty',async()=>{
+  let f=statusFixture();f.state.change=v=>v.handoffEvidence.handoff.body+='edited';
+  assert.equal((await f.create()({expectedBinding:f.binding})).kind,'blocked');assert.equal(f.state.writes,0);
+  f=statusFixture();f.state.changeAt=3;f.state.change=v=>v.project.currentStatus='review';
+  assert.equal((await f.create()({expectedBinding:f.binding})).kind,'blocked');assert.equal(f.state.writes,0);
+  f=statusFixture();f.state.changeAt=3;f.state.change=()=>{f.state.protected=false;};
+  assert.equal((await f.create()({expectedBinding:f.binding})).kind,'blocked');assert.equal(f.state.writes,0);
+  f=statusFixture();f.state.protected=false;assert.equal((await f.create()({expectedBinding:f.binding})).kind,'blocked');assert.equal(f.state.writes,0);
+  f=statusFixture();f.state.fail=true;const run=f.create();assert.equal((await run({expectedBinding:f.binding})).kind,'status-write-uncertain');
+  assert.equal(f.state.writes,1);assert.equal((await run({expectedBinding:f.binding})).kind,'blocked');assert.equal(f.state.writes,1);
 });

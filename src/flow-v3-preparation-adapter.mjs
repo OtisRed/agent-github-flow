@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
-import { isHandoffSubject, matchesHandoffSubject } from './flow-handoff-binding.mjs';
-import { encodeProjectRegistrationV3 } from './flow-project-registration-v3.mjs';
+import { matchesHandoffSubject } from './flow-handoff-binding.mjs';
+import { matchesV3ProtectedContext } from './flow-v3-protected-context.mjs';
 import { createV3CheckpointObjectPreparer } from './flow-checkpoint-object-preparer.mjs';
 
 // Isolated App preparation only, not ref publication or authorization.
@@ -8,20 +8,9 @@ import { createV3CheckpointObjectPreparer } from './flow-checkpoint-object-prepa
 // collectContext must be authenticated and protected; a caller must independently prove bootstrap, protection and one
 // writer. Do not log observations, callback results or credentials.
 export function createV3PreparationAdapter({policy,projectRegistration,registrationCommitment,keyring,collectContext,appToken,request=fetch}={}){
-  if(!isHandoffSubject(policy)||encodeProjectRegistrationV3(projectRegistration).kind!=='encoded-registration'
-      ||projectRegistration.repositoryId!==policy.repositoryId||projectRegistration.repository!==policy.repository
-      ||projectRegistration.projectId!==policy.projectId||projectRegistration.statusFieldId!==policy.statusFieldId
-      ||projectRegistration.appId!==policy.appId||projectRegistration.updateRulesetId!==policy.updateRulesetId
-      ||projectRegistration.historyRulesetId!==policy.historyRulesetId||!isDeepStrictEqual(projectRegistration.trustedAuthorIds,policy.trustedAuthorIds)
-      ||!keyring||typeof keyring.current!=='function'||typeof keyring.forId!=='function'
+  if(!matchesV3ProtectedContext({policy,projectRegistration,registrationCommitment,keyring})
       ||typeof collectContext!=='function'||typeof request!=='function')throw Error('invalid-v3-adapter');
   policy=structuredClone(policy);projectRegistration=structuredClone(projectRegistration);
-  try{
-    const commitment=structuredClone(registrationCommitment);
-    if(!commitment||Object.keys(commitment).length!==2||!Number.isSafeInteger(commitment.keyId)||commitment.keyId<1
-        ||typeof commitment.mac!=='string'||!keyring.forId(commitment.keyId).verifyConfig(projectRegistration,commitment.mac))
-      throw Error('invalid');
-  }catch{throw Error('invalid-v3-adapter');}
   const registration=projectRegistration.checkpoint,parts=policy.repository.split('/');
   if(parts.length!==2)throw Error('invalid-v3-adapter');
   return async({snapshot,after,registration:observed}={})=>{
