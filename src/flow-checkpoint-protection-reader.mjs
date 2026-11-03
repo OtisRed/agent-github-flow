@@ -30,9 +30,9 @@ function nextPage(link, path, current) {
   return next;
 }
 
-// Read-only owner-authorized audit. request must be a trusted authenticated
+// Read-only authorized audit. request must be a trusted authenticated
 // GET-only transport that limits response size and returns status/json/headers.
-// It must see bypass_actors; runtime App metadata access may omit that field.
+// It must see bypass_actors; App metadata-only access omits that field.
 // Config and App identity are externally trusted. No result authorizes a write.
 async function readProtection(input, evaluate) {
   if (!input || typeof input !== 'object' || Array.isArray(input)

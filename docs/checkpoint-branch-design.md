@@ -291,6 +291,15 @@ Jest to wyłącznie model bez podłączonego magazynu i prawa do wykonania zapis
 Przed integracją trzeba ustalić i wyegzekwować odpowiedni limit oraz sposób
 odnawiania audytu; brak widocznego dryfu nie potwierdza aktualnych bypassów.
 
+Właściciel wybrał rozszerzenie istniejącej GitHub App o `Administration: write`,
+aby przyszły kontroler mógł automatycznie odczytywać także wyjątki i wykonywać
+pełny audyt bez osobnego PAT-a. Uprawnienie umożliwia również zmianę reguł,
+dlatego token audytowy powinien być krótkotrwały i ograniczony do jednego
+repozytorium, a dostęp do klucza App pozostaje granicą zaufania. Zmiana czeka
+na potwierdzenie dostępu do ustawień GitHuba i rzeczywistą próbę; obecny test
+pełnego audytu przez transport App używa wyłącznie fikcyjnych odpowiedzi.
+Do czasu sprawdzenia nie zakładamy, że pole wyjątków jest dla App dostępne.
+
 Samo zarezerwowanie nazwy nie dowodzi, że istniejąca gałąź nie jest
 używana przez produkt; onboarding musi to wcześniej ustalić i nie może jej
 nadpisać. Testy tego adaptera używają fikcyjnych odpowiedzi.

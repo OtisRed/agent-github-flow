@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCheckpointProtectionTransport } from './flow-checkpoint-protection-transport.mjs';
-import { readCheckpointVisibleProtection } from './flow-checkpoint-protection-reader.mjs';
+import { readCheckpointProtectionAudit, readCheckpointVisibleProtection } from './flow-checkpoint-protection-reader.mjs';
 import { createOwnerProtectionReceipt } from './flow-checkpoint-protection-receipt.mjs';
 import { CHECKPOINT_BRANCH_REF as a, CHECKPOINT_ANCHOR_REF as b } from './flow-checkpoint-registration.mjs';
 
@@ -74,4 +74,25 @@ test('collector and scoped transport agree on exact URLs and fail on visible dri
   assert.equal((await readCheckpointVisibleProtection(input)).kind,'visible-profile-matches-owner-audit');
   assert.equal(calls.length,20);update.updated_at='2026-11-03T10:30:00Z';
   assert.deepEqual(await readCheckpointVisibleProtection(input),{kind:'blocked',reason:'visible-protection-drift'});
+});
+
+test('a transport that can see bypasses can run the complete audit, blocking altered actors',async()=>{
+  const common={target:'branch',source_type:'Repository',source:'owner/repo',enforcement:'active',
+    conditions:{ref_name:{include:[a,b],exclude:[]}}};
+  const repo={node_id:'id',full_name:'owner/repo',private:true,fork:false,default_branch:'main'};
+  const update={...common,id:1,rules:[{type:'update'}],bypass_actors:[{actor_type:'Integration',actor_id:12,bypass_mode:'always'}]};
+  const history={...structuredClone(common),id:2,rules:[{type:'deletion'},{type:'non_fast_forward'}],bypass_actors:[]};
+  const rule=(type,id)=>({type,ruleset_id:id,ruleset_source_type:'Repository',ruleset_source:'owner/repo'});
+  const rules=[rule('update',1),rule('deletion',2),rule('non_fast_forward',2)];
+  const request=async url=>{const path=new URL(url).pathname;let data;
+    if(path==='/installation/repositories')data={total_count:1,repositories:[repo]};else if(path==='/repos/owner/repo')data=repo;
+    else if(path.endsWith('/rulesets/1'))data=update;else if(path.endsWith('/rulesets/2'))data=history;
+    else if(path.includes('/rules/branches/'))data=rules;else throw Error('unexpected');
+    return {status:200,text:async()=>JSON.stringify(data),headers:{get:()=>null}};};
+  const transport=createCheckpointProtectionTransport({owner:'owner',repo:'repo',repositoryId:'id',appToken:'secret-token',
+    expectedSlug:'agent-flow',actualSlug:'agent-flow',updateRulesetId:1,historyRulesetId:2,request});
+  const input={owner:'owner',repo:'repo',repositoryId:'id',appId:12,updateRulesetId:1,historyRulesetId:2,expectedPrivate:true,request:transport};
+  assert.equal((await readCheckpointProtectionAudit(input)).kind,'checkpoint-protection-observed');
+  update.bypass_actors.push({actor_type:'User',actor_id:33,bypass_mode:'always'});
+  assert.deepEqual(await readCheckpointProtectionAudit(input),{kind:'blocked',reason:'unexpected-bypass'});
 });

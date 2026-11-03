@@ -16,7 +16,7 @@ const exactScope = value => {
     && names.every(name => ref.include.includes(name)) && Array.isArray(ref.exclude) && ref.exclude.length === 0;
 };
 
-// For a separate owner-authorized audit, not the controller's App token.
+// For a separate authorized audit with an identity that can see bypass actors.
 // Raw results must be obtained from a trusted complete fresh read of the exact
 // repo, both rulesets and effective rules for both ref names. Missing bypass
 // data blocks; this observation is not an execution permit or a guarantee
