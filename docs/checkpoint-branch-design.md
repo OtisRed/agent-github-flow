@@ -105,6 +105,10 @@ się. Brakująca karta Projectu nie uprawnia do usunięcia rekordu issue.
 Genesis i jego obecność w historii nie wykryją cofnięcia refu do starszego
 potomka genesis. Zaufany niezależny punkt ostatniego stanu albo jawnie
 ograniczona gwarancja i procedura odzyskiwania wymagają dalszego projektu.
+Prototyp `src/flow-checkpoint-registration.mjs` sprawdza wyłącznie zgodność
+rejestracji z repozytorium, refem i obserwowanym porównaniem genesis do HEAD.
+Jego wynik wprost nie deklaruje ochrony przed takim cofnięciem; caller musi
+jeszcze uwierzytelnić rejestr, pobrać właściwe porównanie i odczytać ref ponownie.
 Ochrona refu przed usunięciem i force-push również nie dowodzi, że uprawniony
 administrator nie zmieni ustawień. Nie wolno deklarować ochrony przed takim
 cofnięciem bez osobnego dowodu.
