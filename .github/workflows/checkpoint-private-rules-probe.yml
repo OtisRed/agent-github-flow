@@ -1,0 +1,94 @@
+name: Checkpoint App private protected-branch probe
+on:
+  push:
+    branches: [spike/workflow-call-allowed]
+    paths: [.github/workflows/checkpoint-private-rules-probe.yml]
+permissions: {}
+jobs:
+  probe:
+    if: github.ref == 'refs/heads/spike/workflow-call-allowed'
+    runs-on: ubuntu-24.04
+    environment: split-app-probe
+    timeout-minutes: 4
+    steps:
+      - name: Validate and mask the private target
+        env:
+          PROBE_REPOSITORY: ${{ secrets.CHECKPOINT_PROBE_REPOSITORY }}
+        shell: bash
+        run: |
+          if [[ ! "${PROBE_REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]{1,100}$ ]] || [[ "$PROBE_REPOSITORY" == '.' || "$PROBE_REPOSITORY" == '..' ]]; then
+            echo 'Private probe configuration invalid'; exit 1
+          fi
+          echo "::add-mask::OtisRed/${PROBE_REPOSITORY}"
+      - name: Create a narrowly scoped App token
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: '4681815'
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: OtisRed
+          repositories: ${{ secrets.CHECKPOINT_PROBE_REPOSITORY }}
+          permission-contents: write
+      - name: Verify App can commit to the protected private test branch
+        env:
+          APP_TOKEN: ${{ steps.app.outputs.token }}
+          PROBE_REPOSITORY: ${{ secrets.CHECKPOINT_PROBE_REPOSITORY }}
+          PROBE_REPOSITORY_ID: ${{ secrets.CHECKPOINT_PROBE_REPOSITORY_ID }}
+          PROBE_BASE: ${{ secrets.CHECKPOINT_PROBE_BASE }}
+        shell: bash
+        run: |
+          node <<'NODE'
+          const { APP_TOKEN: token, PROBE_REPOSITORY: repository, PROBE_REPOSITORY_ID: repositoryId, PROBE_BASE: initial } = process.env;
+          const target = 'spike/checkpoint-private-rules-probe-20261103';
+          const path = '.flow-checkpoint-probe/ruleset.json';
+          const payload = '{"probe":"private-ruleset"}\n';
+          const readQuery = `query($name: String!, $ref: String!, $file: String!) {
+            repository(owner: "OtisRed", name: $name) {
+              id isPrivate ref(qualifiedName: $ref) { target { ... on Commit { oid } } }
+              object(expression: $file) { ... on Blob { text } }
+            }
+          }`;
+          const mutation = `mutation($input: CreateCommitOnBranchInput!) {
+            createCommitOnBranch(input: $input) { commit { oid } }
+          }`;
+          async function request(query, variables) {
+            const response = await fetch('https://api.github.com/graphql', {
+              method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15000),
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2022-11-28' },
+              body: JSON.stringify({ query, variables }),
+            });
+            if (!response.ok) throw Error('github-http');
+            return response.json();
+          }
+          async function read() {
+            const result = await request(readQuery, { name: repository, ref: `refs/heads/${target}`, file: `refs/heads/${target}:${path}` });
+            const repo = result.data?.repository;
+            if (result.errors?.length || repo?.id !== repositoryId || repo?.isPrivate !== true || !repo?.ref?.target?.oid) throw Error('read-failed');
+            return repo;
+          }
+          async function main() {
+            if (!token || typeof repository !== 'string' || !/^[A-Za-z0-9_.-]{1,100}$/.test(repository) || ['.', '..'].includes(repository)
+              || !repositoryId || !/^[a-f0-9]{40}$/.test(initial ?? '')) throw Error('invalid-configuration');
+            const scope = await fetch('https://api.github.com/installation/repositories', {
+              method: 'GET', redirect: 'error', signal: AbortSignal.timeout(15000),
+              headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+            });
+            if (!scope.ok) throw Error('scope-unavailable');
+            const installation = await scope.json();
+            if (installation.total_count !== 1 || installation.repositories?.length !== 1
+              || installation.repositories[0].full_name !== `OtisRed/${repository}`
+              || installation.repositories[0].node_id !== repositoryId || installation.repositories[0].private !== true) throw Error('scope-mismatch');
+            const before = await read();
+            if (before.ref.target.oid !== initial || before.object !== null) throw Error('target-not-pristine');
+            const input = { branch: { repositoryNameWithOwner: `OtisRed/${repository}`, branchName: target },
+              expectedHeadOid: initial, message: { headline: 'test: checkpoint private rules probe' },
+              fileChanges: { additions: [{ path, contents: Buffer.from(payload).toString('base64') }] } };
+            const result = await request(mutation, { input });
+            const committed = result.data?.createCommitOnBranch?.commit?.oid;
+            if (result.errors?.length || !/^[a-f0-9]{40}$/.test(committed ?? '')) throw Error('commit-unconfirmed');
+            const after = await read();
+            if (after.ref.target.oid !== committed || after.object?.text !== payload) throw Error('readback-mismatch');
+            console.log('Private App protected-branch commit confirmed');
+          }
+          main().catch(() => { console.error('Private protected-branch probe blocked or uncertain'); process.exitCode = 1; });
+          NODE
