@@ -12,7 +12,8 @@ try {
     try { routes = JSON.parse(process.env.FLOW_EVENT_ROUTES); } catch { routes = null; }
   }
   const verdict = inspectFlowEvent({ eventName: process.env.GITHUB_EVENT_NAME, event,
-    centralRepository: process.env.GITHUB_REPOSITORY, routes });
+    centralRepository: process.env.GITHUB_REPOSITORY, routes,
+    selectedRepository: process.env.FLOW_EVENT_SELECTED_REPOSITORY });
   if (verdict.kind === 'candidate') console.log('Event preflight: candidate; no writes performed');
   else if (verdict.kind === 'ignored') console.log('Event preflight: ignored');
   else { console.error('Event preflight: blocked'); process.exitCode = 1; }
