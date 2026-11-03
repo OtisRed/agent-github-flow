@@ -1,0 +1,72 @@
+name: Checkpoint App protected-branch probe
+on:
+  push:
+    branches: [spike/workflow-call-allowed]
+    paths: [.github/workflows/checkpoint-rules-app-probe.yml]
+permissions: {}
+jobs:
+  probe:
+    if: github.ref == 'refs/heads/spike/workflow-call-allowed'
+    runs-on: ubuntu-24.04
+    environment: split-app-probe
+    timeout-minutes: 4
+    steps:
+      - name: Create a narrowly scoped App token
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: '4681815'
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: OtisRed
+          repositories: agent-github-flow
+          permission-contents: write
+      - name: Verify App can commit to the separately protected test branch
+        env:
+          APP_TOKEN: ${{ steps.app.outputs.token }}
+        shell: bash
+        run: |
+          node <<'NODE'
+          const token = process.env.APP_TOKEN;
+          const target = 'spike/checkpoint-rules-target-20261103';
+          const initial = '0904d54c854e679d66d61a2ef714d6ad2281dcbd';
+          const path = '.flow-checkpoint-probe/ruleset.json';
+          const payload = '{"probe":"ruleset"}\n';
+          const readQuery = `query($ref: String!, $file: String!) {
+            repository(owner: "OtisRed", name: "agent-github-flow") {
+              ref(qualifiedName: $ref) { target { ... on Commit { oid } } }
+              object(expression: $file) { ... on Blob { text } }
+            }
+          }`;
+          const mutation = `mutation($input: CreateCommitOnBranchInput!) {
+            createCommitOnBranch(input: $input) { commit { oid } }
+          }`;
+          async function request(query, variables) {
+            const response = await fetch('https://api.github.com/graphql', {
+              method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15000),
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2022-11-28' },
+              body: JSON.stringify({ query, variables }),
+            });
+            if (!response.ok) throw Error('github-http');
+            return response.json();
+          }
+          async function read() {
+            const result = await request(readQuery, { ref: `refs/heads/${target}`, file: `refs/heads/${target}:${path}` });
+            if (result.errors?.length || !result.data?.repository?.ref?.target?.oid) throw Error('read-failed');
+            return result.data.repository;
+          }
+          async function main() {
+            if (!token) throw Error('missing-token');
+            const before = await read();
+            if (before.ref.target.oid !== initial || before.object !== null) throw Error('target-not-pristine');
+            const input = { branch: { repositoryNameWithOwner: 'OtisRed/agent-github-flow', branchName: target },
+              expectedHeadOid: initial, message: { headline: 'test: checkpoint protected-branch probe' },
+              fileChanges: { additions: [{ path, contents: Buffer.from(payload).toString('base64') }] } };
+            const result = await request(mutation, { input });
+            const committed = result.data?.createCommitOnBranch?.commit?.oid;
+            if (result.errors?.length || !/^[a-f0-9]{40}$/.test(committed ?? '')) throw Error('commit-unconfirmed');
+            const after = await read();
+            if (after.ref.target.oid !== committed || after.object?.text !== payload) throw Error('readback-mismatch');
+            console.log('App protected-branch commit confirmed');
+          }
+          main().catch(() => { console.error('Protected-branch probe blocked or uncertain'); process.exitCode = 1; });
+          NODE
