@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { planInitialBranchHandoff, planInitialV2Handoff } from './flow-checkpoint-initial-handoff.mjs';
+import { planInitialV3Handoff } from './flow-v3-initial-handoff.mjs';
+import { createCheckpointKeyring } from './flow-checkpoint-keyring.mjs';
+import { FLOW_STATUSES } from './flow.mjs';
 
 const body = '[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
 const digest = value => createHash('sha256').update(value, 'utf8').digest('hex');
@@ -41,6 +44,44 @@ test('plans the first v2 handoff without a reservation only for explicit matchin
   v.registration.checkpointSchemaVersion = 2; v.checkpoint.schemaVersion = 1; assert.equal(planInitialV2Handoff(v).kind, 'blocked');
   v.checkpoint.schemaVersion = 2; v.checkpoint.index.issues.push({ number: 1, issueId: 'issue' });
   assert.equal(planInitialV2Handoff(v).kind, 'blocked');
+});
+
+function fixtureV3(){
+  const v=fixture();v.checkpoint.schemaVersion=3;
+  v.registration={repositoryId:'repo-id',ref:'refs/heads/agent-github-flow/checkpoints',genesisOid:'a'.repeat(40),
+    cutoverAt:v.checkpoint.cutoverAt,checkpointSchemaVersion:3};
+  v.project.statusFieldName='Status';v.project.statusOptions=FLOW_STATUSES.map((name,index)=>({name,
+    id:name==='needs-design'?'design':name==='agent-ready'?'ready':`private-option-${index}`}));
+  v.repository={node_id:'repo-id',full_name:'owner/project',private:false,fork:false};
+  v.projectRegistration={version:3,source:'a'.repeat(32),repository:'owner/project',repositoryId:'repo-id',expectedPrivate:false,
+    dataPolicy:'common-v3',projectOwner:'board-owner',projectNumber:1,projectId:'project',statusFieldId:'status',statusFieldName:'Status',
+    statusOptions:structuredClone(v.project.statusOptions),appId:12,updateRulesetId:1,historyRulesetId:2,trustedAuthorIds:['user'],checkpoint:structuredClone(v.registration)};
+  v.keyring=createCheckpointKeyring({currentKeyId:1,keys:[{id:1,key:Buffer.alloc(32,1)}]});return v;
+}
+
+test('plans a first keyed v3 checkpoint without exposing private option IDs or comment body in its files',()=>{
+  const v=fixtureV3(),result=planInitialV3Handoff(v);
+  assert.equal(result.kind,'initial-handoff-v3-planned');assert.equal(result.record.version,3);assert.equal(result.record.reservation,null);
+  assert.equal(result.record.current.commentKeyId,1);assert.equal(result.record.current.configKeyId,1);
+  assert.equal(result.commit.expectedHeadOid,v.checkpoint.headOid);
+  const published=result.commit.additions.map(entry=>Buffer.from(entry.contents,'base64').toString('utf8')).join('\n');
+  assert.equal(published.includes('private-option-'),false);assert.equal(published.includes(body),false);
+  assert.equal(published.includes('"design"'),false);assert.equal(published.includes('"ready"'),false);
+  const serialized=JSON.stringify(result);for(const name of ['projectId','itemId','statusFieldId','fromOptionId','targetOptionId'])
+    assert.equal(serialized.includes(`"${name}":`),false);
+  assert.equal(serialized.includes(body),false);assert.equal(serialized.includes('private-option-'),false);
+  assert.equal(Object.hasOwn(result.record.current,'digest'),false);
+});
+
+test('v3 first handoff refuses changed private configuration, visibility, comments and keys',()=>{
+  let v=fixtureV3();v.project.statusOptions[0].id='changed';assert.equal(planInitialV3Handoff(v).kind,'blocked');
+  v=fixtureV3();v.repository.private=true;assert.equal(planInitialV3Handoff(v).kind,'blocked');
+  v=fixtureV3();v.trustedAuthorIds=['different'];assert.equal(planInitialV3Handoff(v).kind,'blocked');
+  v=fixtureV3();v.handoffEvidence.handoff.body+='edited';assert.equal(planInitialV3Handoff(v).kind,'blocked');
+  v=fixtureV3();v.registration.cutoverAt='2025-01-01T00:00:00Z';assert.equal(planInitialV3Handoff(v).kind,'blocked');
+  v=fixtureV3();v.keyring={current:()=>null,forId:()=>null};assert.equal(planInitialV3Handoff(v).kind,'blocked');
+  v=fixtureV3();const other=createCheckpointKeyring({currentKeyId:1,keys:[{id:1,key:Buffer.alloc(32,2)}]});
+  v.keyring={current:v.keyring.current,forId:other.forId};assert.equal(planInitialV3Handoff(v).reason,'v3-commitments-unverified');
 });
 
 test('rejects foreign card or repository, an existing record, closed issues and done', () => {
