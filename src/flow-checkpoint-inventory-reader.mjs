@@ -1,12 +1,13 @@
 import { readCheckpointTreePlan } from './flow-checkpoint-tree-reader.mjs';
 import { decodeCheckpointRecordIdentity } from './flow-checkpoint-record-identity.mjs';
 import { validateCheckpointInventory } from './flow-checkpoint-inventory.mjs';
+import { encodeCheckpointRecord } from './flow-checkpoint-record.mjs';
 
 const blocked = reason => ({ kind: 'blocked', reason });
 const MAX_INVENTORY_BYTES = 16 * 1024 * 1024;
 
-// Reads every record from the same immutable tree and checks its identity.
-// The caller must independently validate the payloads, branch registration,
+// Reads every record from the same immutable tree and checks its structure.
+// The caller must independently validate public-data policy, branch registration,
 // provenance and freshness. This function has no writer or retry loop.
 export async function readCheckpointInventory(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.readBlob !== 'function') return blocked('invalid-input');
@@ -23,11 +24,14 @@ export async function readCheckpointInventory(input) {
     const decoded = decodeCheckpointRecordIdentity({ expectedOid: entry.oid, blob, repositoryId,
       number: identity.number, issueId: identity.issueId });
     if (decoded.kind !== 'record-identity-verified') return decoded;
+    const encoded = encodeCheckpointRecord(decoded.record);
+    if (encoded.kind !== 'encoded-record') return encoded;
+    if (encoded.content !== JSON.stringify(decoded.record)) return blocked('noncanonical-record');
     const { version, repositoryId: recordRepositoryId, number, issueId } = decoded.record;
     records.push({ path: entry.path, value: { version, repositoryId: recordRepositoryId, number, issueId } });
   }
   const inventory = validateCheckpointInventory({ repositoryId, complete: true, index: plan.index, records });
   if (inventory.kind !== 'valid-inventory') return inventory;
-  return { kind: 'inventory-identities-verified', commitOid: plan.commitOid, treeOid: plan.treeOid,
+  return { kind: 'inventory-records-structurally-valid', commitOid: plan.commitOid, treeOid: plan.treeOid,
     issueCount: inventory.issueCount, index: plan.index, records };
 }

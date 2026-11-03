@@ -63,15 +63,15 @@ GitHub API dla wskazanego repozytorium, a wspólny transport kieruje je przez
 token App i odrzuca przekierowania. Test kompozycji używa fikcyjnych odpowiedzi;
 adapter nie potwierdza jeszcze rzeczywistego dostępu ani zaufania do repozytorium.
 Prototyp `src/flow-checkpoint-inventory-reader.mjs` pobiera każdy rekord po
-OID z tego drzewa i sprawdza jego bajty oraz tożsamość repozytorium i issue.
-Jego wynik oznacza wyłącznie zgodność inwentarza i tożsamości: zawartość
-checkpointu i polityka jawności danych nadal nie są walidowane i nie mogą
-posłużyć do decyzji kontrolera. Wynik nie zwraca niezinterpretowanego payloadu;
+OID z tego drzewa i sprawdza jego bajty, tożsamość oraz strukturę checkpointu.
+Wynik nie potwierdza pochodzenia, prawdziwości dowodów ani polityki jawności
+danych i nie upoważnia do decyzji kontrolera. Nie zwraca zawartości checkpointu;
 suma rozmiarów rekordów ponad 16 MiB blokuje próbę przed ich odczytaniem.
 Jest to wstępny limit wymagający pomiaru. Brak rejestru lub cofnięcie historii
 pozostają osobnymi problemami. Testy używają fikcyjnych odpowiedzi.
 Odrębny kandydat `src/flow-checkpoint-record.mjs` opisuje kanoniczną zawartość
-rekordu, w tym handoff i epokę reopen. Zachowuje dowód komentarza sprzed
+rekordu, w tym handoff i epokę reopen, a czytnik używa go do kontroli struktury.
+Format zachowuje dowód komentarza sprzed
 ostatniego reentry również po zatwierdzeniu nowego handoffu; blokuje m.in.
 historyczny komentarz initial w chwili cutover lub wcześniej. Walidacja jednego
 rekordu nie sprawdza, czy przejście ze starszego commitu było dozwolone ani czy
