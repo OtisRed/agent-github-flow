@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { planInitialBranchHandoff } from './flow-checkpoint-initial-handoff.mjs';
+import { planPendingBranchHandoff } from './flow-checkpoint-pending-handoff.mjs';
 
 const blocked = reason => ({ kind:'blocked', reason });
 const uncertain = () => ({ kind:'publication-uncertain', retryAllowed:false });
@@ -17,7 +18,7 @@ const matches = (o,p) => o?.checkpoint?.repositoryId === p.repositoryId && o.che
 const protectedBy = (value,p) => value?.kind === 'checkpoint-protection-observed' && value.repositoryId === p.repositoryId
   && value.appId === p.appId && value.updateRulesetId === p.updateRulesetId && value.historyRulesetId === p.historyRulesetId;
 
-// Preparatory one-shot composition for the FIRST pending handoff only. All
+// Preparatory one-shot composition for the initial handoff only. All
 // dependencies must be trusted, authenticated and bound to policy: complete
 // collection, full fresh protection audit, object preparer, ref publisher and
 // publication observer. The caller must enforce one writer and guarantee that
@@ -25,15 +26,15 @@ const protectedBy = (value,p) => value?.kind === 'checkpoint-protection-observed
 // not wired into Actions and does not itself establish these trust conditions.
 // Project/issue mutations can race Git and there is no cross-system CAS.
 // Never log private inputs, plans or object identifiers.
-export async function runInitialPublicationStep({ policy, collect, verifyProtection, prepare, publish, observe } = {}) {
+async function runPublication({ policy, collect, verifyProtection, prepare, publish, observe } = {}, planner, expectedKind, resultKind, notApplicable) {
   if (!validPolicy(policy) || ![collect,verifyProtection,prepare,publish,observe].every(fn => typeof fn === 'function')) return blocked('invalid-input');
   policy = structuredClone(policy);
   let first, plan, prepared;
   try {
     first = structuredClone(await collect());
     if (!matches(first,policy)) return blocked('policy-mismatch');
-    plan = planInitialBranchHandoff(first);
-    if (plan.kind !== 'initial-handoff-planned') return blocked('initial-step-not-applicable');
+    plan = planner(first);
+    if (plan.kind !== expectedKind) return blocked(notApplicable);
     if (!protectedBy(await verifyProtection(),policy)) return blocked('protection-unverified');
     if (!isDeepStrictEqual(first,await collect())) return blocked('snapshot-changed');
     prepared = await prepare({ snapshot:structuredClone(first.checkpoint), after:structuredClone(plan.record) });
@@ -60,5 +61,15 @@ export async function runInitialPublicationStep({ policy, collect, verifyProtect
     expected.checkpoint.selectedRecord = plan.record;
     if (!isDeepStrictEqual(expected,await collect()) || !protectedBy(await verifyProtection(),policy)) return uncertain();
   } catch { return uncertain(); }
-  return { kind:'initial-pending-observed', retryAllowed:false };
+  return { kind:resultKind, retryAllowed:false };
+}
+
+export async function runInitialPublicationStep(input) {
+  return runPublication(input, planInitialBranchHandoff, 'initial-handoff-planned', 'initial-pending-observed', 'initial-step-not-applicable');
+}
+
+// Only commits an existing first pending record after the target status is
+// independently observed; it does not itself change a Project card.
+export async function runPendingCommitPublicationStep(input) {
+  return runPublication(input, planPendingBranchHandoff, 'commit-handoff-planned', 'pending-commit-observed', 'pending-commit-not-applicable');
 }

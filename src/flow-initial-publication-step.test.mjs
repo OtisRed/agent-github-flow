@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { planInitialBranchHandoff } from './flow-checkpoint-initial-handoff.mjs';
-import { runInitialPublicationStep } from './flow-initial-publication-step.mjs';
+import { planPendingBranchHandoff } from './flow-checkpoint-pending-handoff.mjs';
+import { runInitialPublicationStep, runPendingCommitPublicationStep } from './flow-initial-publication-step.mjs';
 
 function fixture() {
   const body='[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
@@ -61,5 +62,24 @@ test('does not publish if protection changes during final snapshot read',async()
   const f=fixture();const original=f.input.collect;let count=0;
   f.input.collect=async()=>{const result=await original();if(++count===3)f.state.protection.historyRulesetId=9;return result;};
   assert.equal((await runInitialPublicationStep(f.input)).reason,'publication-preflight-changed');
+  assert.equal(f.state.calls.includes('publish'),false);
+});
+test('commits an existing pending checkpoint only after observing the target status',async()=>{
+  const f=fixture();const pending=structuredClone(f.state.after);
+  pending.project.currentStatus='agent-ready';pending.project.statusOptionId='ready';
+  const plan=planPendingBranchHandoff(pending);assert.equal(plan.kind,'commit-handoff-planned');
+  const committed=structuredClone(pending);committed.checkpoint.headOid='e'.repeat(40);committed.checkpoint.selectedRecord=structuredClone(plan.record);
+  f.state.base=pending;f.state.after=committed;
+  f.input.prepare=async({snapshot,after})=>{f.state.calls.push('prepare');assert.deepEqual(snapshot,pending.checkpoint);assert.deepEqual(after,plan.record);
+    return {kind:'checkpoint-objects-prepared',expectedHeadOid:'c'.repeat(40),expectedTreeOid:'d'.repeat(40),
+      commit:{sha:'e'.repeat(40),tree:{sha:'d'.repeat(40)},parents:[{sha:'c'.repeat(40)}]}};};
+  assert.deepEqual(await runPendingCommitPublicationStep(f.input),{kind:'pending-commit-observed',retryAllowed:false});
+  const another=fixture();another.state.base=structuredClone(pending);another.state.base.project.currentStatus='needs-design';another.state.base.project.statusOptionId='design';
+  assert.equal((await runPendingCommitPublicationStep(another.input)).reason,'pending-commit-not-applicable');
+  assert.equal(another.state.calls.includes('publish'),false);
+});
+test('retains the initial-step refusal reason for an existing checkpoint',async()=>{
+  const f=fixture();f.state.base=structuredClone(f.state.after);
+  assert.equal((await runInitialPublicationStep(f.input)).reason,'initial-step-not-applicable');
   assert.equal(f.state.calls.includes('publish'),false);
 });

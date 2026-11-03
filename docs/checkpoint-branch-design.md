@@ -110,7 +110,8 @@ ani ochrony gałęzi. Caller musi ponowić odczyty i porównać plan przed mutac
 Plannery nie wykonują mutacji; testy używają fikcyjnych obserwacji.
 
 `src/flow-initial-publication-step.mjs` przygotowuje pojedynczy krok publikacji
-pierwszego `pending`: porównuje odczyty i konfigurację, wymaga pełnego audytu
+pierwszego `pending` albo zatwierdzenia tego `pending` po odczytaniu statusu
+docelowego: porównuje odczyty i konfigurację, wymaga pełnego audytu
 ochrony przed przygotowaniem obiektów oraz ponownie bezpośrednio przed jedną
 próbą publikacji, po której obserwuje refy i odczytuje stan. Niepewnego wyniku
 nie ponawia automatycznie. Kompozycja wymaga niezależnie zaufanych collectorów,
