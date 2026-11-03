@@ -24,4 +24,5 @@ jobs:
       - name: Recognize event without changing GitHub state
         env:
           FLOW_EVENT_ROUTES: ${{ secrets.FLOW_EVENT_ROUTES }}
+          FLOW_EVENT_SELECTED_REPOSITORY: ${{ github.event_name == 'repository_dispatch' && secrets[format('FLOW_ROUTE_{0}', github.event.client_payload.source)] || '' }}
         run: node src/flow-event-cli.mjs
