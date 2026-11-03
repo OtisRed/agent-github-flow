@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { observeV2GenesisPublication } from './flow-v2-genesis-observer.mjs';
 import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
+import { observeV3GenesisPublication } from './flow-v3-genesis-observer.mjs';
 
 const oid=c=>c.repeat(40);
 function fixture(){const state={pair:[oid('a'),oid('a')],parents:[],reads:0};
@@ -13,6 +14,16 @@ function fixture(){const state={pair:[oid('a'),oid('a')],parents:[],reads:0};
 test('observes both newly created refs and the exact root commit',async()=>{
   const f=fixture();assert.deepEqual(await observeV2GenesisPublication(f.input),{kind:'genesis-publication-observed',retryAllowed:false});
   assert.equal(f.state.reads,4);
+});
+test('observes v3 refs for matching public and private setup intents',async()=>{
+  for(const expectedPrivate of [false,true]){const f=fixture();f.input.readRepository=async()=>({node_id:'repo-id',full_name:'owner/project',
+    private:expectedPrivate,fork:false,default_branch:'main'});
+    const input={...f.input,setupIntent:{repository:'owner/project',repositoryId:'repo-id',expectedPrivate,cutoverAt:'2026-01-01T10:00:00Z'}};
+    assert.equal((await observeV3GenesisPublication(input)).kind,'genesis-publication-observed');
+    f.state.pair=[null,null];assert.equal((await observeV3GenesisPublication(input)).kind,'genesis-publication-not-observed');
+    f.input.readRepository=async()=>({node_id:'repo-id',full_name:'owner/project',private:expectedPrivate,fork:true,default_branch:'main'});
+    input.readRepository=f.input.readRepository;assert.equal((await observeV3GenesisPublication(input)).kind,'blocked');
+  }
 });
 test('absent, mixed or changed refs never authorize retry or report success',async()=>{
   let f=fixture();f.state.pair=[null,null];assert.deepEqual(await observeV2GenesisPublication(f.input),{kind:'genesis-publication-not-observed',retryAllowed:false});
