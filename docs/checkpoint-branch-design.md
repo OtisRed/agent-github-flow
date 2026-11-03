@@ -115,6 +115,11 @@ refu oraz gałęzi domyślnej i blokuje przypadek, gdy ref techniczny jest
 domyślny. Samo zarezerwowanie nazwy nie dowodzi, że istniejąca gałąź nie jest
 używana przez produkt; onboarding musi to wcześniej ustalić i nie może jej
 nadpisać. Testy tego adaptera używają fikcyjnych odpowiedzi.
+Prototyp `src/flow-checkpoint-registered-snapshot.mjs` łączy tę obserwację z
+odczytem pełnego inwentarza dokładnego HEAD i sprawdza ref ponownie po odczycie.
+Wymaga od callera zaufanej konfiguracji i transportów tego samego repozytorium;
+nie wykrywa zmiany refu, który wróci do poprzedniej wartości między odczytami,
+ani cofnięcia do starszego potomka genesis. Nie upoważnia do zapisu.
 Ochrona refu przed usunięciem i force-push również nie dowodzi, że uprawniony
 administrator nie zmieni ustawień. Nie wolno deklarować ochrony przed takim
 cofnięciem bez osobnego dowodu.
