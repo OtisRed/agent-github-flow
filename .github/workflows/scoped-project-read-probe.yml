@@ -1,0 +1,30 @@
+name: Scoped personal Project binding probe
+on:
+  push:
+    branches: [spike/workflow-call-allowed]
+    paths: [.github/workflows/scoped-project-read-probe.yml]
+permissions: {}
+jobs:
+  probe:
+    if: github.ref == 'refs/heads/spike/workflow-call-allowed'
+    runs-on: ubuntu-24.04
+    environment: split-app-probe
+    timeout-minutes: 4
+    steps:
+      - name: Read private Project and issue binding
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_ACCESS_TOKEN }}
+          PROBE_OWNER: ${{ secrets.SCOPED_PROJECT_PROBE_OWNER }}
+          PROBE_NUMBER: ${{ secrets.SCOPED_PROJECT_PROBE_NUMBER }}
+          PROBE_PROJECT: ${{ secrets.SCOPED_PROJECT_PROBE_ID }}
+          PROBE_ITEM: ${{ secrets.SCOPED_PROJECT_PROBE_ITEM }}
+          PROBE_ISSUE: ${{ secrets.SCOPED_PROJECT_PROBE_ISSUE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" || ! "${PROBE_OWNER:-}" =~ ^[A-Za-z0-9-]{1,39}$ || ! "${PROBE_NUMBER:-}" =~ ^[1-9][0-9]*$ || -z "${PROBE_PROJECT:-}" || -z "${PROBE_ITEM:-}" || -z "${PROBE_ISSUE:-}" ]]; then echo 'Probe: configuration unavailable'; exit 1; fi
+          actual=$(gh api graphql -f query='query($owner:String!,$number:Int!) { user(login:$owner) { projectV2(number:$number) { id public } } }' -f owner="$PROBE_OWNER" -F number="$PROBE_NUMBER" --jq '.data.user.projectV2 | select(.public == false) | .id' 2>/dev/null) || { echo 'Probe: Project unavailable'; exit 1; }
+          [[ "$actual" == "$PROBE_PROJECT" ]] || { echo 'Probe: Project mismatch'; exit 1; }
+          count=$(gh api --paginate -H 'X-GitHub-Api-Version: 2026-03-10' "users/$PROBE_OWNER/projectsV2/$PROBE_NUMBER/items?per_page=100" 2>/dev/null | jq -s --arg issue "$PROBE_ISSUE" --arg item "$PROBE_ITEM" '[.[][] | select(.content_type == "Issue" and .content.node_id == $issue and .archived_at == null)] | if length == 1 and .[0].node_id == $item then 1 else 0 end') || { echo 'Probe: binding unavailable'; exit 1; }
+          [[ "$count" == '1' ]] || { echo 'Probe: binding unavailable'; exit 1; }
+          echo 'Probe: private Project and unique issue binding confirmed'
