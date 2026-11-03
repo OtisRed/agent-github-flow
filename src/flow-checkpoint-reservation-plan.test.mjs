@@ -9,6 +9,7 @@ import { verifyV3Preparation } from './flow-v3-preparation-guard.mjs';
 import { createV3ProjectStatusStep } from './flow-v3-project-status-step.mjs';
 import { v3HandoffBinding } from './flow-v3-handoff-binding.mjs';
 import { createV3CheckpointProtectionTransport } from './flow-checkpoint-protection-transport.mjs';
+import { createV3BranchStatusTransport, BRANCH_STATUS_UPDATE } from './flow-project-status-transport.mjs';
 
 const body = '[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
 const digest = createHash('sha256').update(body).digest('hex');
@@ -150,7 +151,8 @@ function statusFixture(){
   const registrationCommitment={keyId:1,mac:v.keyring.current().config(v.projectRegistration)};
   const create=()=>createV3ProjectStatusStep({policy,projectRegistration:v.projectRegistration,registrationCommitment,keyring:v.keyring,
     collectContext,verifyProtection,transport});
-  return {v,policy,state,transport,create,binding:v3HandoffBinding(policy,v.checkpoint.selectedRecord,v.checkpoint.headOid)};
+  return {v,policy,state,transport,create,collectContext,verifyProtection,registrationCommitment,
+    binding:v3HandoffBinding(policy,v.checkpoint.selectedRecord,v.checkpoint.headOid)};
 }
 test('v3 status step changes only the reserved card and verifies target with the same checkpoint',async()=>{
   const f=statusFixture(),run=f.create(),result=await run({expectedBinding:f.binding});
@@ -167,6 +169,19 @@ test('v3 status step blocks changed handoff or protection before write and does 
   f=statusFixture();f.state.protected=false;assert.equal((await f.create()({expectedBinding:f.binding})).kind,'blocked');assert.equal(f.state.writes,0);
   f=statusFixture();f.state.fail=true;const run=f.create();assert.equal((await run({expectedBinding:f.binding})).kind,'status-write-uncertain');
   assert.equal(f.state.writes,1);assert.equal((await run({expectedBinding:f.binding})).kind,'blocked');assert.equal(f.state.writes,1);
+});
+test('v3 status step binds the real fixed PAT mutation to the protected Project and exact item',async()=>{
+  const f=statusFixture(),calls=[],request=async(url,options)=>{calls.push({url,options});
+    f.v.project.currentStatus='agent-ready';f.v.project.statusOptionId='ready';
+    return {status:200,text:async()=>JSON.stringify({data:{updateProjectV2ItemFieldValue:{projectV2Item:{id:'item'}}}})};};
+  const common={policy:f.policy,projectRegistration:f.v.projectRegistration,registrationCommitment:f.registrationCommitment,keyring:f.v.keyring};
+  const transport=createV3BranchStatusTransport({...common,projectToken:'synthetic-pat',request});
+  const step=createV3ProjectStatusStep({...common,collectContext:f.collectContext,verifyProtection:f.verifyProtection,transport});
+  assert.equal((await step({expectedBinding:f.binding})).kind,'status-target-observed');assert.equal(calls.length,1);
+  assert.equal(calls[0].url,'https://api.github.com/graphql');assert.equal(calls[0].options.redirect,'error');
+  assert.deepEqual(JSON.parse(calls[0].options.body),{query:BRANCH_STATUS_UPDATE,variables:{project:'project',item:'item',field:'status',
+    value:{singleSelectOptionId:'ready'}}});
+  assert.throws(()=>createV3BranchStatusTransport({...common,registrationCommitment:{keyId:1,mac:'0'.repeat(64)},projectToken:'synthetic-pat',request}));
 });
 test('v3 protection transport reads only the exact registered public or private repository',async()=>{
   for(const expectedPrivate of [false,true]){

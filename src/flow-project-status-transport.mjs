@@ -1,7 +1,19 @@
+import { matchesV3ProtectedContext } from './flow-v3-protected-context.mjs';
+
 export const BRANCH_STATUS_UPDATE = `mutation FlowBranchStatusUpdate($project: ID!, $item: ID!, $field: ID!, $value: ProjectV2FieldValue!) {
   updateProjectV2ItemFieldValue(input: { projectId: $project, itemId: $item, fieldId: $field, value: $value }) { projectV2Item { id } }
 }`;
 const id = value => typeof value === 'string' && value.length > 0 && value.length <= 256 && !/[\s\x00-\x1f\x7f]/.test(value);
+
+// Internal capability for createV3ProjectStatusStep only: it binds the fixed
+// Project and field, not an individual item. The step must freshly authenticate
+// the PAT's Project access and bind item/issue and target before every use.
+export function createV3BranchStatusTransport({policy,projectRegistration,registrationCommitment,keyring,projectToken,request=fetch}={}){
+  try{policy=structuredClone(policy);projectRegistration=structuredClone(projectRegistration);registrationCommitment=structuredClone(registrationCommitment);}
+  catch{throw Error('invalid-v3-status-transport');}
+  if(!matchesV3ProtectedContext({policy,projectRegistration,registrationCommitment,keyring}))throw Error('invalid-v3-status-transport');
+  return createBranchStatusTransport({projectToken,projectId:projectRegistration.projectId,statusFieldId:projectRegistration.statusFieldId,request});
+}
 
 // request is a trusted fetch-compatible transport. The protected caller must
 // obtain projectId and statusFieldId from the same trusted route used by the
