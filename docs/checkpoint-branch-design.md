@@ -125,6 +125,16 @@ odpowiedź zatrzymują pracę i wymagają świeżego rozpoznania, nie ślepego r
 Nie tworzymy nowego ID operacji ani nie przenosimy prywatnych metadanych do
 publicznego repozytorium centralnego.
 
+Odczytowy `src/flow-checkpoint-publication-observer.mjs` rozróżnia starą parę,
+nową parę i niespójny wynik po próbie zapisu. Nową parę potwierdza tylko przy
+oczekiwanym commicie, drzewie i pojedynczym rodzicu; ponownie czyta refy i
+tożsamość repozytorium. Stara para nie oznacza, że żądanie nie jest w toku,
+i nigdy sama nie uprawnia do ponowienia. Potwierdzony stan nie dowodzi, które
+żądanie go utworzyło; caller musi związać OID z uprzednio zweryfikowanym
+planem, a nie dostarczać dowolne wartości. Testy używają fikcyjnych odpowiedzi.
+Obserwator nie uruchamia mutacji i nie potwierdza ochrony refów ani atomowości
+z Projectem; nie wykrywa też zmiany i powrotu do tego samego OID między odczytami.
+
 Po niepewnej odpowiedzi odczyt obu refów i drzewa ma rozróżnić: oba nadal na
 starym OID — nie zaobserwowano publikacji, ale nie wolno zakładać, że żądanie
 nie jest jeszcze w toku ani automatycznie go ponawiać; oba na dokładnym nowym
