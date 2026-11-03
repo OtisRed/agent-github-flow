@@ -7,6 +7,7 @@ import { createCheckpointKeyring } from './flow-checkpoint-keyring.mjs';
 import { createV3RegistryAnchor, verifyV3Registry, sealV3RegistryTransition } from './flow-v3-registry-anchor.mjs';
 import { verifyV3BootstrapEnrollment } from './flow-v3-bootstrap-enrollment.mjs';
 import { createV3GenesisPinStep } from './flow-v3-genesis-pin-step.mjs';
+import { createV3RegistryLifecycleStep } from './flow-v3-registry-lifecycle-step.mjs';
 
 const source='a'.repeat(32),cutoverAt='2026-01-01T10:00:00Z';
 const intent={source,repository:'owner/project',repositoryId:'repo-id',expectedPrivate:false,cutoverAt,appId:12,updateRulesetId:1,historyRulesetId:2};
@@ -110,4 +111,39 @@ test('uncertain pin is never retried and invalid reservations never write',async
     assert.equal((await f.step(intent,bootstrap)).kind,'v3-genesis-pin-uncertain');assert.equal(f.state.writes,1);
     assert.equal((await f.step(intent,bootstrap)).kind,'blocked');assert.equal(f.state.writes,1);}
   const f=pinFixture();assert.equal((await f.step({...intent,appId:13},bootstrap)).kind,'blocked');assert.equal(f.state.writes,0);
+});
+function lifecycleFixture(initial){
+  const keyring=createCheckpointKeyring({currentKeyId:1,keys:[{id:1,key:Buffer.alloc(32,1)}]});
+  const state={content:encodeV3Registry(initial).content,anchor:createV3RegistryAnchor(initial,keyring).anchor,version:'v1',writes:0,mode:'ok'};
+  const load=async()=>({content:state.content,anchor:state.anchor,version:state.version});
+  const commit=async update=>{state.writes++;assert.equal(update.expectedVersion,state.version);state.content=update.content;
+    state.anchor=update.anchor;state.version='v2';if(state.mode==='throw')throw Error('uncertain');return {kind:'registry-update-acknowledged'};};
+  const verifyAuthorization=async({operation,policy,registration})=>state.mode==='unauthorized'||(state.mode==='after-auth'&&state.writes>0)?{kind:'blocked'}:
+    {kind:'registry-lifecycle-authorized',operation,policy,registration:state.mode==='wrong-registration'?{...registration,projectId:'other'}:registration};
+  const verifyGenesis=async({registration,expectedTreeOid})=>({kind:'v3-bootstrap-verified',registration,
+    treeOid:state.mode==='wrong-tree'||(state.mode==='after-tree'&&state.writes>0)?'d'.repeat(40):expectedTreeOid});
+  return {state,step:createV3RegistryLifecycleStep({keyring,load,commit,verifyAuthorization,verifyGenesis})};
+}
+test('reserves and activates only the registered and verified genesis',async()=>{
+  const initial={version:1,revision:1,entries:[]},f=lifecycleFixture(initial);
+  assert.equal((await f.step({operation:'reserve',policy:intent})).kind,'v3-registry-lifecycle-observed');
+  assert.equal(JSON.parse(f.state.content).entries[0].state,'reserved');
+  const initializing=parsed(pinV3ProjectGenesis(parsed(reserveV3Project(initial,intent)),source,bootstrap));
+  const g=lifecycleFixture(initializing);
+  assert.equal((await g.step({operation:'activate',policy:intent,registration:registration()})).kind,'v3-registry-lifecycle-observed');
+  assert.equal(JSON.parse(g.state.content).entries[0].state,'active');assert.equal(g.state.writes,1);
+});
+test('reports uncertainty if authorization or genesis verification changes after the write',async()=>{
+  const initial={version:1,revision:1,entries:[]},initializing=parsed(pinV3ProjectGenesis(parsed(reserveV3Project(initial,intent)),source,bootstrap));
+  for(const mode of ['after-auth','after-tree']){const f=lifecycleFixture(initializing);f.state.mode=mode;
+    assert.equal((await f.step({operation:'activate',policy:intent,registration:registration()})).kind,'v3-registry-lifecycle-uncertain');
+    assert.equal(f.state.writes,1);assert.equal((await f.step({operation:'activate',policy:intent,registration:registration()})).kind,'blocked');}
+});
+test('refuses unauthorized enrollment or a different genesis tree and never retries an uncertain write',async()=>{
+  const initial={version:1,revision:1,entries:[]},initializing=parsed(pinV3ProjectGenesis(parsed(reserveV3Project(initial,intent)),source,bootstrap));
+  let f=lifecycleFixture(initial);f.state.mode='unauthorized';assert.equal((await f.step({operation:'reserve',policy:intent})).kind,'blocked');assert.equal(f.state.writes,0);
+  f=lifecycleFixture(initializing);f.state.mode='wrong-tree';assert.equal((await f.step({operation:'activate',policy:intent,registration:registration()})).kind,'blocked');assert.equal(f.state.writes,0);
+  f=lifecycleFixture(initializing);f.state.mode='wrong-registration';assert.equal((await f.step({operation:'activate',policy:intent,registration:registration()})).kind,'blocked');assert.equal(f.state.writes,0);
+  f=lifecycleFixture(initial);f.state.mode='throw';assert.equal((await f.step({operation:'reserve',policy:intent})).kind,'v3-registry-lifecycle-uncertain');
+  assert.equal((await f.step({operation:'reserve',policy:intent})).kind,'blocked');assert.equal(f.state.writes,1);
 });

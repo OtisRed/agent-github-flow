@@ -73,5 +73,5 @@ export function createV3RegistryBranchWriter({role,repository,repositoryId,appId
     }catch{return uncertain();}
     return {kind:expectedPrivate?'registry-private-advanced':'registry-anchor-advanced',head:commitOid};
   };
-  return Object.freeze({read:reader,write});
+  return Object.freeze({identity:Object.freeze({role,repository,repositoryId,appId}),read:reader,write});
 }

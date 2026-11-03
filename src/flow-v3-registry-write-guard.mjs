@@ -19,7 +19,8 @@ export function createV3RegistryWriteGuard({role,repositoryId,appId,updateRulese
       if(!candidate||candidate.role!==role||candidate.repositoryId!==repositoryId||candidate.ref!==ref||candidate.appId!==appId
           ||!oid(candidate.expectedHeadOid))return blocked('registry-guard-subject-mismatch');
       const first=structuredClone(await readBranch()),audit=structuredClone(await readProtection()),second=structuredClone(await readBranch());
-      if(first?.kind!=='v3-registry-branch-observed'||first.role!==role||first.head!==candidate.expectedHeadOid||!isDeepStrictEqual(first,second)
+      if(first?.kind!=='v3-registry-branch-observed'||first.role!==role||first.repositoryId!==repositoryId
+          ||first.head!==candidate.expectedHeadOid||!isDeepStrictEqual(first,second)
           ||audit?.kind!=='v3-registry-protection-audit-observed'||audit.role!==role||audit.ref!==ref||audit.repositoryId!==repositoryId
           ||audit.appId!==appId||audit.updateRulesetId!==updateRulesetId||audit.historyRulesetId!==historyRulesetId)
         return blocked('registry-guard-unverified');

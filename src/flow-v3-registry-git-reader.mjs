@@ -59,7 +59,7 @@ export function createV3RegistryGitReader({role,repository,repositoryId,appToken
       if(expectedPrivate&&verifyV3Registry(decoded['registry.json'],anchor,keyring).kind!=='v3-registry-verified')return blocked('registry-unverified');
       const last=await readRef(),after=await readRepo();
       if(last!==head||JSON.stringify(before)!==JSON.stringify(after)||!await scope())return blocked('observation-changed');
-      return {kind:'v3-registry-branch-observed',role,head,treeOid:commit.tree.sha,anchor,
+      return {kind:'v3-registry-branch-observed',role,repository,repositoryId,head,treeOid:commit.tree.sha,anchor,
         ...(expectedPrivate?{content:decoded['registry.json']}:{})};
     }catch{return blocked('registry-read-unavailable');}
   };
