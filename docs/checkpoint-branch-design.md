@@ -53,6 +53,11 @@ niezgodność ścieżek i nieoczekiwane typy wpisów. Wymaga rzeczywistego,
 rekurencyjnego odczytu Git Trees: samo `truncated: false` nie dowodzi, że
 wywołujący zadał zapytanie rekurencyjne. Treść rekordów, związek drzewa
 z commitem i pochodzenie gałęzi pozostają do sprawdzenia.
+Prototyp `src/flow-checkpoint-tree-reader.mjs` wiąże wskazany commit z jego
+drzewem i żąda rekurencyjnego odczytu oraz blobu indeksu. Testy używają
+fikcyjnego transportu; prawdziwy adapter musi wykonać te odczyty w wybranym
+repozytorium, a osobny mechanizm powiązać commit z zarejestrowanym refem.
+Plan jest danymi do dalszej weryfikacji, nie upoważnieniem do zapisu.
 
 ## Rejestracja i utrata danych
 
