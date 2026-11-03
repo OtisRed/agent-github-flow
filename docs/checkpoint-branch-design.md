@@ -230,6 +230,26 @@ write`. Pełna weryfikacja wyjątków wymaga osobnego audytu właściciela;
 obserwacja reguł, audyt i próby uprawnień nie chronią przed późniejszą zmianą
 polityki przez administratora ani wyścigiem między odczytem a zapisem.
 Źródło: https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset.
+
+`src/flow-checkpoint-protection-audit.mjs` modeluje osobny audyt właściciela:
+wymaga pełnych szczegółów bypassów, dwóch dokładnych nazw refów, wyłącznego
+wyjątku App dla reguły update i braku wyjątków dla deletion/non-fast-forward.
+Identyfikator App i tożsamość repo muszą pochodzić z niezależnie zaufanej
+konfiguracji; pełna paginacja i świeżość odczytu należą do collectora. Wynik
+jest obserwacją chwili, nie pozwoleniem na zapis ani dowodem odporności na
+późniejszą zmianę rulesetów. Runtime nie ma jeszcze takiego collectora.
+
+W ograniczonej próbie w prywatnym non-fork SECosystem GitHub zwrócił regułę
+`update` bez pola `parameters` zarówno po żądaniu z `false`, jak i z `true`.
+Zatem brak pola nie dowodzi, że GitHub zapisał `false`. Adapter dopuszcza ten
+brak tylko po świeżym potwierdzeniu `fork: false` i nazywa go
+`not-applicable-nonfork`; jawne `true`, nieznany kształt i forki blokują.
+Zawężenie opiera się na opisie opcji jako dotyczącej forków w [providerze
+GitHub](https://github.com/integrations/terraform-provider-github/blob/main/github/resource_github_repository_ruleset.go),
+nie na odczytaniu nieobecnej wartości. Po normalizacji wyłącznie nazw
+tymczasowych refów do nazw docelowych audyt przeszedł dla rzeczywistych
+odpowiedzi właściciela; tymczasowe reguły usunięto i ich brak potwierdzono.
+Nie jest to audyt chroniący docelowe refy ani dowód faktycznego bypassu App.
 Samo zarezerwowanie nazwy nie dowodzi, że istniejąca gałąź nie jest
 używana przez produkt; onboarding musi to wcześniej ustalić i nie może jej
 nadpisać. Testy tego adaptera używają fikcyjnych odpowiedzi.
