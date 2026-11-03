@@ -111,6 +111,44 @@ się. Brakująca karta Projectu nie uprawnia do usunięcia rekordu issue.
 Genesis i jego obecność w historii nie wykryją cofnięcia refu do starszego
 potomka genesis. Zaufany niezależny punkt ostatniego stanu albo jawnie
 ograniczona gwarancja i procedura odzyskiwania wymagają dalszego projektu.
+
+### Kandydat: atomowa para refów
+
+W repozytorium projektu można utrzymywać drugi chroniony ref
+`refs/heads/agent-github-flow/checkpoint-anchor` wskazujący ten sam commit co
+ref checkpointu. Przed pracą oba muszą istnieć i być równe. Po przygotowaniu
+obiektów Git bez zmiany refów jedna mutacja GraphQL `updateRefs` może
+warunkowo przesunąć oba refy z dokładnego starego OID na nowy, z `force: false`.
+GitHub [dokumentuje atomowość tej listy i warunki `beforeOid`](https://docs.github.com/en/graphql/reference/git#updaterefs); po odpowiedzi
+trzeba osobno odczytać oba refy i drzewo. Rozjazd, brak refu lub niepewna
+odpowiedź zatrzymują pracę i wymagają świeżego rozpoznania, nie ślepego retry.
+Nie tworzymy nowego ID operacji ani nie przenosimy prywatnych metadanych do
+publicznego repozytorium centralnego.
+
+Po niepewnej odpowiedzi odczyt obu refów i drzewa ma rozróżnić: oba nadal na
+starym OID — nie zaobserwowano publikacji, ale nie wolno zakładać, że żądanie
+nie jest jeszcze w toku ani automatycznie go ponawiać; oba na dokładnym nowym
+OID i drzewo zgodne z planem — zaobserwowano publikację; każdy stan mieszany,
+obcy albo brak refu — zatrzymanie i diagnoza. Pierwsza rejestracja wymaga
+odrębnej próby utworzenia obu refów z warunkiem ich nieistnienia (`beforeOid`
+złożony z zer) oraz sprawdzenia App i rulesetów. Późniejszego zniknięcia
+zarejestrowanego refu nie wolno traktować jak pierwszej inicjalizacji.
+
+Taki anchor wykrywa cofnięcie lub utratę jednego z refów, jeżeli drugi pozostał
+niezmieniony. Nie jest niezależnym źródłem zaufania wobec administratora,
+który może zmienić ochronę i oba refy, ani wobec przejętego klucza App.
+Potrzebne są reguły ochrony obu refów, kontrola uprawnień i próby ich działania;
+automatyczne podpisy GitHuba dla `createCommitOnBranch` nie dowodzą podpisu
+commitu utworzonego przez Git Database REST. Atomowość refów nie obejmuje
+Projectu ani zamknięcia issue. To kandydat do projektu, nie wdrożony zapis.
+
+Ograniczona próba w rzeczywistym prywatnym repozytorium przez CLI użytkownika
+potwierdziła utworzenie, przesunięcie i warunkowe usunięcie dwóch tymczasowych
+refów; po próbie niezależnie potwierdzono ich brak. Celowo błędny warunek
+zwrócił błąd i oba refy pozostały niezmienione, jednak jego treść nie pozwoliła
+jednoznacznie ustalić przyczyny. Nie jest to dowód negatywnego CAS, próba App,
+zasad docelowych refów ani pełnego kontrolera.
+
 Prototyp `src/flow-checkpoint-registration.mjs` sprawdza wyłącznie zgodność
 rejestracji z repozytorium, refem i obserwowanym porównaniem genesis do HEAD.
 Jego wynik wprost nie deklaruje ochrony przed takim cofnięciem; caller musi
