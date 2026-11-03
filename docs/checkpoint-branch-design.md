@@ -27,6 +27,16 @@ plik rekordu ma dokładnie jeden wpis indeksu. Duplikat, brak, osierocony plik,
 niepełny odczyt drzewa lub niezgodna tożsamość blokują również bootstrap.
 Koszt takiej kontroli i bezpieczne ograniczenie odczytów wymagają pomiaru.
 
+Przygotowany lokalnie walidator `src/flow-checkpoint-inventory.mjs` sprawdza
+wyłącznie spójność tożsamości indeksu i dostarczonych rekordów. Kandydat
+formatu v1 wiąże identyfikator repozytorium, numer i ID issue z plikiem
+`issues/<numer>.json`. Odrzuca duplikaty, braki, osierocone rekordy i inną
+tożsamość. Nie sprawdza zawartości checkpointu ani pochodzenia gałęzi. Odczyt
+musi niezależnie potwierdzić kompletne drzewo jednego commitu i dostarczyć
+wszystkie rekordy; sam znacznik `complete` nie jest takim dowodem. Poprawny
+pusty indeks nie dowodzi, że dane nie zostały wcześniej usunięte. Walidator
+nie jest podłączony do kontrolera ani do produkcyjnych zapisów.
+
 ## Rejestracja i utrata danych
 
 Rejestracja projektu jest odrębnym, jawnym krokiem administracyjnym, nie
