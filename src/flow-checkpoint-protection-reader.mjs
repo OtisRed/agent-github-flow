@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
-import { auditCheckpointProtection } from './flow-checkpoint-protection-audit.mjs';
+import { auditCheckpointProtection,auditV3RegistryProtection } from './flow-checkpoint-protection-audit.mjs';
 import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
+import { V3_REGISTRY_REF,V3_REGISTRY_ANCHOR_REF } from './flow-v3-registry-git-plan.mjs';
 
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const blocked = reason => ({ kind: 'blocked', reason });
@@ -35,6 +36,16 @@ function nextPage(link, path, current) {
 // It must see bypass_actors; App metadata-only access omits that field.
 // Config and App identity are externally trusted. No result authorizes a write.
 export async function readCheckpointProtectionAudit(input) {
+  return readProtection(input,[CHECKPOINT_BRANCH_REF,CHECKPOINT_ANCHOR_REF],false);
+}
+
+export async function readV3RegistryProtectionAudit(input){
+  const role=input?.role;
+  if(!['private','anchor'].includes(role)||input.expectedPrivate!==(role==='private'))return blocked('invalid-input');
+  return readProtection(input,[role==='private'?V3_REGISTRY_REF:V3_REGISTRY_ANCHOR_REF],role);
+}
+
+async function readProtection(input,refs,registry) {
   if (!input || typeof input !== 'object' || Array.isArray(input)
       || !/^[A-Za-z0-9-]{1,39}$/.test(input.owner ?? '') || !/^[A-Za-z0-9_.-]{1,100}$/.test(input.repo ?? '')
       || ['.', '..'].includes(input.repo) || typeof input.repositoryId !== 'string' || !input.repositoryId
@@ -72,7 +83,6 @@ export async function readCheckpointProtectionAudit(input) {
     const updateRuleset = (await get(`${base}/rulesets/${updateRulesetId}`)).data;
     const historyRuleset = (await get(`${base}/rulesets/${historyRulesetId}`)).data;
     if (updateRuleset?.id !== updateRulesetId || historyRuleset?.id !== historyRulesetId) throw Error('ruleset-mismatch');
-    const refs = [CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF];
     const effective = [];
     for (const ref of refs) effective.push({ ref, pages: await readRules(ref) });
     return { repositoryData, updateRuleset, historyRuleset, effective };
@@ -80,8 +90,9 @@ export async function readCheckpointProtectionAudit(input) {
   try {
     const first = await observe(); const second = await observe();
     if (!isDeepStrictEqual(first, second)) return blocked('protection-observation-changed');
-    return auditCheckpointProtection({ repositoryId, repository: `${owner}/${repo}`, appId, expectedPrivate,
+    const evidence={ repositoryId, repository: `${owner}/${repo}`, appId, expectedPrivate,
       repositoryData: first.repositoryData, updateRuleset: first.updateRuleset, historyRuleset: first.historyRuleset,
-      effective: first.effective.map(item => ({ ref: item.ref, rules: item.pages.flat() })) });
+      effective: first.effective.map(item => ({ ref: item.ref, rules: item.pages.flat() })) };
+    return registry?auditV3RegistryProtection({...evidence,role:registry}):auditCheckpointProtection(evidence);
   } catch { return blocked('protection-read-unavailable'); }
 }

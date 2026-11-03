@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { auditCheckpointProtection } from './flow-checkpoint-protection-audit.mjs';
+import { auditCheckpointProtection,auditV3RegistryProtection } from './flow-checkpoint-protection-audit.mjs';
 import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
+import { V3_REGISTRY_REF,V3_REGISTRY_ANCHOR_REF } from './flow-v3-registry-git-plan.mjs';
 
 function fixture() {
   const rule = (type, id) => ({ type, ruleset_id: id, ruleset_source_type: 'Repository', ruleset_source: 'owner/repo' });
@@ -64,4 +65,15 @@ test('accepts GitHub omitted parameters only for a freshly verified non-fork', (
     assert.equal(auditCheckpointProtection(v).reason, 'unsafe-update-rule');
   }
   v = fixture(); v.repositoryData.private = false; assert.equal(auditCheckpointProtection(v).reason, 'invalid-input');
+});
+test('audits exactly one registry ref with the correct private or public visibility',()=>{
+  for(const role of ['private','anchor']){const v=fixture(),ref=role==='private'?V3_REGISTRY_REF:V3_REGISTRY_ANCHOR_REF;
+    v.role=role;v.expectedPrivate=role==='private';v.repositoryData.private=v.expectedPrivate;
+    v.updateRuleset.conditions=structuredClone(v.updateRuleset.conditions);v.historyRuleset.conditions=structuredClone(v.historyRuleset.conditions);
+    v.updateRuleset.conditions.ref_name.include=[ref];v.historyRuleset.conditions.ref_name.include=[ref];v.effective=[{...v.effective[0],ref}];
+    const proof=auditV3RegistryProtection(v);assert.equal(proof.kind,'v3-registry-protection-audit-observed');assert.equal(proof.ref,ref);
+    v.repositoryData.private=!v.expectedPrivate;assert.equal(auditV3RegistryProtection(v).kind,'blocked');
+    v.repositoryData.private=v.expectedPrivate;v.historyRuleset.bypass_actors.push(v.updateRuleset.bypass_actors[0]);
+    assert.equal(auditV3RegistryProtection(v).reason,'unexpected-bypass');
+  }
 });

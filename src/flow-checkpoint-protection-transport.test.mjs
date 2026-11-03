@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCheckpointProtectionTransport } from './flow-checkpoint-protection-transport.mjs';
-import { readCheckpointProtectionAudit } from './flow-checkpoint-protection-reader.mjs';
+import { createCheckpointProtectionTransport,createV3RegistryProtectionTransport } from './flow-checkpoint-protection-transport.mjs';
+import { readCheckpointProtectionAudit,readV3RegistryProtectionAudit } from './flow-checkpoint-protection-reader.mjs';
 import { CHECKPOINT_BRANCH_REF as a, CHECKPOINT_ANCHOR_REF as b } from './flow-checkpoint-registration.mjs';
+import { V3_REGISTRY_REF,V3_REGISTRY_ANCHOR_REF } from './flow-v3-registry-git-plan.mjs';
 
 function fixture({wrongScope=false}={}) {
   const calls=[];
@@ -82,4 +83,24 @@ test('bounds the combined audit data across pages and repeated observations',asy
   const result=await readCheckpointProtectionAudit({owner:'owner',repo:'repo',repositoryId:'id',appId:12,updateRulesetId:1,
     historyRulesetId:2,expectedPrivate:true,request});
   assert.deepEqual(result,{kind:'blocked',reason:'protection-read-unavailable'});assert.ok(calls<20);
+});
+test('v3 registry protection transport and reader audit only the role-specific ref',async()=>{
+  for(const role of ['private','anchor']){const ref=role==='private'?V3_REGISTRY_REF:V3_REGISTRY_ANCHOR_REF,expectedPrivate=role==='private';
+    const common={target:'branch',source_type:'Repository',source:'owner/repo',enforcement:'active',conditions:{ref_name:{include:[ref],exclude:[]}}};
+    const repo={node_id:'id',full_name:'owner/repo',private:expectedPrivate,fork:false,default_branch:'main'};
+    const update={...common,id:1,rules:[{type:'update'}],bypass_actors:[{actor_type:'Integration',actor_id:12,bypass_mode:'always'}]};
+    const history={...structuredClone(common),id:2,rules:[{type:'deletion'},{type:'non_fast_forward'}],bypass_actors:[]};
+    const rule=(type,id)=>({type,ruleset_id:id,ruleset_source_type:'Repository',ruleset_source:'owner/repo'}),calls=[];
+    const request=async(url,options)=>{calls.push(url);assert.equal(options.method,'GET');const path=new URL(url).pathname;let data;
+      if(path==='/installation/repositories')data={total_count:1,repositories:[repo]};else if(path==='/repos/owner/repo')data=repo;
+      else if(path.endsWith('/rulesets/1'))data=update;else if(path.endsWith('/rulesets/2'))data=history;
+      else if(path.includes('/rules/branches/'))data=[rule('update',1),rule('deletion',2),rule('non_fast_forward',2)];else throw Error('unexpected');
+      return {status:200,text:async()=>JSON.stringify(data),headers:{get:()=>null}};};
+    const transport=createV3RegistryProtectionTransport({role,repository:'owner/repo',repositoryId:'id',appToken:'synthetic-app',
+      expectedSlug:'agent-flow',actualSlug:'agent-flow',updateRulesetId:1,historyRulesetId:2,request});
+    const result=await readV3RegistryProtectionAudit({role,owner:'owner',repo:'repo',repositoryId:'id',appId:12,
+      updateRulesetId:1,historyRulesetId:2,expectedPrivate,request:transport});
+    assert.equal(result.kind,'v3-registry-protection-audit-observed');assert.equal(result.ref,ref);
+    assert.ok(calls.filter(url=>url.includes('/rules/branches/')).every(url=>decodeURIComponent(new URL(url).pathname).endsWith(ref.slice(11))));
+  }
 });

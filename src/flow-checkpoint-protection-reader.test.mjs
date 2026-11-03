@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readCheckpointProtectionAudit } from './flow-checkpoint-protection-reader.mjs';
+import { readCheckpointProtectionAudit,readV3RegistryProtectionAudit } from './flow-checkpoint-protection-reader.mjs';
+import { V3_REGISTRY_REF,V3_REGISTRY_ANCHOR_REF } from './flow-v3-registry-git-plan.mjs';
 
 const refA = 'refs/heads/agent-github-flow/checkpoints', refB = 'refs/heads/agent-github-flow/checkpoint-anchor';
 const response = (data, link = null) => ({ status: 200, json: async () => data, headers: { get: name => name === 'link' ? link : null } });
@@ -68,4 +69,14 @@ test('ignores unrelated volatile repository metadata but rejects a changed defau
   f = fixture(); count = 0; const next = f.input.request;
   f.input.request = async raw => { if (raw.endsWith('/repos/owner/repo') && ++count === 2) f.state.repo.default_branch = 'other'; return next(raw); };
   assert.deepEqual(await readCheckpointProtectionAudit(f.input), { kind: 'blocked', reason: 'protection-observation-changed' });
+});
+test('reads the exact registry ref twice for each visibility role',async()=>{
+  for(const role of ['private','anchor']){const f=fixture(),ref=role==='private'?V3_REGISTRY_REF:V3_REGISTRY_ANCHOR_REF;
+    f.input.role=role;f.input.expectedPrivate=role==='private';f.state.repo.private=f.input.expectedPrivate;
+    f.state.update.conditions=structuredClone(f.state.update.conditions);f.state.history.conditions=structuredClone(f.state.history.conditions);
+    f.state.update.conditions.ref_name.include=[ref];f.state.history.conditions.ref_name.include=[ref];
+    const result=await readV3RegistryProtectionAudit(f.input);assert.equal(result.kind,'v3-registry-protection-audit-observed');
+    assert.equal(result.ref,ref);assert.equal(f.state.calls.length,8);
+    assert.ok(f.state.calls.filter(url=>url.includes('/rules/branches/')).every(url=>decodeURIComponent(new URL(url).pathname).endsWith(ref.slice(11))));
+  }
 });

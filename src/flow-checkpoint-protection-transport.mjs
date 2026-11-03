@@ -1,5 +1,6 @@
 import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
 import { matchesV3ProtectedContext } from './flow-v3-protected-context.mjs';
+import { V3_REGISTRY_REF,V3_REGISTRY_ANCHOR_REF } from './flow-v3-registry-git-plan.mjs';
 
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const safeToken = value => typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\s\x00-\x1f\x7f]/.test(value);
@@ -9,7 +10,8 @@ const safeToken = value => typeof value === 'string' && value.length > 0 && valu
 // not owner-audit evidence or permission to write. No API-provided URL is used.
 export function createCheckpointProtectionTransport({ owner, repo, repositoryId, appToken, expectedSlug, actualSlug,
   updateRulesetId, historyRulesetId, request = fetch } = {}) {
-  return createTransport({owner,repo,repositoryId,appToken,expectedSlug,actualSlug,updateRulesetId,historyRulesetId,request,expectedPrivate:true,requireNotFork:false});
+  return createTransport({owner,repo,repositoryId,appToken,expectedSlug,actualSlug,updateRulesetId,historyRulesetId,request,
+    expectedPrivate:true,requireNotFork:false,allowedRefs:[CHECKPOINT_BRANCH_REF,CHECKPOINT_ANCHOR_REF]});
 }
 
 // v3 binds visibility and exact rulesets to independently protected full
@@ -22,18 +24,28 @@ export function createV3CheckpointProtectionTransport({policy,projectRegistratio
   const parts=policy.repository.split('/');if(parts.length!==2)throw Error('invalid-v3-protection-context');
   return createTransport({owner:parts[0],repo:parts[1],repositoryId:policy.repositoryId,appToken,expectedSlug,actualSlug,
     updateRulesetId:policy.updateRulesetId,historyRulesetId:policy.historyRulesetId,request,
-    expectedPrivate:projectRegistration.expectedPrivate,requireNotFork:true});
+    expectedPrivate:projectRegistration.expectedPrivate,requireNotFork:true,allowedRefs:[CHECKPOINT_BRANCH_REF,CHECKPOINT_ANCHOR_REF]});
+}
+
+// Registry store configuration must come from an independently protected
+// source. This GET-only transport does not establish App identity or rules.
+export function createV3RegistryProtectionTransport({role,repository,repositoryId,appToken,expectedSlug,actualSlug,
+  updateRulesetId,historyRulesetId,request=fetch}={}){
+  if(!['private','anchor'].includes(role)||typeof repository!=='string')throw Error('invalid-v3-registry-protection');
+  const parts=repository.split('/');if(parts.length!==2)throw Error('invalid-v3-registry-protection');
+  return createTransport({owner:parts[0],repo:parts[1],repositoryId,appToken,expectedSlug,actualSlug,updateRulesetId,historyRulesetId,request,
+    expectedPrivate:role==='private',requireNotFork:true,allowedRefs:[role==='private'?V3_REGISTRY_REF:V3_REGISTRY_ANCHOR_REF]});
 }
 
 function createTransport({ owner, repo, repositoryId, appToken, expectedSlug, actualSlug,
-  updateRulesetId, historyRulesetId, request, expectedPrivate, requireNotFork }) {
+  updateRulesetId, historyRulesetId, request, expectedPrivate, requireNotFork, allowedRefs }) {
   if (!/^[A-Za-z0-9-]{1,39}$/.test(owner ?? '') || !/^[A-Za-z0-9_.-]{1,100}$/.test(repo ?? '') || ['.','..'].includes(repo)
       || typeof repositoryId !== 'string' || !repositoryId || repositoryId.length > 256 || repositoryId.trim() !== repositoryId
       || !safeToken(appToken) || !/^[a-z0-9-]{1,100}$/.test(expectedSlug ?? '') || actualSlug !== expectedSlug
       || !positive(updateRulesetId) || !positive(historyRulesetId) || updateRulesetId === historyRulesetId
       || typeof request !== 'function'||typeof expectedPrivate!=='boolean') throw Error('invalid-protection-transport');
   const base = `/repos/${owner}/${repo}`;
-  const refs = [CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF].map(ref => `${base}/rules/branches/${encodeURIComponent(ref.slice(11))}`);
+  const refs = allowedRefs.map(ref => `${base}/rules/branches/${encodeURIComponent(ref.slice(11))}`);
   const plain = [base, `${base}/rulesets/${updateRulesetId}`, `${base}/rulesets/${historyRulesetId}`];
   const get = async url => {
     const response = await request(url, { method:'GET', redirect:'error', signal:AbortSignal.timeout(10000),

@@ -1,4 +1,5 @@
 import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
+import { V3_REGISTRY_REF,V3_REGISTRY_ANCHOR_REF } from './flow-v3-registry-git-plan.mjs';
 
 const blocked = reason => ({ kind: 'blocked', reason });
 const nonempty = value => typeof value === 'string' && value.length > 0 && value.length <= 256 && value.trim() === value;
@@ -9,8 +10,7 @@ const hasDetailRule = (ruleset, type) => Array.isArray(ruleset.rules) && ruleset
 const validRuleSet = (value, repo) => value && positiveId(value.id) && value.target === 'branch'
   && value.source_type === 'Repository' && value.source === repo && value.enforcement === 'active'
   && Array.isArray(value.rules) && Array.isArray(value.bypass_actors);
-const exactScope = value => {
-  const names = [CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF];
+const exactScope = (value,names) => {
   const ref = value?.conditions?.ref_name;
   return Array.isArray(ref?.include) && ref.include.length === names.length && new Set(ref.include).size === names.length
     && names.every(name => ref.include.includes(name)) && Array.isArray(ref.exclude) && ref.exclude.length === 0;
@@ -22,18 +22,30 @@ const exactScope = value => {
 // data blocks; this observation is not an execution permit or a guarantee
 // against later admin changes. Do not log private repo metadata or receipts.
 export function auditCheckpointProtection(input) {
+  return auditProtection(input,[CHECKPOINT_BRANCH_REF,CHECKPOINT_ANCHOR_REF]);
+}
+
+// Registry policy uses the same rules but each repository has one exact ref.
+export function auditV3RegistryProtection(input){
+  if(!input||!['private','anchor'].includes(input.role)||input.expectedPrivate!==(input.role==='private'))return blocked('invalid-input');
+  const ref=input.role==='private'?V3_REGISTRY_REF:V3_REGISTRY_ANCHOR_REF;
+  const observed=auditProtection(input,[ref]);
+  return observed.kind==='checkpoint-protection-observed'?{...observed,kind:'v3-registry-protection-audit-observed',role:input.role,ref}:observed;
+}
+
+function auditProtection(input,names) {
   if (!input || typeof input !== 'object' || Array.isArray(input) || !nonempty(input.repositoryId)
       || !nonempty(input.repository) || !positiveId(input.appId)
       || typeof input.expectedPrivate !== 'boolean' || input.repositoryData?.private !== input.expectedPrivate
       || input.repositoryData?.fork !== false
       || input.repositoryData?.node_id !== input.repositoryId || input.repositoryData?.full_name !== input.repository
       || !nonempty(input.repositoryData?.default_branch)
-      || [CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF].includes(`refs/heads/${input.repositoryData.default_branch}`)
-      || !Array.isArray(input.effective) || input.effective.length !== 2) return blocked('invalid-input');
+      || names.includes(`refs/heads/${input.repositoryData.default_branch}`)
+      || !Array.isArray(input.effective) || input.effective.length !== names.length) return blocked('invalid-input');
   const { updateRuleset, historyRuleset, appId, repository } = input;
   if (!validRuleSet(updateRuleset, repository) || !validRuleSet(historyRuleset, repository)
       || updateRuleset.id === historyRuleset.id) return blocked('ruleset-details-unavailable');
-  if (!exactScope(updateRuleset) || !exactScope(historyRuleset)) return blocked('unsafe-ruleset-scope');
+  if (!exactScope(updateRuleset,names) || !exactScope(historyRuleset,names)) return blocked('unsafe-ruleset-scope');
   if (updateRuleset.rules.length !== 1 || historyRuleset.rules.length !== 2
       || !hasDetailRule(updateRuleset, 'update') || !hasDetailRule(historyRuleset, 'deletion')
       || !hasDetailRule(historyRuleset, 'non_fast_forward')) return blocked('unexpected-rules');
@@ -49,7 +61,6 @@ export function auditCheckpointProtection(input) {
   const actors = updateRuleset.bypass_actors;
   if (actors.length !== 1 || actors[0]?.actor_type !== 'Integration' || actors[0]?.actor_id !== appId
       || actors[0]?.bypass_mode !== 'always' || historyRuleset.bypass_actors.length !== 0) return blocked('unexpected-bypass');
-  const names = [CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF];
   if (new Set(input.effective.map(value => value?.ref)).size !== names.length) return blocked('invalid-ref-evidence');
   for (const name of names) {
     const evidence = input.effective.find(value => value?.ref === name);
