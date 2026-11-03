@@ -65,8 +65,11 @@ adapter nie potwierdza jeszcze rzeczywistego dostępu ani zaufania do repozytori
 Prototyp `src/flow-checkpoint-inventory-reader.mjs` pobiera każdy rekord po
 OID z tego drzewa i sprawdza jego bajty, tożsamość oraz strukturę checkpointu.
 Wynik nie potwierdza pochodzenia, prawdziwości dowodów ani polityki jawności
-danych i nie upoważnia do decyzji kontrolera. Nie zwraca zawartości checkpointu;
-suma rozmiarów rekordów ponad 16 MiB blokuje próbę przed ich odczytaniem.
+danych i nie upoważnia do decyzji kontrolera. Opcjonalnie zwraca tylko jeden
+wybrany rekord po pełnej kontroli inwentarza, jako wewnętrzne dane do dalszej
+weryfikacji; nie wolno logować jego treści. Brak wybranego rekordu nie dowodzi,
+że nigdy nie istniał. Suma rozmiarów rekordów ponad 16 MiB blokuje próbę przed
+ich odczytaniem.
 Jest to wstępny limit wymagający pomiaru. Brak rejestru lub cofnięcie historii
 pozostają osobnymi problemami. Testy używają fikcyjnych odpowiedzi.
 Odrębny kandydat `src/flow-checkpoint-record.mjs` opisuje kanoniczną zawartość

@@ -76,3 +76,17 @@ test('blocks a correctly hashed record with invalid checkpoint content', async (
     tree.tree[2].sha = bad.sha; tree.tree[2].size = bad.size; return tree; };
   assert.equal((await readCheckpointInventory(f.args)).reason, 'invalid-current');
 });
+
+test('selects an exact issue only after the complete inventory has passed', async () => {
+  let f = fixture(); f.args.selection = { number: 1, issueId: 'one' };
+  let result = await readCheckpointInventory(f.args);
+  assert.equal(result.kind, 'inventory-records-structurally-valid'); assert.equal(result.selectedRecord.current.commentId, '1');
+  f = fixture(); f.args.selection = { number: 1, issueId: 'wrong' };
+  assert.equal((await readCheckpointInventory(f.args)).reason, 'selection-identity-mismatch');
+  f = fixture(); f.args.selection = { number: 2, issueId: 'other' };
+  result = await readCheckpointInventory(f.args); assert.equal(result.selectedRecord, null);
+  f = fixture(); f.args.selection = { number: 2, issueId: 'x'.repeat(257) };
+  result = await readCheckpointInventory(f.args); assert.equal(result.reason, 'invalid-selection'); assert.equal(f.calls.length, 0);
+  f = fixture(); f.args.selection = { number: 1, issueId: 'one' }; f.blobs.delete(f.record.sha);
+  result = await readCheckpointInventory(f.args); assert.equal(result.kind, 'blocked'); assert.equal(Object.hasOwn(result, 'selectedRecord'), false);
+});
