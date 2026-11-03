@@ -199,6 +199,9 @@ przebieg. Nie jest to jeszcze integracja z produkcyjnym runnerem.
 Oddzielny krok statusu wymaga zaobserwowanej rezerwacji v2, zgodności jej opcji
 z polem Projectu i bindingu HEAD; może podjąć jedną próbę, której nie ponawia w
 tym przebiegu. Oczekiwanie i wznowienie nie są w tym kroku zaimplementowane.
+Oddzielny krok może następnie zaplanować i opublikować `committed` v2 po
+ponownym potwierdzeniu docelowego statusu, opcji i rezerwacji. Dowodzi on
+zaobserwowanego stanu, nie tego, który przebieg wykonał zmianę statusu.
 
 `src/flow-project-item-resolver.mjs` wyszukuje aktywną kartę issue przez pełną
 paginację osobistego Projectu, odrzuca brak, duplikaty lub niespójny drugi

@@ -50,3 +50,14 @@ export function inspectReservedHandoff(input) {
     return blocked('reservation-option-mismatch');
   return observed.kind === 'status-update-planned' ? observed : { kind: 'commit-handoff-planned' };
 }
+
+// Construct the final record only after an independently collected target
+// status agrees with the reserved option IDs; this does not authorize a write.
+export function planReservedHandoffCommit(input) {
+  if (inspectReservedHandoff(input).kind !== 'commit-handoff-planned') return blocked('target-not-observed');
+  const after = structuredClone(input.checkpoint.selectedRecord);
+  after.current.phase = 'committed'; after.reservation = null;
+  const commit = planCheckpointV2Commit({ registration: input.registration, snapshot: input.checkpoint, after });
+  return commit.kind === 'checkpoint-commit-plan' ? { kind: 'commit-handoff-v2-planned', record: after, commit }
+    : blocked('commit-plan-invalid');
+}

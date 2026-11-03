@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { planInitialBranchHandoff } from './flow-checkpoint-initial-handoff.mjs';
 import { planPendingBranchHandoff } from './flow-checkpoint-pending-handoff.mjs';
-import { planStatusReservation } from './flow-checkpoint-reservation-plan.mjs';
-import { runInitialPublicationStep, runPendingCommitPublicationStep, runStatusReservationPublicationStep } from './flow-initial-publication-step.mjs';
+import { planStatusReservation, planReservedHandoffCommit } from './flow-checkpoint-reservation-plan.mjs';
+import { runInitialPublicationStep, runPendingCommitPublicationStep, runStatusReservationPublicationStep, runReservedCommitPublicationStep } from './flow-initial-publication-step.mjs';
 
 function fixture() {
   const body='[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
@@ -140,5 +140,33 @@ test('reservation refuses changed binding, protection and observations before pu
 test('an uncertain reservation publication is not retried or accepted as observed',async()=>{
   const f=reservationFixture();f.state.write='ref-update-uncertain';
   assert.deepEqual(await runStatusReservationPublicationStep(f.input),{kind:'publication-uncertain',retryAllowed:false});
+  assert.equal(f.state.calls.filter(x=>x==='publish').length,1);
+});
+
+function reservedCommitFixture(){
+  const f=reservationFixture(),pending=f.state.base;pending.checkpoint.selectedRecord.reservation={reservedAt:f.input.reservedAt,fromOptionId:'design',targetOptionId:'ready'};
+  pending.project.currentStatus='agent-ready';pending.project.statusOptionId='ready';
+  const plan=planReservedHandoffCommit({...pending,registration:f.input.registration});assert.equal(plan.kind,'commit-handoff-v2-planned');
+  f.state.after=structuredClone(pending);f.state.after.checkpoint.headOid='e'.repeat(40);f.state.after.checkpoint.selectedRecord=structuredClone(plan.record);
+  f.input.prepare=async({snapshot,after,registration})=>{f.state.calls.push('prepare');assert.deepEqual(snapshot,pending.checkpoint);
+    assert.deepEqual(after,plan.record);assert.deepEqual(registration,f.input.registration);
+    return {kind:'checkpoint-objects-prepared',expectedHeadOid:'c'.repeat(40),expectedTreeOid:'d'.repeat(40),
+      commit:{sha:'e'.repeat(40),tree:{sha:'d'.repeat(40)},parents:[{sha:'c'.repeat(40)}]}};};
+  return f;
+}
+
+test('publishes committed v2 after observing the reserved target status',async()=>{
+  const f=reservedCommitFixture(),result=await runReservedCommitPublicationStep(f.input);
+  assert.equal(result.kind,'reserved-commit-observed');assert.equal(result.binding.checkpointOid,'c'.repeat(40));
+  assert.equal(f.state.calls.filter(x=>x==='publish').length,1);
+});
+
+test('blocks final v2 commit before target or on wrong binding, and does not retry uncertainty',async()=>{
+  let f=reservedCommitFixture();f.state.base.project.currentStatus='needs-design';f.state.base.project.statusOptionId='design';
+  assert.equal((await runReservedCommitPublicationStep(f.input)).reason,'reserved-commit-not-applicable');assert.equal(f.state.calls.includes('publish'),false);
+  f=reservedCommitFixture();f.input.expectedBinding.checkpointOid='b'.repeat(40);
+  assert.equal((await runReservedCommitPublicationStep(f.input)).reason,'handoff-binding-mismatch');assert.equal(f.state.calls.includes('prepare'),false);
+  f=reservedCommitFixture();f.state.write='ref-update-uncertain';
+  assert.deepEqual(await runReservedCommitPublicationStep(f.input),{kind:'publication-uncertain',retryAllowed:false});
   assert.equal(f.state.calls.filter(x=>x==='publish').length,1);
 });

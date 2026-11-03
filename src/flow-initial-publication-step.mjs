@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { planInitialBranchHandoff } from './flow-checkpoint-initial-handoff.mjs';
 import { planPendingBranchHandoff } from './flow-checkpoint-pending-handoff.mjs';
-import { planStatusReservation } from './flow-checkpoint-reservation-plan.mjs';
+import { planStatusReservation, planReservedHandoffCommit } from './flow-checkpoint-reservation-plan.mjs';
 import { isHandoffSubject, matchesHandoffSubject, handoffBinding } from './flow-handoff-binding.mjs';
 
 const blocked = reason => ({ kind:'blocked', reason });
@@ -38,7 +38,7 @@ async function runPublication({ policy, collect, verifyProtection, prepare, publ
     if (!matches(first,policy)) return blocked('policy-mismatch');
     plan = planner(first);
     if (plan.kind !== expectedKind) return blocked(notApplicable);
-    if (expectedKind==='commit-handoff-planned' || expectedKind==='status-reservation-planned') {
+    if (['commit-handoff-planned','status-reservation-planned','commit-handoff-v2-planned'].includes(expectedKind)) {
       const binding=handoffBinding(policy,plan.record.current.commentId,plan.record.current.digest,first.checkpoint.headOid);
       if (!binding || !isDeepStrictEqual(binding,expectedBinding)) return blocked('handoff-binding-mismatch');
     }
@@ -95,4 +95,16 @@ export async function runStatusReservationPublicationStep(input = {}) {
   return runPublication({ ...input, prepare: args => prepare({ ...args, registration: structuredClone(registration) }) },
     observed => planStatusReservation({ ...observed, registration, reservedAt: input.reservedAt }),
     'status-reservation-planned', 'status-reservation-observed', 'reservation-step-not-applicable');
+}
+
+// A final v2 checkpoint may only be published after the reserved target was
+// observed. The caller supplies authenticated collection and one-writer policy.
+export async function runReservedCommitPublicationStep(input = {}) {
+  let registration;
+  try { registration = structuredClone(input.registration); } catch { return blocked('invalid-input'); }
+  if (typeof input.prepare !== 'function') return blocked('invalid-input');
+  const prepare = input.prepare;
+  return runPublication({ ...input, prepare: args => prepare({ ...args, registration: structuredClone(registration) }) },
+    observed => planReservedHandoffCommit({ ...observed, registration }),
+    'commit-handoff-v2-planned', 'reserved-commit-observed', 'reserved-commit-not-applicable');
 }
