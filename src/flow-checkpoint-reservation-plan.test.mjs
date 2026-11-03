@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { planStatusReservation, planReservedHandoffCommit, planUnchangedHandoffCommit } from './flow-checkpoint-reservation-plan.mjs';
+import { inspectV3ReservedHandoff, planV3StatusReservation, planV3HandoffCommit } from './flow-v3-reservation-plan.mjs';
+import { createCheckpointKeyring } from './flow-checkpoint-keyring.mjs';
+import { FLOW_STATUSES } from './flow.mjs';
 
 const body = '[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
 const digest = createHash('sha256').update(body).digest('hex');
@@ -72,4 +75,50 @@ test('allows a handoff with unchanged status without manufacturing a reservation
   v.project.currentStatus = 'needs-design';v.project.statusOptionId = 'design';assert.equal(planUnchangedHandoffCommit(v).kind, 'blocked');
   v.project.currentStatus = 'agent-ready';v.project.statusOptionId = 'ready';v.handoffEvidence.handoff.body += '!';
   assert.equal(planUnchangedHandoffCommit(v).kind, 'blocked');
+});
+
+function fixtureV3(){
+  const v=fixture();v.checkpoint.schemaVersion=3;v.registration.checkpointSchemaVersion=3;
+  v.project.statusFieldName='Status';v.project.statusOptions=FLOW_STATUSES.map((name,index)=>({name,
+    id:name==='needs-design'?'design':name==='agent-ready'?'ready':`private-option-${index}`}));
+  v.repository={node_id:'repo-id',full_name:'owner/project',private:false,fork:false};
+  v.projectRegistration={version:3,source:'a'.repeat(32),repository:'owner/project',repositoryId:'repo-id',expectedPrivate:false,
+    dataPolicy:'common-v3',projectOwner:'board-owner',projectNumber:1,projectId:'project',statusFieldId:'status',statusFieldName:'Status',
+    statusOptions:structuredClone(v.project.statusOptions),appId:12,updateRulesetId:1,historyRulesetId:2,trustedAuthorIds:['user'],checkpoint:structuredClone(v.registration)};
+  v.keyring=createCheckpointKeyring({currentKeyId:1,keys:[{id:1,key:Buffer.alloc(32,1)}]});
+  const record=v.checkpoint.selectedRecord;record.version=3;delete record.current.digest;
+  record.current.commentKeyId=1;record.current.commentMac=v.keyring.current().comment({repositoryId:'repo-id',issueId:'issue',commentId:'4',body});
+  record.current.configKeyId=1;record.current.configMac=v.keyring.current().config(v.projectRegistration);return v;
+}
+
+test('v3 reserves and completes a verified handoff without publishing private configuration',()=>{
+  const v=fixtureV3(),first=planV3StatusReservation(v);assert.equal(first.kind,'v3-status-reservation-planned');
+  assert.deepEqual(first.record.reservation,{reservedAt:v.reservedAt});
+  const published=first.commit.additions.map(entry=>Buffer.from(entry.contents,'base64').toString()).join('\n');
+  assert.equal(published.includes('private-option-'),false);assert.equal(published.includes(body),false);
+  v.checkpoint.selectedRecord=first.record;assert.equal(inspectV3ReservedHandoff(v).kind,'status-update-planned');
+  assert.equal(planV3HandoffCommit(v).kind,'blocked');
+  v.project.currentStatus='agent-ready';v.project.statusOptionId='ready';
+  assert.equal(inspectV3ReservedHandoff(v).kind,'commit-handoff-planned');
+  const done=planV3HandoffCommit(v);assert.equal(done.kind,'v3-commit-handoff-planned');
+  assert.equal(done.record.reservation,null);assert.equal(done.record.current.phase,'committed');
+});
+
+test('v3 requires fresh matching configuration and checkpoint for retry and completion',()=>{
+  let v=fixtureV3();v.checkpoint.selectedRecord.reservation={reservedAt:'2026-01-01T10:01:30Z'};
+  assert.equal(planV3StatusReservation(v).kind,'v3-status-reservation-planned');
+  v.reservedAt='2026-01-01T10:01:30Z';assert.equal(planV3StatusReservation(v).kind,'blocked');
+  v=fixtureV3();v.project.statusOptions[0].id='changed';assert.equal(planV3StatusReservation(v).kind,'blocked');
+  v=fixtureV3();v.handoffEvidence.handoff.body+='edited';assert.equal(planV3StatusReservation(v).kind,'blocked');
+  v=fixtureV3();v.repository.private=true;assert.equal(planV3StatusReservation(v).kind,'blocked');
+  v=fixtureV3();v.checkpoint.repositoryFullName='owner/other';assert.equal(planV3StatusReservation(v).kind,'blocked');
+  v=fixtureV3();v.project.currentStatus='agent-ready';v.project.statusOptionId='ready';assert.equal(planV3HandoffCommit(v).kind,'blocked');
+  v=fixtureV3();v.keyring={forId:()=>null};assert.equal(planV3StatusReservation(v).kind,'blocked');
+});
+
+test('v3 can commit an unchanged status without inventing a reservation',()=>{
+  const v=fixtureV3();v.checkpoint.selectedRecord.current.fromStatus='agent-ready';
+  v.project.currentStatus='agent-ready';v.project.statusOptionId='ready';
+  const done=planV3HandoffCommit(v);assert.equal(done.kind,'v3-commit-handoff-planned');assert.equal(done.record.reservation,null);
+  assert.equal(planV3StatusReservation(v).kind,'blocked');
 });
