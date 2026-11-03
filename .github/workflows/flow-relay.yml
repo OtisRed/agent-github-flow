@@ -1,6 +1,12 @@
 name: Flow relay (reusable)
 on:
   workflow_call:
+    inputs:
+      relay-token-slot:
+        description: Select the active credential or the separately staged next credential
+        required: false
+        default: active
+        type: string
     secrets:
       FLOW_RELAY_SOURCE:
         description: Opaque source route from the project environment
@@ -8,6 +14,9 @@ on:
       FLOW_RELAY_TOKEN:
         description: Repository-scoped relay credential from the project environment
         required: true
+      FLOW_RELAY_TOKEN_NEXT:
+        description: Separately staged relay credential for a controlled rotation
+        required: false
 permissions:
   contents: read
 jobs:
@@ -23,9 +32,25 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
-      - name: Send minimal wakeup
+      - name: Validate credential slot
+        env:
+          RELAY_TOKEN_SLOT: ${{ inputs.relay-token-slot }}
+        run: |
+          case "$RELAY_TOKEN_SLOT" in
+            active|next) ;;
+            *) echo 'Relay: invalid credential slot'; exit 1 ;;
+          esac
+      - name: Send minimal wakeup with active credential
+        if: inputs.relay-token-slot == 'active'
         env:
           FLOW_RELAY_TARGET: ${{ vars.FLOW_RELAY_TARGET }}
           FLOW_RELAY_SOURCE: ${{ secrets.FLOW_RELAY_SOURCE }}
           FLOW_RELAY_TOKEN: ${{ secrets.FLOW_RELAY_TOKEN }}
+        run: node src/flow-relay-cli.mjs
+      - name: Send minimal wakeup with staged credential
+        if: inputs.relay-token-slot == 'next'
+        env:
+          FLOW_RELAY_TARGET: ${{ vars.FLOW_RELAY_TARGET }}
+          FLOW_RELAY_SOURCE: ${{ secrets.FLOW_RELAY_SOURCE }}
+          FLOW_RELAY_TOKEN: ${{ secrets.FLOW_RELAY_TOKEN_NEXT }}
         run: node src/flow-relay-cli.mjs
