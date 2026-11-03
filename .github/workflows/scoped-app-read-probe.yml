@@ -1,0 +1,46 @@
+name: Scoped App repository read probe
+on:
+  push:
+    branches: [spike/workflow-call-allowed]
+    paths: [.github/workflows/scoped-app-read-probe.yml]
+permissions: {}
+jobs:
+  probe:
+    if: github.ref == 'refs/heads/spike/workflow-call-allowed'
+    runs-on: ubuntu-24.04
+    environment: split-app-probe
+    timeout-minutes: 4
+    steps:
+      - name: Validate scoped probe configuration
+        env:
+          PROBE_REPOSITORY: ${{ secrets.SCOPED_APP_PROBE_REPOSITORY }}
+          PROBE_ISSUE: ${{ secrets.SCOPED_APP_PROBE_ISSUE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${PROBE_REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]{1,100}$ ]] || [[ "$PROBE_REPOSITORY" == '.' || "$PROBE_REPOSITORY" == '..' ]]; then
+            echo 'Probe: configuration invalid'; exit 1
+          fi
+          [[ "${PROBE_ISSUE:-}" =~ ^[1-9][0-9]*$ ]] || { echo 'Probe: configuration invalid'; exit 1; }
+      - name: Create restricted App token
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: '4681815'
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: OtisRed
+          repositories: ${{ secrets.SCOPED_APP_PROBE_REPOSITORY }}
+          permission-issues: read
+      - name: Verify repository access without disclosing its identity
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PROBE_REPOSITORY: ${{ secrets.SCOPED_APP_PROBE_REPOSITORY }}
+          PROBE_ISSUE: ${{ secrets.SCOPED_APP_PROBE_ISSUE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          selected=$(gh api /installation/repositories --jq 'if .total_count == 1 and (.repositories | length) == 1 then .repositories[0].full_name else "" end' 2>/dev/null) || { echo 'Probe: access unavailable'; exit 1; }
+          if [[ "$selected" != "OtisRed/$PROBE_REPOSITORY" ]]; then echo 'Probe: scope mismatch'; exit 1; fi
+          gh api "/repos/OtisRed/$PROBE_REPOSITORY" --jq '.private' 2>/dev/null | grep -qx true || { echo 'Probe: repository not private or unavailable'; exit 1; }
+          gh api "/repos/OtisRed/$PROBE_REPOSITORY/issues/$PROBE_ISSUE" --jq 'if .pull_request == null and .number > 0 then "ok" else "bad" end' 2>/dev/null | grep -qx ok || { echo 'Probe: issue read unavailable'; exit 1; }
+          echo 'Probe: scoped private issue read confirmed'
