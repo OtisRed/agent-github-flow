@@ -295,6 +295,37 @@ podłączony do produkcyjnego workflow.
 
 ## Rejestracja i utrata danych
 
+### Granica publicznego repozytorium
+
+Bieżący model v2 jest ograniczony do repozytoriów prywatnych. Rezerwacja v2
+zapisuje ID opcji pola Projectu, a gałąź techniczna w publicznym repo byłaby
+publiczną historią tych identyfikatorów. Rzeczywisty Project globalnego flow
+jest prywatny. Dlatego nie wolno włączać publicznego repozytorium przez samo
+zmienienie warunku `private`: potrzebny jest wspólny format, który przechowuje
+prywatne powiązania poza publiczną historią i nadal wykrywa ich zmianę podczas
+wznowienia. Odcisk całego komentarza może też utrwalić możliwy do odgadnięcia
+ślad usuniętej treści. Zmiana formatu musi zachować wykrywanie edycji i
+usunięcia oraz jednakowy proces we wszystkich projektach. Projekt i weryfikacja
+tych warunków pozostają otwarte; dotychczasowe v2 nie jest wdrożone.
+
+Kierunek do sprawdzenia: jeden nowy format dla wszystkich repozytoriów,
+zamiast specjalnego publicznego wariantu. Stałe ID opcji Projectu pozostałyby
+w chronionej konfiguracji centralnej, a rezerwacja przechowywałaby kluczowane
+potwierdzenie całej konfiguracji, bez samych ID opcji. Przed każdą próbą
+automat porównałby bieżące opcje z tą samą konfiguracją i odmówił przy zmianie
+w trakcie nierozliczonej próby. Potwierdzenie opisuje konfigurację, nie jest
+identyfikatorem operacji.
+
+Ten sam trwały, prywatny klucz może posłużyć do odrębnie oznaczonego HMAC
+całej treści komentarza wraz z repo, issue i istniejącym ID komentarza. Pozwala
+to wykryć edycję bez publicznego, możliwego do zgadywania hasha treści; brak
+zapamiętanego komentarza nadal blokuje. `src/flow-checkpoint-mac.mjs` i
+`src/flow-project-registration-v3.mjs` to odłączone, testowane prototypy.
+Klucz nie jest tokenem dostępu, ale wymaga bezpiecznej kopii i wersjonowanej
+rotacji z zachowaniem starych kluczy do odczytu historii. Onboarding powinien
+go przygotować automatycznie. Nie utworzono jeszcze rzeczywistego klucza ani
+nie wdrożono v3; utrata klucza lub konfiguracji nie może powodować zgadywania.
+
 Rejestracja projektu jest odrębnym, jawnym krokiem administracyjnym, nie
 skutkiem pierwszego zdarzenia. Oprócz gałęzi wymaga chronionego punktu
 odniesienia poza nią: powiązania repozytorium z nazwą refu oraz potwierdzonym
