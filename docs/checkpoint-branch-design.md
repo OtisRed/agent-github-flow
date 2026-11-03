@@ -242,6 +242,18 @@ rejestracji. Zakłada zaufane potwierdzenie pierwszej rejestracji, tożsamości
 App i ochrony, a także serializację; samo utrwalenie i aktywacja rejestracji
 nie są jeszcze zaimplementowane. Testy cyklu używają fikcyjnych transportów.
 
+Kandydat prywatnego wpisu rejestracji łączy istniejący klucz źródła relay,
+repozytorium, Project, pole statusu, App, reguły, zaufanych autorów oraz
+rejestrację checkpointu v2. `src/flow-project-registration.mjs` sprawdza tylko
+jego format i zgodność z wybraną trasą; nie uwierzytelnia danych ani nie
+zapisuje ich. Wpis nie powinien trafiać do publicznych logów. Naturalnym
+miejscem dostępu dla centralnego joba jest chroniony environment secret, ale
+konieczne pozostają atomowość onboardingu, obsługa utraty wpisu oraz wybór
+projektów w nocnym przebiegu bez ujawniania prywatnych danych. Obecne trasy
+relay nie zostały zmienione. GitHub ogranicza environment do
+[100 sekretów po maksymalnie 48 KB](https://docs.github.com/en/actions/reference/security/secrets),
+więc liczba sekretów na projekt wymaga budżetu i monitorowania.
+
 ### Serializacja centralnego runnera
 
 Kandydat pierwszego uruchomienia to jedna grupa concurrency w centralnym
