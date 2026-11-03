@@ -40,6 +40,7 @@ export function compareVisibleProtection({ receipt, registration, observations, 
       || Date.parse(now) < Date.parse(receipt.observedAt) || Date.parse(now) >= Date.parse(receipt.expiresAt)) return blocked('receipt-expired-or-invalid');
   if (!registration || registration.repositoryId !== receipt.repositoryId || registration.appId !== receipt.appId
       || registration.updateRulesetId !== receipt.updateRulesetId || registration.historyRulesetId !== receipt.historyRulesetId
+      || typeof registration.expectedPrivate !== 'boolean' || registration.expectedPrivate !== receipt.profile?.repositoryData?.private
       || !Array.isArray(observations) || observations.length !== 2) return blocked('registration-mismatch');
   try {
     if (!timestampsAvailable(observations[0]) || !timestampsAvailable(observations[1]) || !timestampsAvailable(receipt.profile)) return blocked('ruleset-timestamps-unavailable');

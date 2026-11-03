@@ -15,7 +15,7 @@ function fixture() {
     effective:refs.map(ref => ({ref,rules:[rule('update',1),rule('deletion',2),rule('non_fast_forward',2)]})) };
 }
 const observedAt='2026-11-03T10:01:00.000Z', expiresAt='2026-11-04T10:01:00.000Z', now='2026-11-03T11:00:00.000Z';
-const registration={repositoryId:'repo-id',appId:12,updateRulesetId:1,historyRulesetId:2}, maxAgeMs=24*60*60*1000;
+const registration={repositoryId:'repo-id',appId:12,updateRulesetId:1,historyRulesetId:2,expectedPrivate:true}, maxAgeMs=24*60*60*1000;
 function observations(input) {
   const a=structuredClone(input), b=structuredClone(input);
   delete a.updateRuleset.bypass_actors; delete a.historyRuleset.bypass_actors;
