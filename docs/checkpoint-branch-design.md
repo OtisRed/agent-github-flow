@@ -271,6 +271,13 @@ właściciela oraz zaufanej rejestracji jego wyniku; porównanie widocznego prof
 i `updated_at` może wykrywać zmiany, ale nie jest dowodem pełnej historii ani
 gwarancją niezmienności niewidocznych wyjątków.
 
+W kolejnej jednorazowej próbie właściciela usunięto wyjątek App z tymczasowego
+rulesetu obejmującego dwa nieistniejące refy. Przed i po zweryfikowano listę
+wyjątków; dwa odczytane znaczniki `updated_at` różniły się. Utworzony ruleset
+usunięto i potwierdzono jego brak. To obserwacja jednej sekwencji, nie dowód,
+że każda zmiana wyjątku zawsze zmienia timestamp, ani że nikt inny nie zmienił
+rulesetu między odczytami.
+
 Model `src/flow-checkpoint-protection-receipt.mjs` tworzy prywatny zapis dopiero
 po pełnym audycie i porównuje go z dwiema zgodnymi obserwacjami widocznego
 profilu App. `readCheckpointVisibleProtection` korzysta ze wspólnego collectora.
