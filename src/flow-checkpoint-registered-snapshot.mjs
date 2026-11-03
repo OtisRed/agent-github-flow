@@ -12,7 +12,7 @@ export async function readRegisteredCheckpointSnapshot(input) {
   if (input.registration === null || input.registration === undefined) return blocked('not-registered');
   if (!isCheckpointRegistration(input.registration)) return blocked('invalid-registration');
   const schemaVersion = Object.hasOwn(input.registration, 'checkpointSchemaVersion') ? input.registration.checkpointSchemaVersion : 1;
-  if (![1, 2].includes(schemaVersion)) return blocked('invalid-schema-version');
+  if (![1, 2, 3].includes(schemaVersion)) return blocked('invalid-schema-version');
   if (!input.selection || typeof input.selection !== 'object' || Array.isArray(input.selection)
       || !Number.isSafeInteger(input.selection.number) || input.selection.number < 1
       || typeof input.selection.issueId !== 'string' || !input.selection.issueId || input.selection.issueId.length > 256

@@ -10,7 +10,7 @@ const number = value => Number.isSafeInteger(value) && value > 0;
 export function validateCheckpointInventory(input) {
   if (!object(input) || !id(input.repositoryId)) return blocked('invalid-input');
   const schemaVersion = Object.hasOwn(input, 'schemaVersion') ? input.schemaVersion : 1;
-  if (![1, 2].includes(schemaVersion)) return blocked('invalid-schema-version');
+  if (![1, 2, 3].includes(schemaVersion)) return blocked('invalid-schema-version');
   if (input.complete !== true) return blocked('incomplete-tree');
   const { repositoryId, index, records } = input;
   if (!object(index) || index.version !== 1 || index.repositoryId !== repositoryId

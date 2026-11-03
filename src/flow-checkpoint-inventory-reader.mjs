@@ -3,6 +3,7 @@ import { decodeCheckpointRecordIdentity } from './flow-checkpoint-record-identit
 import { validateCheckpointInventory } from './flow-checkpoint-inventory.mjs';
 import { encodeCheckpointRecord } from './flow-checkpoint-record.mjs';
 import { encodeCheckpointV2 } from './flow-checkpoint-v2.mjs';
+import { encodeCheckpointV3 } from './flow-checkpoint-v3.mjs';
 
 const blocked = reason => ({ kind: 'blocked', reason });
 const MAX_INVENTORY_BYTES = 16 * 1024 * 1024;
@@ -15,7 +16,7 @@ export async function readCheckpointInventory(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.readBlob !== 'function') return blocked('invalid-input');
   const { repositoryId, readBlob } = input;
   const schemaVersion = Object.hasOwn(input, 'schemaVersion') ? input.schemaVersion : 1;
-  if (![1, 2].includes(schemaVersion) || (schemaVersion === 2 && typeof input.expectedCutoverAt !== 'string'))
+  if (![1, 2, 3].includes(schemaVersion) || (schemaVersion >= 2 && typeof input.expectedCutoverAt !== 'string'))
     return blocked('invalid-schema-version');
   let selection = null;
   if (input.selection !== undefined) {
@@ -37,10 +38,11 @@ export async function readCheckpointInventory(input) {
     const decoded = decodeCheckpointRecordIdentity({ expectedOid: entry.oid, blob, repositoryId,
       number: identity.number, issueId: identity.issueId, schemaVersion });
     if (decoded.kind !== 'record-identity-verified') return decoded;
-    const encoded = schemaVersion === 2 ? encodeCheckpointV2(decoded.record) : encodeCheckpointRecord(decoded.record);
+    const encoded = schemaVersion === 3 ? encodeCheckpointV3(decoded.record)
+      : schemaVersion === 2 ? encodeCheckpointV2(decoded.record) : encodeCheckpointRecord(decoded.record);
     if (encoded.kind !== 'encoded-record') return encoded;
     if (encoded.content !== JSON.stringify(decoded.record)) return blocked('noncanonical-record');
-    if (schemaVersion === 2 && decoded.record.cutoverAt !== input.expectedCutoverAt) return blocked('cutover-mismatch');
+    if (schemaVersion >= 2 && decoded.record.cutoverAt !== input.expectedCutoverAt) return blocked('cutover-mismatch');
     if (selection && identity.number === selection.number) {
       if (identity.issueId !== selection.issueId) return blocked('selection-identity-mismatch');
       selectedRecord = decoded.record;

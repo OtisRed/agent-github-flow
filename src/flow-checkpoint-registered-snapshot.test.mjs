@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { readRegisteredCheckpointSnapshot } from './flow-checkpoint-registered-snapshot.mjs';
 import { encodeCheckpointRecord } from './flow-checkpoint-record.mjs';
 import { encodeCheckpointV2 } from './flow-checkpoint-v2.mjs';
+import { encodeCheckpointV3 } from './flow-checkpoint-v3.mjs';
 
 const blob = content => { const bytes = Buffer.from(content);
   const sha = createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
@@ -17,7 +18,9 @@ const fixture = (version = 1) => {
     current: { phase: 'committed', commentId: '1', digest: 'd'.repeat(64), fromStatus: 'needs-design', targetStatus: 'agent-ready',
       createdAt: '2026-01-01T10:01:00Z', epoch: { kind: 'initial', anchor: 'issue' } }, previous: null };
   if (version === 2) { registration.checkpointSchemaVersion = 2; record.version = 2; record.reservation = null; }
-  const recordBlob = blob((version === 2 ? encodeCheckpointV2(record) : encodeCheckpointRecord(record)).content);
+  if (version === 3) { registration.checkpointSchemaVersion = 3; record.version = 3; record.reservation = null;
+    const {digest,...marker}=record.current;record.current={...marker,commentMac:digest,commentKeyId:1,configMac:'f'.repeat(64),configKeyId:1}; }
+  const recordBlob = blob((version === 3 ? encodeCheckpointV3(record) : version === 2 ? encodeCheckpointV2(record) : encodeCheckpointRecord(record)).content);
   const indexBlob = blob('{"version":1,"repositoryId":"repo","issues":[{"number":1,"issueId":"issue"}]}');
   const blobs = new Map([[recordBlob.sha, recordBlob], [indexBlob.sha, indexBlob]]);
   const ref = name => ({ ref: name, object: { type: 'commit', sha: headOid } });
@@ -42,6 +45,13 @@ test('returns only a selected record after stable registration and complete stru
   assert.deepEqual(result.selectedRecord, f.record);
   f.args.selection = { number: 2, issueId: 'other' };
   assert.equal((await readRegisteredCheckpointSnapshot(f.args)).selectedRecord, null);
+});
+
+test('reads v3 only with explicit matching registration and refuses mixed v2 records',async()=>{
+  let f=fixture(3),result=await readRegisteredCheckpointSnapshot(f.args);
+  assert.equal(result.kind,'checkpoint-snapshot-observed');assert.equal(result.schemaVersion,3);assert.deepEqual(result.selectedRecord,f.record);
+  f=fixture(3);f.registration.checkpointSchemaVersion=2;assert.equal((await readRegisteredCheckpointSnapshot(f.args)).kind,'blocked');
+  f=fixture(2);f.registration.checkpointSchemaVersion=3;assert.equal((await readRegisteredCheckpointSnapshot(f.args)).kind,'blocked');
 });
 
 test('selects v2 only with an explicit v2 registration and rejects mixed or unknown versions', async () => {

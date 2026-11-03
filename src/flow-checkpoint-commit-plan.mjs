@@ -2,6 +2,7 @@ import { encodeCheckpointIndex } from './flow-checkpoint-index.mjs';
 import { encodeCheckpointRecord } from './flow-checkpoint-record.mjs';
 import { verifyCheckpointContinuity } from './flow-checkpoint-continuity.mjs';
 import { encodeCheckpointV2, verifyCheckpointV2Continuity } from './flow-checkpoint-v2.mjs';
+import { encodeCheckpointV3, verifyCheckpointV3Continuity } from './flow-checkpoint-v3.mjs';
 import { CHECKPOINT_BRANCH_REF, isCheckpointRegistration } from './flow-checkpoint-registration.mjs';
 
 const blocked = reason => ({ kind: 'blocked', reason });
@@ -29,6 +30,17 @@ export function planCheckpointV2Commit(input) {
       || registration.cutoverAt !== input?.snapshot?.cutoverAt
       || input?.snapshot?.schemaVersion !== 2) return blocked('invalid-v2-registration');
   return planCommit(input, encodeCheckpointV2, verifyCheckpointV2Continuity);
+}
+
+// Structural plan only. Full HMAC, registration, visibility, public-data
+// policy, branch provenance and fresh Project evidence remain external.
+export function planCheckpointV3Commit(input) {
+  const registration = input?.registration;
+  if (!isCheckpointRegistration(registration) || registration.checkpointSchemaVersion !== 3
+      || registration.repositoryId !== input?.snapshot?.repositoryId
+      || registration.cutoverAt !== input?.snapshot?.cutoverAt
+      || input?.snapshot?.schemaVersion !== 3) return blocked('invalid-v3-registration');
+  return planCommit(input, encodeCheckpointV3, verifyCheckpointV3Continuity);
 }
 
 function planCommit(input, encodeRecord, verifyContinuity) {

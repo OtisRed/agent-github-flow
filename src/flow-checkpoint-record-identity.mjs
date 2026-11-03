@@ -11,7 +11,7 @@ export function decodeCheckpointRecordIdentity(input) {
   if (!object(input) || !id(input.repositoryId) || !id(input.issueId)
       || !Number.isSafeInteger(input.number) || input.number < 1) return blocked('invalid-input');
   const schemaVersion = Object.hasOwn(input, 'schemaVersion') ? input.schemaVersion : 1;
-  if (![1, 2].includes(schemaVersion)) return blocked('invalid-schema-version');
+  if (![1, 2, 3].includes(schemaVersion)) return blocked('invalid-schema-version');
   const decoded = decodeCheckpointGitBlob({ expectedOid: input.expectedOid, blob: input.blob });
   if (decoded.kind !== 'decoded-blob') return decoded;
   let record; let encoded;

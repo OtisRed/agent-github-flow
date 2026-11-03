@@ -334,6 +334,10 @@ zapisanych komentarzy, widoczność repozytorium i zgodność opcji Projectu z
 prywatną konfiguracją; collector musi mu jeszcze dostarczać uwierzytelnione,
 świeże dane. To nadal nie jest autoryzacja zapisu ani wdrożony kontroler.
 Format ma te same statusy i przebieg dla repozytoriów publicznych i prywatnych.
+Odczyt inwentarza i czysty planner rozpoznają v3 wyłącznie po jawnej zgodnej
+rejestracji. Odrzucają mieszany v2/v3 i nie weryfikują same HMAC; właściwe
+podłączenie do sprawdzania ochrony, danych publicznych oraz zapisu pozostaje
+do wykonania.
 
 Rejestracja projektu jest odrębnym, jawnym krokiem administracyjnym, nie
 skutkiem pierwszego zdarzenia. Oprócz gałęzi wymaga chronionego punktu
