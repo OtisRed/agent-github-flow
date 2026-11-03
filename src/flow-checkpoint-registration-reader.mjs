@@ -1,6 +1,8 @@
 import { isCheckpointBranchRef, isCheckpointRegistration, observeCheckpointGenesis } from './flow-checkpoint-registration.mjs';
 
 const blocked = reason => ({ kind: 'blocked', reason });
+const repoName = value => typeof value === 'string' && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9_.-]{1,100}$/.test(value)
+  && !['.', '..'].includes(value.split('/')[1]);
 
 // The transport must be authenticated to the selected repository and the
 // registration must come from the independently trusted configuration. No
@@ -14,12 +16,14 @@ export async function readCheckpointRegistration(input) {
   }
   const registration = structuredClone(input.registration);
   const { readRepository, readRef, compare } = input;
-  let observedRepositoryId; let observedDefaultBranch; let ref; let comparison;
+  let observedRepositoryId; let observedRepositoryFullName; let observedDefaultBranch; let ref; let comparison;
   try {
     const repository = await readRepository();
     observedRepositoryId = repository?.node_id;
+    observedRepositoryFullName = repository?.full_name;
     observedDefaultBranch = repository?.default_branch;
     if (observedRepositoryId !== registration.repositoryId) return blocked('repository-mismatch');
+    if (!repoName(observedRepositoryFullName)) return blocked('invalid-repository-name');
     if (typeof observedDefaultBranch !== 'string' || !isCheckpointBranchRef(`refs/heads/${observedDefaultBranch}`)) return blocked('invalid-default-branch');
     if (`refs/heads/${observedDefaultBranch}` === registration.ref) return blocked('checkpoint-ref-is-default');
     ref = structuredClone(await readRef(registration.ref));
@@ -32,9 +36,10 @@ export async function readCheckpointRegistration(input) {
   try {
     const freshRef = structuredClone(await readRef(registration.ref));
     const freshRepository = await readRepository();
-    if (freshRepository?.node_id !== registration.repositoryId || freshRepository?.default_branch !== observedDefaultBranch
+    if (freshRepository?.node_id !== registration.repositoryId || freshRepository?.full_name !== observedRepositoryFullName
+        || freshRepository?.default_branch !== observedDefaultBranch
         || freshRef?.ref !== registration.ref
         || freshRef.object?.type !== 'commit' || freshRef.object?.sha !== observed.headOid) return blocked('registration-snapshot-changed');
   } catch { return blocked('registration-read-failed'); }
-  return observed;
+  return { ...observed, repositoryFullName: observedRepositoryFullName };
 }

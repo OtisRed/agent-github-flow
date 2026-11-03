@@ -28,7 +28,8 @@ export async function readRegisteredCheckpointSnapshot(input) {
   if (inventory.selectedRecord && inventory.selectedRecord.cutoverAt !== registration.cutoverAt) return blocked('cutover-mismatch');
   const last = await readCheckpointRegistration(registrationInput);
   if (last.kind !== 'genesis-ancestry-observed') return last;
-  if (last.headOid !== first.headOid) return blocked('checkpoint-head-changed');
+  if (last.headOid !== first.headOid || last.repositoryFullName !== first.repositoryFullName) return blocked('checkpoint-head-changed');
   return { kind: 'checkpoint-snapshot-observed', headOid: first.headOid, rollbackProtected: false,
-    selectedRecord: inventory.selectedRecord };
+    repositoryId: registration.repositoryId, repositoryFullName: first.repositoryFullName, cutoverAt: registration.cutoverAt, selection,
+    index: inventory.index, selectedRecord: inventory.selectedRecord };
 }

@@ -8,7 +8,7 @@ const fixture = () => {
   const registration = { repositoryId: 'repo-id', ref: 'refs/heads/agent-github-flow/checkpoints', genesisOid, cutoverAt: '2026-01-01T10:00:00Z' };
   const ref = () => ({ ref: registration.ref, object: { type: 'commit', sha: headOid } });
   return { calls, registration, args: { registration,
-    readRepository: async () => { calls.push('repository'); return { node_id: 'repo-id', default_branch: 'main' }; },
+    readRepository: async () => { calls.push('repository'); return { node_id: 'repo-id', full_name: 'owner/project', default_branch: 'main' }; },
     readRef: async value => { calls.push(['ref', value]); return ref(); },
     compare: async (base, head) => { calls.push(['compare', base, head]); return { status: 'ahead', ahead_by: 1, behind_by: 0,
       base_commit: { sha: genesisOid }, merge_base_commit: { sha: genesisOid }, commits: [{ sha: headOid }] }; },
@@ -17,7 +17,8 @@ const fixture = () => {
 
 test('reads the bound repository, exact ref and comparison, then rechecks the snapshot', async () => {
   const f = fixture(); const result = await readCheckpointRegistration(f.args);
-  assert.deepEqual(result, { kind: 'genesis-ancestry-observed', headOid: 'b'.repeat(40), rollbackProtected: false });
+  assert.deepEqual(result, { kind: 'genesis-ancestry-observed', headOid: 'b'.repeat(40), rollbackProtected: false,
+    repositoryFullName: 'owner/project' });
   assert.deepEqual(f.calls, ['repository', ['ref', f.registration.ref], ['compare', 'a'.repeat(40), 'b'.repeat(40)],
     ['ref', f.registration.ref], 'repository']);
 });
@@ -27,14 +28,17 @@ test('blocks absent configuration, wrong repository, failures and moved refs', a
   assert.equal((await readCheckpointRegistration(f.args)).reason, 'not-registered'); assert.equal(f.calls.length, 0);
   f = fixture(); f.args.readRepository = async () => ({ node_id: 'wrong' });
   assert.equal((await readCheckpointRegistration(f.args)).reason, 'repository-mismatch');
-  f = fixture(); f.args.readRepository = async () => ({ node_id: 'repo-id', default_branch: 'agent-github-flow/checkpoints' });
+  f = fixture(); f.args.readRepository = async () => ({ node_id: 'repo-id', full_name: 'owner/project', default_branch: 'agent-github-flow/checkpoints' });
   assert.equal((await readCheckpointRegistration(f.args)).reason, 'checkpoint-ref-is-default');
-  f = fixture(); f.args.readRepository = async () => ({ node_id: 'repo-id' });
+  f = fixture(); f.args.readRepository = async () => ({ node_id: 'repo-id', full_name: 'owner/project' });
   assert.equal((await readCheckpointRegistration(f.args)).reason, 'invalid-default-branch');
   f = fixture(); f.args.readRef = async () => { throw Error('missing'); };
   assert.equal((await readCheckpointRegistration(f.args)).reason, 'registration-read-failed');
   f = fixture(); let reads = 0; const original = f.args.readRef;
   f.args.readRef = async (...args) => { const result = await original(...args); if (++reads === 2) result.object.sha = 'c'.repeat(40); return result; };
+  assert.equal((await readCheckpointRegistration(f.args)).reason, 'registration-snapshot-changed');
+  f = fixture(); let repoReads = 0; const originalRepo = f.args.readRepository;
+  f.args.readRepository = async () => { const result = await originalRepo(); if (++repoReads === 2) result.full_name = 'owner/renamed'; return result; };
   assert.equal((await readCheckpointRegistration(f.args)).reason, 'registration-snapshot-changed');
 });
 

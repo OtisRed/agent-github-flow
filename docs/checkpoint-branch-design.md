@@ -84,6 +84,12 @@ m.in. zmianę cutover, utratę zapamiętanego komentarza, cofnięcie reentry i
 kolejne reopen przy niedokończonym wcześniejszym kroku. Jest to wyłącznie
 kontrola strukturalna: przed zapisem potrzebne są świeże dowody natywnej
 historii, komentarza i Projectu oraz powiązanie obu rekordów z właściwym HEAD.
+Prototyp `src/flow-checkpoint-commit-plan.mjs` przygotowuje w pamięci zawartość
+indeksu i rekordu oraz dokładny oczekiwany HEAD dla warunkowego commitu.
+Wiąże plan z odczytanym repozytorium, konkretnym issue i cutover; nie wykonuje
+mutacji i nie daje do niej upoważnienia. Plan zawiera metadane prywatnego
+projektu, więc nie wolno go logować. Kontrola prawdziwości dowodów, ochrony
+gałęzi, obsługa niepewnych odpowiedzi i rzeczywisty CAS pozostają do wdrożenia.
 
 ## Rejestracja i utrata danych
 

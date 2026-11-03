@@ -20,7 +20,7 @@ const fixture = () => {
   const blobs = new Map([[recordBlob.sha, recordBlob], [indexBlob.sha, indexBlob]]);
   const ref = () => ({ ref: registration.ref, object: { type: 'commit', sha: headOid } });
   return { registration, record, blobs, args: { registration, selection: { number: 1, issueId: 'issue' },
-    readRepository: async () => ({ node_id: 'repo', default_branch: 'main' }), readRef: async () => ref(),
+    readRepository: async () => ({ node_id: 'repo', full_name: 'owner/project', default_branch: 'main' }), readRef: async () => ref(),
     compare: async () => ({ status: 'ahead', ahead_by: 1, behind_by: 0, base_commit: { sha: genesisOid },
       merge_base_commit: { sha: genesisOid }, commits: [{ sha: headOid }] }),
     readCommit: async () => ({ sha: headOid, tree: { sha: treeOid } }),
@@ -35,6 +35,8 @@ const fixture = () => {
 test('returns only a selected record after stable registration and complete structural checks', async () => {
   const f = fixture(); const result = await readRegisteredCheckpointSnapshot(f.args);
   assert.equal(result.kind, 'checkpoint-snapshot-observed'); assert.equal(result.rollbackProtected, false);
+  assert.equal(result.repositoryFullName, 'owner/project'); assert.equal(result.cutoverAt, f.registration.cutoverAt);
+  assert.deepEqual(result.selection, f.args.selection);
   assert.deepEqual(result.selectedRecord, f.record);
   f.args.selection = { number: 2, issueId: 'other' };
   assert.equal((await readRegisteredCheckpointSnapshot(f.args)).selectedRecord, null);
