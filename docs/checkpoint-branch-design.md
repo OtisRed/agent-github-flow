@@ -196,6 +196,15 @@ nie potwierdzają rzeczywistego zapisu, polityki ochrony, źródła danych ani
 możliwości publikacji. Kod nie jest podłączony do workflow. Przy utracie
 odpowiedzi mogą pozostać nieosiągalne obiekty Git.
 
+`src/flow-checkpoint-ref-transport.mjs` przygotowuje pojedynczą warunkową
+mutację obu stałych refów, także tylko dla jednego prywatnego repozytorium
+widocznego App. Sprawdza tożsamość, gałąź domyślną, HEAD, rodzica i OID
+drzewa. `acknowledged` oznacza samą odpowiedź GitHuba, a nie odczyt po
+zapisie. Niejasnego żądania nie ponawia. Przed jego podłączeniem runner musi
+zweryfikować rejestrację, ochronę i aktualny plan, a po dowolnej odpowiedzi
+odczytać parę refów i pełny inwentarz. Testy używają fikcyjnych odpowiedzi;
+transport nie jest podłączony do workflow ani autoryzacją zapisu.
+
 Ograniczona próba w rzeczywistym prywatnym repozytorium przez CLI użytkownika
 potwierdziła utworzenie, przesunięcie i warunkowe usunięcie dwóch tymczasowych
 refów; po próbie niezależnie potwierdzono ich brak. Celowo błędny warunek
