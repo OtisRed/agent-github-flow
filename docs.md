@@ -1,5 +1,7 @@
 # Mapa dokumentacji
 
+- [Ograniczona sonda atomowych refów przez App](docs/app-atomic-ref-probe.md) — zakres, wynik i odzyskiwanie.
+
 - [Standard i ustalone zasady](docs/standard.md) — uzgodnienia, zakres pierwszej wersji i otwarte decyzje.
 - [Uruchomienie własnego GitHub Flow](docs/bootstrap.md) — obecne ręczne kroki i warunek zakończenia bootstrapu.
 - [Format przekazania FLOW](docs/flow.md) — składnia i granice parsera.
