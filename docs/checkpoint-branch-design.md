@@ -186,6 +186,16 @@ aktualizacji z tym samym starym i nowym OID oraz `force: false`; weryfikuje
 obie nazwy refów, rodzica i drzewo przygotowanego commitu. Plan sam nie
 uwierzytelnia źródła ani nie uruchamia mutacji i nie obsługuje bootstrapu.
 
+`src/flow-checkpoint-object-preparer.mjs` przygotowuje samo drzewo i commit
+bez przesuwania refów; w tym ograniczonym wariancie wymaga tokenu App dla
+jednego prywatnego repozytorium. Ponownie sprawdza inwentarz i refy, a
+`src/flow-checkpoint-tree-diff.mjs` weryfikuje dokładne dwa zmienione pliki
+i niezmienność pozostałych ścieżek. Po niepewnej odpowiedzi nie ponawia
+automatycznie tworzenia obiektów. Testy używają fikcyjnego transportu;
+nie potwierdzają rzeczywistego zapisu, polityki ochrony, źródła danych ani
+możliwości publikacji. Kod nie jest podłączony do workflow. Przy utracie
+odpowiedzi mogą pozostać nieosiągalne obiekty Git.
+
 Ograniczona próba w rzeczywistym prywatnym repozytorium przez CLI użytkownika
 potwierdziła utworzenie, przesunięcie i warunkowe usunięcie dwóch tymczasowych
 refów; po próbie niezależnie potwierdzono ich brak. Celowo błędny warunek
