@@ -326,6 +326,13 @@ rotacji z zachowaniem starych kluczy do odczytu historii. Onboarding powinien
 go przygotować automatycznie. Nie utworzono jeszcze rzeczywistego klucza ani
 nie wdrożono v3; utrata klucza lub konfiguracji nie może powodować zgadywania.
 
+Prototyp `src/flow-checkpoint-v3.mjs` zachowuje oba potwierdzenia i ich wersje
+klucza również po zakończeniu przekazania. Sama rezerwacja zawiera wyłącznie
+czas, a nie ID prywatnych opcji. Zmiana konfiguracji między przekazaniami jest
+blokowana do osobnej migracji; zgodność bieżących opcji Projectu z prywatną
+konfiguracją i same HMAC muszą być jeszcze sprawdzane przez przyszły collector.
+Format ma te same statusy i przebieg dla repozytoriów publicznych i prywatnych.
+
 Rejestracja projektu jest odrębnym, jawnym krokiem administracyjnym, nie
 skutkiem pierwszego zdarzenia. Oprócz gałęzi wymaga chronionego punktu
 odniesienia poza nią: powiązania repozytorium z nazwą refu oraz potwierdzonym
