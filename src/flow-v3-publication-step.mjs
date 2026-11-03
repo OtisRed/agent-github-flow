@@ -50,7 +50,7 @@ export function createV3PublicationStep({policy,projectRegistration,registration
     try{
       if(!isDeepStrictEqual(first,await collectContext())||!protectedBy(await verifyProtection(),policy))return blocked('publication-preflight-changed');
     }catch{return blocked('publication-preflight-unavailable');}
-    let write;try{write=await publish({expectedHeadOid:oldOid,expectedTreeOid:treeOid,commit:structuredClone(prepared.commit)});}catch{write=null;}
+    let write;try{write=await publish({expectedHeadOid:oldOid,expectedTreeOid:treeOid,commit:structuredClone(prepared.commit),after:structuredClone(plan.record)});}catch{write=null;}
     let seen;try{seen=await observe({oldOid,newOid,expectedTreeOid:treeOid});}catch{return uncertain();}
     if(write?.kind!=='ref-update-acknowledged'||seen?.kind!=='publication-observed')return uncertain();
     try{

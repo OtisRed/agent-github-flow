@@ -9,6 +9,8 @@ import { encodeCheckpointV2 } from './flow-checkpoint-v2.mjs';
 import { createCheckpointKeyring } from './flow-checkpoint-keyring.mjs';
 import { FLOW_STATUSES } from './flow.mjs';
 import { createV3CheckpointRefTransport } from './flow-checkpoint-ref-transport.mjs';
+import { createV3PublicationAdapter } from './flow-v3-publication-adapter.mjs';
+import { createV3PublicationStep } from './flow-v3-publication-step.mjs';
 import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
 
 const hash = bytes => createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
@@ -163,18 +165,18 @@ test('v3 refuses invalid commitments, visibility or fork before object creation'
 function v3RefFixture(expectedPrivate=false){
   const f=fixture(3,false,expectedPrivate),policy={repositoryId:'repo-id',repository:'owner/project',projectId:'project',statusFieldId:'status',
     issueId:'issue',issueNumber:1,appId:12,updateRulesetId:1,historyRulesetId:2,trustedAuthorIds:['user']};
-  let writes=0;
+  let writes=0;const mutationBodies=[];
   const request=async(url,options)=>{
     if(url.endsWith('/repos/owner/project'))return reply({node_id:'repo-id',full_name:'owner/project',private:f.state.scopePrivate,
       fork:f.state.scopeFork,default_branch:'main'});
-    if(url==='https://api.github.com/graphql'){writes++;return reply({data:{updateRefs:{__typename:'UpdateRefsPayload'}}});}
+    if(url==='https://api.github.com/graphql'){writes++;mutationBodies.push(JSON.parse(options.body));return reply({data:{updateRefs:{__typename:'UpdateRefsPayload'}}});}
     return f.request(url,options);
   };
   const args={policy,projectRegistration:f.v3.projectRegistration,
     registrationCommitment:{keyId:1,mac:f.v3.keyring.current().config(f.v3.projectRegistration)},keyring:f.v3.keyring,
     snapshot:f.snapshot,after:f.after,v3:{...f.v3,checkpoint:f.snapshot},expectedTreeOid:oid('d'),commitOid:oid('a'),
     appToken:'synthetic-app-token',request};
-  return {f,args,writes:()=>writes};
+  return {f,args,writes:()=>writes,mutationBodies};
 }
 test('v3 ref transport verifies exact public and private tree changes before the atomic ref pair',async()=>{
   for(const expectedPrivate of [false,true]){
@@ -190,6 +192,46 @@ test('v3 ref transport blocks unrelated tree changes, wrong visibility and forge
   assert.equal((await createV3CheckpointRefTransport(t.args).publish()).reason,'scope-mismatch');assert.equal(t.writes(),0);
   t=v3RefFixture();t.args.registrationCommitment.mac='0'.repeat(64);
   assert.throws(()=>createV3CheckpointRefTransport(t.args),/invalid-v3-ref-context/);assert.equal(t.writes(),0);
+});
+
+test('v3 publisher re-reads protected context before one atomic publication',async()=>{
+  const t=v3RefFixture(),f=t.f,context={repository:f.v3.repository,observation:{checkpoint:f.snapshot,project:f.v3.project,
+    handoffEvidence:f.v3.handoffEvidence,epochProof:f.v3.epochProof,trustedAuthorIds:f.v3.trustedAuthorIds,expectedProjectId:f.v3.expectedProjectId}};
+  let collectCalls=0;const collectContext=async()=>{collectCalls++;return context;};
+  const make=()=>createV3PublicationAdapter({policy:t.args.policy,projectRegistration:t.args.projectRegistration,
+    registrationCommitment:t.args.registrationCommitment,keyring:t.args.keyring,collectContext,appToken:'synthetic-app-token',request:t.args.request});
+  const input={expectedHeadOid:f.snapshot.headOid,expectedTreeOid:oid('d'),commit:{sha:oid('a'),tree:{sha:oid('d')},parents:[{sha:f.snapshot.headOid}]},after:f.after};
+  const publish=make();assert.equal((await publish(input)).kind,'ref-update-acknowledged');assert.equal(t.writes(),1);assert.equal(collectCalls,1);
+  assert.equal((await publish(input)).reason,'publisher-already-used');assert.equal(t.writes(),1);
+  const stale=make();assert.equal((await stale({...input,expectedHeadOid:oid('8')})).kind,'blocked');assert.equal(t.writes(),1);
+  let attempts=0;const uncertainRequest=async(url,options)=>{if(url==='https://api.github.com/graphql'){attempts++;throw Error('private');}
+    return t.args.request(url,options);};
+  const uncertain=createV3PublicationAdapter({policy:t.args.policy,projectRegistration:t.args.projectRegistration,
+    registrationCommitment:t.args.registrationCommitment,keyring:t.args.keyring,collectContext,appToken:'synthetic-app-token',request:uncertainRequest});
+  assert.deepEqual(await uncertain(input),{kind:'ref-update-uncertain',retryAllowed:false});
+  assert.equal((await uncertain(input)).reason,'publisher-already-used');assert.equal(attempts,1);
+});
+
+test('v3 publication step composes the real preparer and publisher using mocked GitHub responses',async()=>{
+  const t=v3RefFixture(),f=t.f,policy=t.args.policy;
+  const collectContext=async()=>({repository:f.v3.repository,observation:{checkpoint:f.snapshot,project:f.v3.project,
+    handoffEvidence:f.v3.handoffEvidence,epochProof:f.v3.epochProof,trustedAuthorIds:f.v3.trustedAuthorIds,expectedProjectId:f.v3.expectedProjectId}});
+  const common={policy,projectRegistration:t.args.projectRegistration,registrationCommitment:t.args.registrationCommitment,keyring:t.args.keyring,collectContext};
+  const prepare=createV3PreparationAdapter({...common,appToken:'synthetic-app-token',request:f.request});
+  const publishRequest=async(url,options)=>{const result=await t.args.request(url,options);
+    if(url==='https://api.github.com/graphql'){f.snapshot.headOid=oid('a');f.snapshot.index.issues.push({number:1,issueId:'issue'});
+      f.snapshot.selectedRecord=structuredClone(f.after);}return result;};
+  const publish=createV3PublicationAdapter({...common,appToken:'synthetic-app-token',request:publishRequest});
+  const verifyProtection=async()=>({kind:'checkpoint-protection-observed',repositoryId:'repo-id',appId:12,updateRulesetId:1,historyRulesetId:2});
+  const step=createV3PublicationStep({...common,verifyProtection,prepare,publish,observe:async()=>({kind:'publication-observed'})});
+  const result=await step({operation:'initial'});assert.equal(result.kind,'v3-initial-observed');
+  assert.equal(result.binding.checkpointOid,oid('a'));assert.equal(t.writes(),1);
+  const writes=f.state.calls.filter(call=>call.method==='POST');
+  assert.equal(writes.filter(call=>call.url.endsWith('/git/trees')).length,1);
+  assert.equal(writes.filter(call=>call.url.endsWith('/git/commits')).length,1);
+  assert.deepEqual(t.mutationBodies[0].variables.input.refUpdates,[
+    {name:CHECKPOINT_BRANCH_REF,beforeOid:oid('b'),afterOid:oid('a'),force:false},
+    {name:CHECKPOINT_ANCHOR_REF,beforeOid:oid('b'),afterOid:oid('a'),force:false}]);
 });
 
 test('rechecks the existing v2 record before preparing its reservation', async () => {
