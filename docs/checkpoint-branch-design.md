@@ -273,8 +273,12 @@ gwarancją niezmienności niewidocznych wyjątków.
 
 Model `src/flow-checkpoint-protection-receipt.mjs` tworzy prywatny zapis dopiero
 po pełnym audycie i porównuje go z dwiema zgodnymi obserwacjami widocznego
-profilu App. `readCheckpointVisibleProtection` korzysta ze wspólnego collectora,
-ale wymaga zaufanego transportu App. Wywołujący musi zapewnić zaufane wejścia,
+profilu App. `readCheckpointVisibleProtection` korzysta ze wspólnego collectora.
+Odczytowy `src/flow-checkpoint-protection-transport.mjs` dopuszcza tylko dokładne
+adresy skonfigurowanego prywatnego repo, dwóch rulesetów i dwóch technicznych
+refów, sprawdzając zakres tokenu App przed każdym odczytem. Wywołujący musi
+zapewnić zaufane wejścia, transport HTTP i tożsamość App; wywołania nie są
+podłączone do produkcyjnego workflow. Musi również zapewnić zaufany
 zegar i maksymalną ważność audytu; przekroczenie limitu blokuje porównanie.
 Jest to wyłącznie model bez podłączonego magazynu i prawa do wykonania zapisu.
 Przed integracją trzeba ustalić i wyegzekwować odpowiedni limit oraz sposób
