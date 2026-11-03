@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { encodeProjectRegistration } from './flow-project-registration.mjs';
+import { encodeProjectRegistrationV3 } from './flow-project-registration-v3.mjs';
 
 export const ISSUE_IDENTITY_QUERY=`query FlowIssueIdentity($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){id nameWithOwner issue(number:$number){id number}}}`;
 const blocked=reason=>({kind:'blocked',reason});
@@ -9,9 +10,27 @@ const id=value=>typeof value==='string'&&value.length>0&&value.length<=256&&valu
 // trusted source and bind the candidate to its selected route. A wakeup and
 // this identity read alone never authorize a Project or Git mutation.
 export async function resolveProjectPolicy(input={}){
-  if(!input||typeof input!=='object'||Array.isArray(input)||typeof input.graphql!=='function'
-      ||encodeProjectRegistration(input.registration).kind!=='encoded-registration')return blocked('invalid-input');
+  return resolvePolicy(input,false);
+}
+
+// The HMAC commitment is an independently protected input. It authenticates
+// the full v3 registration before any route lookup; it does not prove App
+// identity, prevent registry rollback or authorize mutation.
+export async function resolveV3ProjectPolicy(input={}){
+  return resolvePolicy(input,true);
+}
+
+async function resolvePolicy(input,v3){
+  if(!input||typeof input!=='object'||Array.isArray(input)||typeof input.graphql!=='function')return blocked('invalid-input');
   let registration,candidate;try{registration=structuredClone(input.registration);candidate=structuredClone(input.candidate);}catch{return blocked('invalid-input');}
+  if((v3?encodeProjectRegistrationV3(registration):encodeProjectRegistration(registration)).kind!=='encoded-registration')return blocked('invalid-input');
+  if(v3){
+    try{const commitment=structuredClone(input.registrationCommitment),keyring=input.keyring;
+      if(!commitment||Object.keys(commitment).length!==2||!Number.isSafeInteger(commitment.keyId)||commitment.keyId<1
+          ||typeof commitment.mac!=='string'||typeof keyring?.forId!=='function'||!keyring.forId(commitment.keyId).verifyConfig(registration,commitment.mac))
+        return blocked('registration-unverified');
+    }catch{return blocked('registration-unverified');}
+  }
   if(input.source!==registration.source||!candidate||typeof candidate!=='object'||Array.isArray(candidate)
       ||Object.keys(candidate).length!==3||candidate.kind!=='candidate'||candidate.repository!==registration.repository
       ||!Number.isSafeInteger(candidate.issueNumber)||candidate.issueNumber<1)return blocked('route-mismatch');

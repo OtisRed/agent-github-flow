@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveProjectPolicy, ISSUE_IDENTITY_QUERY } from './flow-project-policy-resolver.mjs';
+import { resolveProjectPolicy, resolveV3ProjectPolicy, ISSUE_IDENTITY_QUERY } from './flow-project-policy-resolver.mjs';
 import { CHECKPOINT_BRANCH_REF } from './flow-checkpoint-registration.mjs';
 import { isHandoffSubject } from './flow-handoff-binding.mjs';
 import { createFlowReadTransports } from './flow-read-transports.mjs';
+import { createCheckpointKeyring } from './flow-checkpoint-keyring.mjs';
+import { FLOW_STATUSES } from './flow.mjs';
 
 function fixture(){const registration={version:1,source:'a'.repeat(32),repository:'owner/private-project',repositoryId:'repo-id',
   projectOwner:'owner',projectNumber:4,projectId:'project-id',statusFieldId:'field-id',statusFieldName:'Status',appId:12,
@@ -36,4 +38,17 @@ test('resolves the issue through the bounded App read transport',async()=>{
   const result=await resolveProjectPolicy({registration:f.registration,candidate:f.candidate,source:f.registration.source,graphql:transports.issueGraphql});
   assert.equal(result.kind,'project-policy-resolved');assert.equal(calls.length,2);
   assert.ok(calls.every(call=>call.url==='https://api.github.com/graphql'&&call.authorization==='Bearer synthetic-app-token'));
+});
+test('v3 resolves only the exact HMAC-authenticated registration and still checks issue twice',async()=>{
+  const f=fixture();f.registration.version=3;f.registration.expectedPrivate=true;f.registration.dataPolicy='common-v3';
+  f.registration.statusOptions=FLOW_STATUSES.map((name,index)=>({name,id:`option-${index}`}));f.registration.checkpoint.checkpointSchemaVersion=3;
+  const keyring=createCheckpointKeyring({currentKeyId:1,keys:[{id:1,key:Buffer.alloc(32,1)}]});
+  const registrationCommitment={keyId:1,mac:keyring.current().config(f.registration)};
+  const input={...f,source:f.registration.source,keyring,registrationCommitment};
+  const result=await resolveV3ProjectPolicy(input);assert.equal(result.kind,'project-policy-resolved');assert.equal(f.getCalls(),2);
+  assert.equal(result.policy.issueId,'issue-node');assert.equal(result.checkpoint.checkpointSchemaVersion,3);
+  const wrong=structuredClone(f.registration);wrong.statusOptions[0].id='changed';
+  assert.equal((await resolveV3ProjectPolicy({...input,registration:wrong})).kind,'blocked');assert.equal(f.getCalls(),2);
+  assert.equal((await resolveV3ProjectPolicy({...input,registrationCommitment:{keyId:2,mac:registrationCommitment.mac}})).kind,'blocked');
+  assert.equal((await resolveProjectPolicy(input)).kind,'blocked');
 });
