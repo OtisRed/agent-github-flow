@@ -47,6 +47,12 @@ Odczytowy prototyp `src/flow-checkpoint-index-blob.mjs` sprawdza także rozmiar,
 kodowanie i Git SHA-1 konkretnych bajtów indeksu przed jego dekodowaniem.
 Przyszły reader musi jeszcze powiązać ten obiekt z pełnym drzewem właściwego
 commitu oraz zarejestrowaną gałęzią; sam blob tego nie dowodzi.
+Prototyp `src/flow-checkpoint-tree.mjs` wiąże indeks z wpisem odpowiedzi drzewa
+i planuje odczyt dokładnych blobów rekordów, blokując ucięcie, duplikaty,
+niezgodność ścieżek i nieoczekiwane typy wpisów. Wymaga rzeczywistego,
+rekurencyjnego odczytu Git Trees: samo `truncated: false` nie dowodzi, że
+wywołujący zadał zapytanie rekurencyjne. Treść rekordów, związek drzewa
+z commitem i pochodzenie gałęzi pozostają do sprawdzenia.
 
 ## Rejestracja i utrata danych
 
