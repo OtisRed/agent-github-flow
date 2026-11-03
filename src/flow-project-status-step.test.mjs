@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { runPendingProjectStatusStep } from './flow-project-status-step.mjs';
+import { runPendingProjectStatusStep, runReservedProjectStatusStep } from './flow-project-status-step.mjs';
 import { createBranchStatusTransport, BRANCH_STATUS_UPDATE } from './flow-project-status-transport.mjs';
 
 const body = '[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
@@ -39,6 +39,34 @@ test('performs exactly one bounded status mutation and checks the resulting stat
   const f = fixture(); const result = await runPendingProjectStatusStep(f);
   assert.deepEqual(result, { kind: 'status-target-observed', binding:f.expectedBinding, retryAllowed: false });
   assert.deepEqual(f.writes, [{ itemId: 'item', targetOptionId: 'ready' }]);
+});
+
+const reservedFixture = () => { const f = fixture(); f.state.checkpoint.schemaVersion = 2;
+  const record = f.state.checkpoint.selectedRecord; record.version = 2;
+  record.reservation = { reservedAt: '2026-01-01T10:02:00Z', fromOptionId: 'design', targetOptionId: 'ready' };
+  return f; };
+
+test('performs the v2 status mutation only against the expected reserved checkpoint', async () => {
+  const f = reservedFixture(); const result = await runReservedProjectStatusStep(f);
+  assert.deepEqual(result, { kind: 'status-target-observed', binding: f.expectedBinding, retryAllowed: false });
+  assert.deepEqual(f.writes, [{ itemId: 'item', targetOptionId: 'ready' }]);
+});
+
+test('blocks missing or changed reservation, stale HEAD and altered status options before writing', async () => {
+  for (const change of [
+    f => { f.state.checkpoint.selectedRecord.reservation = null; },
+    f => { f.state.checkpoint.selectedRecord.reservation.targetOptionId = 'old'; },
+    f => { f.state.checkpoint.headOid = 'c'.repeat(40); },
+    f => { f.state.project.statusOptions[0].id = 'other'; },
+    f => { f.state.checkpoint.schemaVersion = 1; }
+  ]) { const f = reservedFixture(); change(f); assert.equal((await runReservedProjectStatusStep(f)).kind, 'blocked'); assert.equal(f.writes.length, 0); }
+});
+
+test('uncertain v2 status mutation is attempted only once', async () => {
+  const f = reservedFixture(); let attempts = 0;
+  f.transport.setStatus = async () => { attempts += 1; throw Error('connection lost'); };
+  assert.deepEqual(await runReservedProjectStatusStep(f), { kind: 'status-write-uncertain', retryAllowed: false });
+  assert.equal(attempts, 1);
 });
 
 test('blocks changed data between preflight reads without writing', async () => {

@@ -30,3 +30,23 @@ export function planStatusReservation(input) {
   if (commit.kind !== 'checkpoint-commit-plan') return blocked('reservation-plan-invalid');
   return { kind: 'status-reservation-planned', record: after, commit };
 }
+
+// Evidence-only adapter for the separately guarded status step. The returned
+// plan is never authority to write and never includes a projected v1 commit.
+export function inspectReservedHandoff(input) {
+  const record = input?.checkpoint?.selectedRecord;
+  if (input?.checkpoint?.schemaVersion !== 2 || encodeCheckpointV2(record).kind !== 'encoded-record'
+      || !record.reservation || record.current?.phase !== 'pending') return blocked('missing-v2-reservation');
+  let projected;
+  try { projected = structuredClone(input); } catch { return blocked('invalid-input'); }
+  projected.checkpoint.schemaVersion = 1; projected.checkpoint.selectedRecord.version = 1;
+  delete projected.checkpoint.selectedRecord.reservation;
+  const observed = planPendingBranchHandoff(projected);
+  if (!['status-update-planned', 'commit-handoff-planned'].includes(observed.kind)) return blocked('handoff-not-observed');
+  const options = input.project?.statusOptions;
+  const source = options.find(option => option.name === record.current.fromStatus);
+  const target = options.find(option => option.name === record.current.targetStatus);
+  if (source?.id !== record.reservation.fromOptionId || target?.id !== record.reservation.targetOptionId)
+    return blocked('reservation-option-mismatch');
+  return observed.kind === 'status-update-planned' ? observed : { kind: 'commit-handoff-planned' };
+}
