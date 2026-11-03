@@ -62,6 +62,14 @@ Adapter `src/flow-checkpoint-git-reader.mjs` buduje wyłącznie adresy odczytowe
 GitHub API dla wskazanego repozytorium, a wspólny transport kieruje je przez
 token App i odrzuca przekierowania. Test kompozycji używa fikcyjnych odpowiedzi;
 adapter nie potwierdza jeszcze rzeczywistego dostępu ani zaufania do repozytorium.
+Prototyp `src/flow-checkpoint-inventory-reader.mjs` pobiera każdy rekord po
+OID z tego drzewa i sprawdza jego bajty oraz tożsamość repozytorium i issue.
+Jego wynik oznacza wyłącznie zgodność inwentarza i tożsamości: zawartość
+checkpointu i polityka jawności danych nadal nie są walidowane i nie mogą
+posłużyć do decyzji kontrolera. Wynik nie zwraca niezinterpretowanego payloadu;
+suma rozmiarów rekordów ponad 16 MiB blokuje próbę przed ich odczytaniem.
+Jest to wstępny limit wymagający pomiaru. Brak rejestru lub cofnięcie historii
+pozostają osobnymi problemami. Testy używają fikcyjnych odpowiedzi.
 
 ## Rejestracja i utrata danych
 

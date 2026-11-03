@@ -1,0 +1,65 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readCheckpointInventory } from './flow-checkpoint-inventory-reader.mjs';
+
+const blob = content => {
+  const bytes = Buffer.from(content); const sha = createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+  return { sha, size: bytes.length, encoding: 'base64', content: bytes.toString('base64') };
+};
+const fixture = () => {
+  const commitOid = 'a'.repeat(40); const treeOid = 'b'.repeat(40); const calls = [];
+  const index = blob('{"version":1,"repositoryId":"repo","issues":[{"number":1,"issueId":"one"}]}');
+  const record = blob('{"version":1,"repositoryId":"repo","number":1,"issueId":"one","payload":{}}');
+  const blobs = new Map([[index.sha, index], [record.sha, record]]);
+  return { calls, blobs, record, args: { commitOid, repositoryId: 'repo',
+    readCommit: async () => ({ sha: commitOid, tree: { sha: treeOid } }),
+    readTree: async () => ({ sha: treeOid, truncated: false, tree: [
+      { path: 'index.json', type: 'blob', mode: '100644', sha: index.sha, size: index.size },
+      { path: 'issues', type: 'tree', mode: '040000', sha: 'c'.repeat(40) },
+      { path: 'issues/1.json', type: 'blob', mode: '100644', sha: record.sha, size: record.size },
+    ] }),
+    readBlob: async oid => { calls.push(oid); return blobs.get(oid); },
+  } };
+};
+
+test('reads all indexed record blobs and validates their identity in the same tree', async () => {
+  const f = fixture(); const result = await readCheckpointInventory(f.args);
+  assert.equal(result.kind, 'inventory-identities-verified'); assert.equal(result.issueCount, 1);
+  assert.equal(result.commitOid, f.args.commitOid); assert.equal(result.records[0].value.issueId, 'one');
+  assert.equal(Object.hasOwn(result.records[0].value, 'payload'), false);
+  assert.deepEqual(f.calls, [...f.blobs.keys()]);
+});
+
+test('blocks oversized inventories before reading any individual records', async () => {
+  const f = fixture();
+  const issues = Array.from({ length: 17 }, (_, i) => ({ number: i + 1, issueId: `issue-${i + 1}` }));
+  const index = blob(JSON.stringify({ version: 1, repositoryId: 'repo', issues }));
+  f.blobs.set(index.sha, index);
+  f.args.readTree = async () => ({ sha: 'b'.repeat(40), truncated: false, tree: [
+    { path: 'index.json', type: 'blob', mode: '100644', sha: index.sha, size: index.size },
+    { path: 'issues', type: 'tree', mode: '040000', sha: 'c'.repeat(40) },
+    ...issues.map(issue => ({ path: `issues/${issue.number}.json`, type: 'blob', mode: '100644', sha: 'd'.repeat(40), size: 1024 * 1024 })),
+  ] });
+  assert.equal((await readCheckpointInventory(f.args)).reason, 'inventory-too-large');
+  assert.deepEqual(f.calls, [index.sha]);
+});
+
+test('blocks unreadable, absent or altered record blobs', async () => {
+  let f = fixture(); f.blobs.delete(f.record.sha);
+  assert.equal((await readCheckpointInventory(f.args)).reason, 'record-size-mismatch');
+  f = fixture(); const read = f.args.readBlob; f.args.readBlob = async oid => {
+    if (oid === f.record.sha) throw Error('network'); return read(oid);
+  };
+  assert.equal((await readCheckpointInventory(f.args)).reason, 'record-read-failed');
+  f = fixture(); f.record.content = Buffer.alloc(f.record.size, 'x').toString('base64');
+  assert.equal((await readCheckpointInventory(f.args)).reason, 'blob-hash-mismatch');
+});
+
+test('blocks a valid blob belonging to another issue even if its index path matches', async () => {
+  const f = fixture(); const wrong = blob('{"version":1,"repositoryId":"repo","number":1,"issueId":"wrong","payload":{}}');
+  f.blobs.set(wrong.sha, wrong); const originalTree = f.args.readTree;
+  f.args.readTree = async (...args) => { const tree = await originalTree(...args);
+    tree.tree[2].sha = wrong.sha; tree.tree[2].size = wrong.size; return tree; };
+  assert.equal((await readCheckpointInventory(f.args)).reason, 'record-identity-mismatch');
+});
