@@ -1,6 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
 import { auditCheckpointProtection } from './flow-checkpoint-protection-audit.mjs';
-import { compareVisibleProtection } from './flow-checkpoint-protection-receipt.mjs';
 import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
 
 const positive = value => Number.isSafeInteger(value) && value > 0;
@@ -34,7 +33,7 @@ function nextPage(link, path, current) {
 // GET-only transport that limits response size and returns status/json/headers.
 // It must see bypass_actors; App metadata-only access omits that field.
 // Config and App identity are externally trusted. No result authorizes a write.
-async function readProtection(input, evaluate) {
+export async function readCheckpointProtectionAudit(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)
       || !/^[A-Za-z0-9-]{1,39}$/.test(input.owner ?? '') || !/^[A-Za-z0-9_.-]{1,100}$/.test(input.repo ?? '')
       || ['.', '..'].includes(input.repo) || typeof input.repositoryId !== 'string' || !input.repositoryId
@@ -77,25 +76,8 @@ async function readProtection(input, evaluate) {
   try {
     const first = await observe(); const second = await observe();
     if (!isDeepStrictEqual(first, second)) return blocked('protection-observation-changed');
-    const materialize = value => ({ repositoryId, repository: `${owner}/${repo}`, appId, expectedPrivate,
-      repositoryData: value.repositoryData, updateRuleset: value.updateRuleset, historyRuleset: value.historyRuleset,
-      effective: value.effective.map(item => ({ ref: item.ref, rules: item.pages.flat() })) });
-    return evaluate(materialize(first), materialize(second));
+    return auditCheckpointProtection({ repositoryId, repository: `${owner}/${repo}`, appId, expectedPrivate,
+      repositoryData: first.repositoryData, updateRuleset: first.updateRuleset, historyRuleset: first.historyRuleset,
+      effective: first.effective.map(item => ({ ref: item.ref, rules: item.pages.flat() })) });
   } catch { return blocked('protection-read-unavailable'); }
-}
-
-export async function readCheckpointProtectionAudit(input) {
-  return readProtection(input, first => auditCheckpointProtection(first));
-}
-
-// This read-only App path reports visible drift relative to an independently
-// trusted owner receipt. It is not an audit of hidden bypass actors and must
-// not by itself authorize a write. The caller supplies trusted registration,
-// policy and clock; all responses still come from the same bounded GET path.
-export async function readCheckpointVisibleProtection(input) {
-  return readProtection(input, (first, second) => compareVisibleProtection({
-    receipt: input.receipt, registration: { repositoryId: input.repositoryId, appId: input.appId,
-      updateRulesetId: input.updateRulesetId, historyRulesetId: input.historyRulesetId, expectedPrivate: input.expectedPrivate },
-    observations: [first, second], now: input.now, maxAgeMs: input.maxAgeMs
-  }));
 }

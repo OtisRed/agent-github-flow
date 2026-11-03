@@ -225,13 +225,14 @@ osobny fail-closed preflight ochrony obu refów. Endpoint skutecznych reguł
 gałęzi może działać z uprawnieniem App `Metadata: read`, ale nie dowodzi,
 kto może je obejść. GitHub udostępnia `bypass_actors` tylko podmiotowi z
 prawem zapisu rulesetu: brak tego pola oznacza brak dowodu, nie pustą listę.
-Nie należy z tego powodu nadawać działającemu kontrolerowi `Administration:
-write`. Pełna weryfikacja wyjątków wymaga osobnego audytu właściciela;
-obserwacja reguł, audyt i próby uprawnień nie chronią przed późniejszą zmianą
+Właściciel zaakceptował `Administration: write` dla wybranych repozytoriów App,
+aby mogła wykonywać pełny audyt. Uprawnienie obejmuje także usuwanie repozytoriów
+i zmianę innych ustawień; krótki token audytu ogranicza się do jednego repo.
+Obserwacja reguł, audyt i próby uprawnień nie chronią przed późniejszą zmianą
 polityki przez administratora ani wyścigiem między odczytem a zapisem.
 Źródło: https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset.
 
-`src/flow-checkpoint-protection-audit.mjs` modeluje osobny audyt właściciela:
+`src/flow-checkpoint-protection-audit.mjs` modeluje pełny audyt:
 wymaga pełnych szczegółów bypassów, dwóch dokładnych nazw refów, wyłącznego
 wyjątku App dla reguły update i braku wyjątków dla deletion/non-fast-forward.
 Identyfikator App i tożsamość repo muszą pochodzić z niezależnie zaufanej
@@ -241,7 +242,7 @@ późniejszą zmianę rulesetów. `src/flow-checkpoint-protection-reader.mjs`
 odczytuje obie nazwy, stronicuje i powtarza obserwację, a następny URL
 rekonstruuje lokalnie. Porównuje pięć istotnych pól repo oraz pełne reguły,
 nie zmienne metadane niezwiązane z audytem. Wymaga zaufanego transportu
-właściciela; bezpieczny produkcyjny transport i rejestracja nie są podłączone.
+widzącego bypassy; produkcyjny workflow i rejestracja nie są podłączone.
 
 W ograniczonej próbie w prywatnym non-fork SECosystem GitHub zwrócił regułę
 `update` bez pola `parameters` zarówno po żądaniu z `false`, jak i z `true`.
@@ -266,10 +267,8 @@ odczytał szczegóły obu tymczasowych rulesetów, ich zakres, reguły, `updated
 oraz skuteczne reguły dla obu nieistniejących refów. Pole `bypass_actors` nie
 było dostępne. Wniosek dotyczy tylko obserwowanej konfiguracji: brak pola nie
 oznacza braku wyjątków. Tymczasowe reguły i dopuszczenie gałęzi do środowiska
-usunięto, a reguła `main` pozostała. Kontroler nadal wymaga osobnego audytu
-właściciela oraz zaufanej rejestracji jego wyniku; porównanie widocznego profilu
-i `updated_at` może wykrywać zmiany, ale nie jest dowodem pełnej historii ani
-gwarancją niezmienności niewidocznych wyjątków.
+usunięto, a reguła `main` pozostała. Późniejsza decyzja rozszerzyła uprawnienia
+App, dzięki czemu możliwe jest sprawdzenie wyjątków bez takiego tokenu odczytu.
 
 W kolejnej jednorazowej próbie właściciela usunięto wyjątek App z tymczasowego
 rulesetu obejmującego dwa nieistniejące refy. Przed i po zweryfikowano listę
@@ -278,27 +277,22 @@ usunięto i potwierdzono jego brak. To obserwacja jednej sekwencji, nie dowód,
 że każda zmiana wyjątku zawsze zmienia timestamp, ani że nikt inny nie zmienił
 rulesetu między odczytami.
 
-Model `src/flow-checkpoint-protection-receipt.mjs` tworzy prywatny zapis dopiero
-po pełnym audycie i porównuje go z dwiema zgodnymi obserwacjami widocznego
-profilu App. `readCheckpointVisibleProtection` korzysta ze wspólnego collectora.
+Właściciel wybrał rozszerzenie istniejącej GitHub App o `Administration: write`,
+aby przyszły kontroler mógł automatycznie odczytywać także wyjątki i wykonywać
+pełny audyt bez osobnego PAT-a. Zmianę zapisano i zaakceptowano w istniejącej
+instalacji trzech wybranych repozytoriów. W [próbie Actions](https://github.com/OtisRed/agent-github-flow/actions/runs/41672465629)
+token App z `Administration: write` dla jednego prywatnego repozytorium odczytał
+wyjątki dwóch tymczasowych rulesetów i potwierdził oczekiwany wyjątek App oraz
+brak wyjątków drugiej reguły. Reguły i dostęp gałęzi testowej usunięto. Próba
+nie jest pełnym audytem produkcyjnych refów ani dowodem gotowości kontrolera.
+
 Odczytowy `src/flow-checkpoint-protection-transport.mjs` dopuszcza tylko dokładne
 adresy skonfigurowanego prywatnego repo, dwóch rulesetów i dwóch technicznych
 refów, sprawdzając zakres tokenu App przed każdym odczytem. Wywołujący musi
-zapewnić zaufane wejścia, transport HTTP i tożsamość App; wywołania nie są
-podłączone do produkcyjnego workflow. Musi również zapewnić zaufany
-zegar i maksymalną ważność audytu; przekroczenie limitu blokuje porównanie.
-Jest to wyłącznie model bez podłączonego magazynu i prawa do wykonania zapisu.
-Przed integracją trzeba ustalić i wyegzekwować odpowiedni limit oraz sposób
-odnawiania audytu; brak widocznego dryfu nie potwierdza aktualnych bypassów.
-
-Właściciel wybrał rozszerzenie istniejącej GitHub App o `Administration: write`,
-aby przyszły kontroler mógł automatycznie odczytywać także wyjątki i wykonywać
-pełny audyt bez osobnego PAT-a. Uprawnienie umożliwia również zmianę reguł,
-dlatego token audytowy powinien być krótkotrwały i ograniczony do jednego
-repozytorium, a dostęp do klucza App pozostaje granicą zaufania. Zmiana czeka
-na potwierdzenie dostępu do ustawień GitHuba i rzeczywistą próbę; obecny test
-pełnego audytu przez transport App używa wyłącznie fikcyjnych odpowiedzi.
-Do czasu sprawdzenia nie zakładamy, że pole wyjątków jest dla App dostępne.
+zapewnić zaufane wejścia, transport HTTP i tożsamość App; transport nie jest
+podłączony do produkcyjnego workflow. Token audytowy powinien być krótkotrwały
+i ograniczony do jednego repozytorium; dostęp do klucza App pozostaje granicą
+zaufania. Test pełnego audytu przez transport używa fikcyjnych odpowiedzi.
 
 Samo zarezerwowanie nazwy nie dowodzi, że istniejąca gałąź nie jest
 używana przez produkt; onboarding musi to wcześniej ustalić i nie może jej

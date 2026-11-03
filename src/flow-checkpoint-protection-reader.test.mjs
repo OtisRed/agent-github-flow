@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readCheckpointProtectionAudit, readCheckpointVisibleProtection } from './flow-checkpoint-protection-reader.mjs';
-import { createOwnerProtectionReceipt } from './flow-checkpoint-protection-receipt.mjs';
+import { readCheckpointProtectionAudit } from './flow-checkpoint-protection-reader.mjs';
 
 const refA = 'refs/heads/agent-github-flow/checkpoints', refB = 'refs/heads/agent-github-flow/checkpoint-anchor';
 const response = (data, link = null) => ({ status: 200, json: async () => data, headers: { get: name => name === 'link' ? link : null } });
@@ -69,20 +68,4 @@ test('ignores unrelated volatile repository metadata but rejects a changed defau
   f = fixture(); count = 0; const next = f.input.request;
   f.input.request = async raw => { if (raw.endsWith('/repos/owner/repo') && ++count === 2) f.state.repo.default_branch = 'other'; return next(raw); };
   assert.deepEqual(await readCheckpointProtectionAudit(f.input), { kind: 'blocked', reason: 'protection-observation-changed' });
-});
-
-test('compares App-visible reads with a full owner audit and fails on drift', async () => {
-  const f = fixture();
-  f.state.update.updated_at = f.state.history.updated_at = '2026-11-03T10:00:00Z';
-  const auditInput = { repositoryId: 'repo-id', repository: 'owner/repo', appId: 12, expectedPrivate: true,
-    repositoryData: f.state.repo, updateRuleset: f.state.update, historyRuleset: f.state.history,
-    effective: [refA, refB].map(ref => ({ ref, rules: f.state.rules })) };
-  const receipt = createOwnerProtectionReceipt({ auditInput, observedAt: '2026-11-03T10:01:00Z', expiresAt: '2026-11-04T10:01:00Z' });
-  delete f.state.update.bypass_actors; delete f.state.history.bypass_actors;
-  const input = { ...f.input, receipt, now: '2026-11-03T11:00:00Z', maxAgeMs: 86400000 };
-  assert.deepEqual(await readCheckpointVisibleProtection(input), { kind: 'visible-profile-matches-owner-audit' });
-  assert.deepEqual(await readCheckpointVisibleProtection({ ...input, expectedPrivate: false }), { kind: 'blocked', reason: 'registration-mismatch' });
-  f.state.update.updated_at = '2026-11-03T10:30:00Z';
-  assert.deepEqual(await readCheckpointVisibleProtection(input), { kind: 'blocked', reason: 'visible-protection-drift' });
-  assert.equal((await readCheckpointVisibleProtection({ ...input, maxAgeMs: undefined })).kind, 'blocked');
 });
