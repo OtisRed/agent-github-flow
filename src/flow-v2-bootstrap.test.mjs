@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { verifyV2Bootstrap, createV2BootstrapVerifier } from './flow-v2-bootstrap.mjs';
+import { verifyV3Bootstrap, createV3BootstrapVerifier } from './flow-v3-bootstrap.mjs';
 
 const blob = text => { const bytes=Buffer.from(text);const sha=createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
   return {sha,size:bytes.length,encoding:'base64',content:bytes.toString('base64')}; };
-function fixture(){
+function fixture(version=2){
   const registration={repositoryId:'repo',ref:'refs/heads/agent-github-flow/checkpoints',genesisOid:'a'.repeat(40),
-    cutoverAt:'2026-01-01T10:00:00Z',checkpointSchemaVersion:2};
-  const marker=blob(JSON.stringify({version:2,repositoryId:'repo',cutoverAt:registration.cutoverAt}));
+    cutoverAt:'2026-01-01T10:00:00Z',checkpointSchemaVersion:version};
+  const marker=blob(JSON.stringify({version,repositoryId:'repo',cutoverAt:registration.cutoverAt}));
   const index=blob(JSON.stringify({version:1,repositoryId:'repo',issues:[]}));
   const root='b'.repeat(40),headRoot='d'.repeat(40),state={head:registration.genesisOid,marker,index,headMarker:null,extra:[],refReads:0,genesisParents:[]};
   const entry=(path,value)=>({path,type:'blob',mode:'100644',sha:value.sha,size:value.size});
@@ -61,4 +62,20 @@ test('cycle adapter verifies only the exact independently supplied registration'
   assert.equal((await verify(f.registration)).kind,'v2-bootstrap-verified');
   const other={...f.registration,cutoverAt:'2025-01-01T00:00:00Z'},reads=f.state.refReads;
   assert.equal((await verify(other)).kind,'blocked');assert.equal(f.state.refReads,reads);
+});
+
+test('v3 verifies its own empty root and immutable marker, never a v2 registration or marker',async()=>{
+  let f=fixture(3);assert.equal((await verifyV3Bootstrap(f.args)).kind,'v3-bootstrap-verified');
+  assert.equal((await verifyV2Bootstrap(f.args)).kind,'blocked');
+  const verify=createV3BootstrapVerifier(f.args);
+  assert.equal((await verify(f.registration)).kind,'v3-bootstrap-verified');
+  assert.equal((await verify({...f.registration,cutoverAt:'2025-01-01T00:00:00Z'})).kind,'blocked');
+  f=fixture(3);f.state.marker=blob(JSON.stringify({version:2,repositoryId:'repo',cutoverAt:f.registration.cutoverAt}));
+  assert.equal((await verifyV3Bootstrap(f.args)).kind,'blocked');
+  f=fixture(3);f.state.genesisParents=[{sha:'8'.repeat(40)}];assert.equal((await verifyV3Bootstrap(f.args)).kind,'blocked');
+  f=fixture(3);f.state.index=blob(JSON.stringify({version:1,repositoryId:'repo',issues:[{number:1,issueId:'issue'}]}));
+  assert.equal((await verifyV3Bootstrap(f.args)).kind,'blocked');
+  f=fixture(3);f.state.head='c'.repeat(40);f.state.headMarker=blob('changed');
+  assert.equal((await verifyV3Bootstrap(f.args)).reason,'marker-changed');
+  f=fixture(2);assert.equal((await verifyV3Bootstrap(f.args)).kind,'blocked');
 });
