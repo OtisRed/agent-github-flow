@@ -37,6 +37,13 @@ wszystkie rekordy; sam znacznik `complete` nie jest takim dowodem. Poprawny
 pusty indeks nie dowodzi, że dane nie zostały wcześniej usunięte. Walidator
 nie jest podłączony do kontrolera ani do produkcyjnych zapisów.
 
+Odrębny prototyp `src/flow-checkpoint-index.mjs` ustala kanoniczny format
+indeksu: jedną linię JSON z posortowanymi numerami issue, bez dodatkowych ani
+zduplikowanych pól, maksymalnie 10 000 wpisów i 1 MiB. Decoder wymaga
+identyfikatora oczekiwanego repozytorium. Te limity są kandydatem do pomiaru,
+a nie gwarancją, że obsłużą każde przyszłe repozytorium. Kodowanie nie czyta
+gałęzi i nie potwierdza kompletności, pochodzenia ani aktualności rekordu.
+
 ## Rejestracja i utrata danych
 
 Rejestracja projektu jest odrębnym, jawnym krokiem administracyjnym, nie
