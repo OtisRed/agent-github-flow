@@ -214,8 +214,14 @@ przekazania. Po niepewnej zmianie Projectu kolejny przebieg potwierdza stan
 docelowy albo, widząc stan źródłowy, czeka 120 sekund monotonicznego czasu
 pomiędzy kompletnymi odczytami przed nową rezerwacją i próbą. Testy używają
 fikcyjnych transportów; adapter preparera obiektów działa z jego właściwą
-fabryką, lecz rzeczywisty runner, weryfikacja bootstrapu, serializacja oraz
+fabryką, lecz rzeczywisty runner, pełna autoryzacja bootstrapu, serializacja oraz
 publikacja i test pełnej ścieżki w Actions pozostają do wykonania.
+
+Odczytowy verifier bootstrapu wymaga rootowego genesis bez rodziców z pustym
+`index.json` oraz kanonicznym `checkpoint-schema.json` opisującym wersję 2,
+repozytorium i cutover. Sprawdza też ancestry, parę refów i ten sam marker na
+HEAD. Nie dowodzi uprawnionych autorów historii, braku rollbacku ani ochrony;
+nie tworzy jeszcze genesis i nie zastępuje odczytu bieżącego inwentarza v2.
 
 `src/flow-project-item-resolver.mjs` wyszukuje aktywną kartę issue przez pełną
 paginację osobistego Projectu, odrzuca brak, duplikaty lub niespójny drugi
