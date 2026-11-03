@@ -226,6 +226,9 @@ Preparer potrafi na podstawie tego samego planu utworzyć i sprawdzić
 nieosiągalne obiekty Git w jednym prywatnym repozytorium, bez tworzenia refów;
 przy niepewnej odpowiedzi zatrzymuje się bez ponawiania. Nie wykonano jeszcze
 produkcyjnego bootstrapu ani nie ustanowiono rejestracji i ochrony.
+Osobny czysty planner potrafi zaproponować jednoczesne utworzenie obu stałych
+refów z warunkiem ich nieistnienia (`beforeOid` zerowy). Sam nie potwierdza
+świeżego braku refów, wcześniejszej rejestracji ani aktywnej ochrony.
 
 ### Serializacja centralnego runnera
 

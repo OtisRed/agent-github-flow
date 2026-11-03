@@ -23,3 +23,18 @@ export function planCheckpointRefPairAdvance(input) {
     { name: CHECKPOINT_ANCHOR_REF, beforeOid: expectedHeadOid, afterOid: commit.sha, force: false },
   ] };
 }
+
+// One-time creation candidate only. Caller must independently establish that
+// the repository has never been registered, both ref absences are fresh,
+// genesis contents and protection are verified, and bootstrap is serialized.
+export function planCheckpointRefPairCreate(input) {
+  if(!input||typeof input!=='object'||Array.isArray(input)||typeof input.repositoryId!=='string'
+      ||!input.repositoryId||input.repositoryId.length>256||input.repositoryId.trim()!==input.repositoryId
+      ||!oid(input.expectedTreeOid)||!Object.hasOwn(input,'checkpointRef')||!Object.hasOwn(input,'anchorRef'))return blocked('invalid-input');
+  if(input.checkpointRef!==null||input.anchorRef!==null)return blocked('ref-pair-exists');
+  const commit=input.commit;
+  if(!commit||!oid(commit.sha)||commit.tree?.sha!==input.expectedTreeOid||!Array.isArray(commit.parents)||commit.parents.length!==0)
+    return blocked('invalid-genesis-commit');
+  return {kind:'atomic-ref-pair-plan',repositoryId:input.repositoryId,refUpdates:[CHECKPOINT_BRANCH_REF,CHECKPOINT_ANCHOR_REF]
+    .map(name=>({name,beforeOid:'0'.repeat(40),afterOid:commit.sha,force:false}))};
+}
