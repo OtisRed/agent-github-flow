@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runV2BootstrapCycle } from './flow-v2-bootstrap-cycle.mjs';
 import { CHECKPOINT_BRANCH_REF } from './flow-checkpoint-registration.mjs';
+import { runV3BootstrapCycle } from './flow-v3-bootstrap-cycle.mjs';
 
 const oid=c=>c.repeat(40);
 function fixture(){
@@ -57,4 +58,25 @@ test('does not return a candidate if enrollment, App or protection changes after
     assert.equal((await runV2BootstrapCycle(f.input)).kind,'bootstrap-uncertain');
     assert.equal(f.state.calls.filter(x=>x==='publish').length,1);
   }
+});
+
+function fixtureV3(expectedPrivate=false){
+  const f=fixture();f.policy.expectedPrivate=expectedPrivate;f.registration.checkpointSchemaVersion=3;
+  f.input.prepare=async intent=>{f.state.calls.push('prepare');assert.deepEqual(intent,{repository:'owner/project',repositoryId:'repo',expectedPrivate,
+    cutoverAt:f.policy.cutoverAt});return {kind:'v3-genesis-objects-prepared',genesisOid:oid('a'),treeOid:oid('b')};};
+  f.input.verifyGenesis=async()=>{f.state.calls.push('genesis');return {kind:'v3-bootstrap-verified',registration:structuredClone(f.registration)};};
+  return f;
+}
+test('v3 bootstrap produces only a verified registration candidate for public and private projects',async()=>{
+  for(const expectedPrivate of [false,true]){const f=fixtureV3(expectedPrivate),result=await runV3BootstrapCycle(f.input);
+    assert.deepEqual(result,{kind:'v3-registration-candidate',registration:f.registration,retryAllowed:false});
+    assert.equal(f.state.calls.filter(x=>x==='publish').length,1);}
+});
+test('v3 bootstrap never infers enrollment from missing refs or retries uncertain publication',async()=>{
+  let f=fixtureV3();f.input.verifyEnrollment=async()=>({kind:'blocked'});
+  assert.equal((await runV3BootstrapCycle(f.input)).kind,'blocked');assert.equal(f.state.calls.includes('prepare'),false);
+  f=fixtureV3();f.state.publishResult='ref-update-uncertain';f.state.observed='genesis-publication-not-observed';
+  assert.equal((await runV3BootstrapCycle(f.input)).kind,'bootstrap-uncertain');assert.equal(f.state.calls.filter(x=>x==='publish').length,1);
+  f=fixtureV3();f.input.verifyApp=async()=>({kind:'app-identity-verified',repositoryId:'repo',appId:13});
+  assert.equal((await runV3BootstrapCycle(f.input)).kind,'blocked');assert.equal(f.state.calls.includes('publish'),false);
 });
