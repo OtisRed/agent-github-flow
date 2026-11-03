@@ -1,16 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { createCheckpointObjectPreparer } from './flow-checkpoint-object-preparer.mjs';
+import { createCheckpointObjectPreparer, createV3CheckpointObjectPreparer } from './flow-checkpoint-object-preparer.mjs';
 import { createV2PreparationAdapter } from './flow-v2-preparation-adapter.mjs';
-import { planCheckpointCommit, planCheckpointV2Commit } from './flow-checkpoint-commit-plan.mjs';
+import { planCheckpointCommit, planCheckpointV2Commit, planCheckpointV3Commit } from './flow-checkpoint-commit-plan.mjs';
 import { encodeCheckpointV2 } from './flow-checkpoint-v2.mjs';
+import { createCheckpointKeyring } from './flow-checkpoint-keyring.mjs';
+import { FLOW_STATUSES } from './flow.mjs';
 import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
 
 const hash = bytes => createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
 const oid = char => char.repeat(40);
 const reply = (value, status = 200) => ({ status, text: async () => JSON.stringify(value) });
-function fixture(version = 1, existing = false) {
+function fixture(version = 1, existing = false, expectedV3Private = false) {
   const epoch = { kind: 'initial', anchor: 'issue' };
   const after = { version: 1, repositoryId: 'repo-id', number: 1, issueId: 'issue', cutoverAt: '2026-01-01T10:00:00Z',
     epoch, reentry: null, current: { phase: 'pending', commentId: '4', digest: 'a'.repeat(64), fromStatus: 'needs-design',
@@ -20,11 +22,32 @@ function fixture(version = 1, existing = false) {
     index: { version: 1, repositoryId: 'repo-id', issues: [] }, selectedRecord: null };
   const registration = { repositoryId: 'repo-id', ref: CHECKPOINT_BRANCH_REF, genesisOid: oid('a'), cutoverAt: after.cutoverAt, checkpointSchemaVersion: 2 };
   if (version === 2) { snapshot.schemaVersion = 2; after.version = 2; after.reservation = null; }
+  let v3;
+  if(version===3){
+    snapshot.schemaVersion=3;after.version=3;after.reservation=null;registration.checkpointSchemaVersion=3;
+    const body='[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
+    const statusOptions=FLOW_STATUSES.map((name,index)=>({name,id:name==='needs-design'?'design':name==='agent-ready'?'ready':`private-option-${index}`}));
+    const keyring=createCheckpointKeyring({currentKeyId:1,keys:[{id:1,key:Buffer.alloc(32,1)}]});
+    const projectRegistration={version:3,source:'a'.repeat(32),repository:'owner/project',repositoryId:'repo-id',expectedPrivate:expectedV3Private,
+      dataPolicy:'common-v3',projectOwner:'board-owner',projectNumber:1,projectId:'project',statusFieldId:'status',statusFieldName:'Status',
+      statusOptions:structuredClone(statusOptions),appId:12,updateRulesetId:1,historyRulesetId:2,trustedAuthorIds:['user'],checkpoint:structuredClone(registration)};
+    delete after.current.digest;after.current.commentKeyId=1;
+    after.current.commentMac=keyring.current().comment({repositoryId:'repo-id',issueId:'issue',commentId:'4',body});
+    after.current.configKeyId=1;after.current.configMac=keyring.current().config(projectRegistration);
+    const handoff={kind:'handoff',id:'4',nodeId:'comment',authorId:'user',createdAt:after.current.createdAt,body};
+    v3={keyring,projectRegistration,repository:{node_id:'repo-id',full_name:'owner/project',private:expectedV3Private,fork:false},
+      project:{kind:'branch-project-observed',issueNodeId:'issue',repository:'owner/project',issueState:'OPEN',currentStatus:'needs-design',
+        projectId:'project',itemId:'item',statusFieldId:'status',statusFieldName:'Status',statusOptionId:'design',statusOptions},
+      handoffEvidence:{kind:'evidence',handoff},trustedAuthorIds:['user'],expectedProjectId:'project',
+      epochProof:{kind:'handoff-epoch-evidence',issueNodeId:'issue',commentNodeId:'comment',commentId:'4',commentCreatedAt:handoff.createdAt,
+        commentDigest:createHash('sha256').update(body).digest('hex'),epoch}};
+  }
   if (existing) {
     snapshot.selectedRecord = structuredClone(after); snapshot.index.issues = [{ number: 1, issueId: 'issue' }];
     after.reservation = { reservedAt: '2026-01-01T10:02:00Z', fromOptionId: 'source', targetOptionId: 'target' };
   }
-  const plan = version === 2 ? planCheckpointV2Commit({ registration, snapshot, after }) : planCheckpointCommit({ snapshot, after });
+  const plan = version === 3 ? planCheckpointV3Commit({registration,snapshot,after})
+    : version === 2 ? planCheckpointV2Commit({ registration, snapshot, after }) : planCheckpointCommit({ snapshot, after });
   const oldBytes = Buffer.from(JSON.stringify(snapshot.index)); const oldIndex = hash(oldBytes);
   const additionHash = index => hash(Buffer.from(plan.additions[index].contents, 'base64'));
   const oldTree = { sha: oid('c'), truncated: false, tree: [{ path: 'index.json', mode: '100644', type: 'blob', sha: oldIndex, size: oldBytes.length },
@@ -38,13 +61,13 @@ function fixture(version = 1, existing = false) {
     { path: 'issues', mode: '040000', type: 'tree', sha: oid('e') },
     { path: 'issues/1.json', mode: '100644', type: 'blob', sha: additionHash(1) },
     { path: 'keep', mode: '100644', type: 'blob', sha: oid('f') }] };
-  const state = { oldTree, newTree, scopePrivate: true, failCommit: false, refsHead: snapshot.headOid, calls: [] };
+  const state = { oldTree, newTree, scopePrivate:version!==3||expectedV3Private,scopeFork:false, failCommit: false, refsHead: snapshot.headOid, calls: [] };
   const request = async (url, options) => {
     state.calls.push({ url, method: options.method, body: options.body });
     assert.equal(options.redirect, 'error'); assert.ok(options.signal instanceof AbortSignal);
     assert.equal(options.headers.Authorization, 'Bearer synthetic-app-token');
     if (url.endsWith('/installation/repositories')) return reply({ total_count: 1, repositories: [
-      { node_id: 'repo-id', full_name: 'owner/project', private: state.scopePrivate }] });
+      { node_id: 'repo-id', full_name: 'owner/project', private: state.scopePrivate, fork:state.scopeFork }] });
     if (url.endsWith('/git/ref/heads/agent-github-flow/checkpoints')) return reply({ ref: CHECKPOINT_BRANCH_REF, object: { type: 'commit', sha: state.refsHead } });
     if (url.endsWith('/git/ref/heads/agent-github-flow/checkpoint-anchor')) return reply({ ref: CHECKPOINT_ANCHOR_REF, object: { type: 'commit', sha: state.refsHead } });
     if (url.endsWith(`/git/commits/${snapshot.headOid}`)) return reply({ sha: snapshot.headOid, tree: { sha: oldTree.sha } });
@@ -60,9 +83,10 @@ function fixture(version = 1, existing = false) {
     if (url.endsWith(`/git/commits/${oid('a')}`)) return reply({ sha: oid('a'), tree: { sha: newTree.sha }, parents: [{ sha: snapshot.headOid }] });
     throw Error('unexpected-url');
   };
-  const build = () => createCheckpointObjectPreparer({ owner: 'owner', repo: 'project', snapshot, after, ...(version === 2 ? { registration } : {}),
+  const build = () => version===3?createV3CheckpointObjectPreparer({owner:'owner',repo:'project',snapshot,after,registration,v3,
+    appToken:'synthetic-app-token',request}):createCheckpointObjectPreparer({ owner: 'owner', repo: 'project', snapshot, after, ...(version === 2 ? { registration } : {}),
     appToken: 'synthetic-app-token', request });
-  return { build, state, snapshot, after, plan, request, registration };
+  return { build, state, snapshot, after, plan, request, registration, v3 };
 }
 
 test('prepares and reads back only a private repository tree and commit, without moving refs', async () => {
@@ -84,6 +108,30 @@ test('prepares a v2 record only with v2 registration and a v2 snapshot', async (
   assert.equal(JSON.parse(entries.find(entry => entry.path === 'issues/1.json').content).version, 2);
   assert.throws(() => createCheckpointObjectPreparer({ owner: 'owner', repo: 'project', snapshot: f.snapshot, after: f.after,
     appToken: 'synthetic-app-token' }), /invalid-object-plan/);
+});
+
+test('prepares guarded public v3 objects using the recomputed plan without private options or comment text',async()=>{
+  const f=fixture(3),result=await f.build().prepare();assert.equal(result.kind,'checkpoint-objects-prepared');
+  const entries=JSON.parse(f.state.calls.find(call=>call.url.endsWith('/git/trees')&&call.method==='POST').body).tree;
+  const issue=entries.find(entry=>entry.path==='issues/1.json').content;
+  assert.equal(JSON.parse(issue).version,3);assert.equal(issue.includes('private-option-'),false);assert.equal(issue.includes('Wykonano:'),false);
+  assert.deepEqual(JSON.parse(f.state.calls.find(call=>call.url.endsWith('/git/commits')&&call.method==='POST').body).parents,[f.snapshot.headOid]);
+});
+
+test('uses the same guarded v3 format with a private repository',async()=>{
+  const f=fixture(3,false,true),result=await f.build().prepare();assert.equal(result.kind,'checkpoint-objects-prepared');
+  const entries=JSON.parse(f.state.calls.find(call=>call.url.endsWith('/git/trees')&&call.method==='POST').body).tree;
+  assert.equal(JSON.parse(entries.find(entry=>entry.path==='issues/1.json').content).version,3);
+});
+
+test('v3 refuses invalid commitments, visibility or fork before object creation',async()=>{
+  let f=fixture(3);f.after.current.commentMac='f'.repeat(64);assert.throws(()=>f.build(),/invalid-v3-object-plan/);assert.equal(f.state.calls.length,0);
+  f=fixture(3);f.state.scopePrivate=true;assert.equal((await f.build().prepare()).kind,'blocked');
+  assert.equal(f.state.calls.filter(call=>call.method==='POST').length,0);
+  f=fixture(3);f.state.scopeFork=true;assert.equal((await f.build().prepare()).kind,'blocked');
+  assert.equal(f.state.calls.filter(call=>call.method==='POST').length,0);
+  f=fixture(3);assert.throws(()=>createCheckpointObjectPreparer({owner:'owner',repo:'project',snapshot:f.snapshot,after:f.after,
+    registration:f.registration,appToken:'synthetic-app-token',request:f.request}),/invalid-object-plan/);
 });
 
 test('rechecks the existing v2 record before preparing its reservation', async () => {

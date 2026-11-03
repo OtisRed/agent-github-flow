@@ -4,6 +4,7 @@ import { planCheckpointCommit, planCheckpointV2Commit } from './flow-checkpoint-
 import { readCheckpointInventory } from './flow-checkpoint-inventory-reader.mjs';
 import { verifyPreparedCheckpointTree } from './flow-checkpoint-tree-diff.mjs';
 import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
+import { verifyV3Preparation } from './flow-v3-preparation-guard.mjs';
 
 const oid = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value) && value !== '0'.repeat(40);
 const token = value => typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\s\x00-\x1f\x7f]/.test(value);
@@ -11,17 +12,33 @@ const target = (value, ref, head) => value?.ref === ref && value.object?.type ==
 const blocked = reason => ({ kind: 'blocked', reason });
 const uncertain = () => ({ kind: 'object-preparation-uncertain', retryAllowed: false });
 
-// Creates unreachable Git objects only, never moves refs. Intentionally limited
-// to a token scoped to exactly one PRIVATE repo. Caller must authenticate the
-// checkpoint snapshot, its registration, authors and ref policy; this module
-// does not authorize publication or prove protection. Never log inputs/results.
+// Legacy v1/v2 creates unreachable objects only, in exactly one PRIVATE repo.
 export function createCheckpointObjectPreparer({ owner, repo, snapshot, after, registration, appToken, request = fetch } = {}) {
-  if (!/^[A-Za-z0-9-]{1,39}$/.test(owner ?? '') || !/^[A-Za-z0-9_.-]{1,100}$/.test(repo ?? '')
-      || ['.', '..'].includes(repo) || !token(appToken) || typeof request !== 'function'
-      || snapshot?.repositoryFullName !== `${owner}/${repo}` || !oid(snapshot?.headOid)) throw Error('invalid-object-preparer');
   const plan = snapshot?.schemaVersion === 2 ? planCheckpointV2Commit({ snapshot, after, registration })
     : planCheckpointCommit({ snapshot, after });
   if (plan.kind !== 'checkpoint-commit-plan') throw Error('invalid-object-plan');
+  return prepareFactory({owner,repo,snapshot,plan,appToken,request,expectedPrivate:true,requireNotFork:false});
+}
+
+// The v3 factory consumes only the freshly recomputed guard plan. The supplied
+// context must come from authenticated readers and protected configuration; it
+// is not a permission to move refs. No inputs or results may be logged.
+export function createV3CheckpointObjectPreparer({owner,repo,snapshot,after,registration,v3,appToken,request=fetch}={}){
+  if(snapshot?.schemaVersion!==3||!v3||typeof v3!=='object')throw Error('invalid-v3-object-context');
+  const checked=verifyV3Preparation({...v3,checkpoint:snapshot,after,registration});
+  if(checked.kind!=='v3-preparation-consistent')throw Error('invalid-v3-object-plan');
+  return prepareFactory({owner,repo,snapshot,plan:checked.commit,appToken,request,
+    expectedPrivate:v3.projectRegistration.expectedPrivate,requireNotFork:true});
+}
+
+// Creates unreachable Git objects only, never moves refs. Scope, ref stability
+// and full inventory are re-read; provenance, exclusive writer, protection,
+// authenticated context and publication authority remain the caller's duty.
+function prepareFactory({owner,repo,snapshot,plan,appToken,request,expectedPrivate,requireNotFork}) {
+  if (!/^[A-Za-z0-9-]{1,39}$/.test(owner ?? '') || !/^[A-Za-z0-9_.-]{1,100}$/.test(repo ?? '')
+      || ['.', '..'].includes(repo) || !token(appToken) || typeof request !== 'function'
+      || snapshot?.repositoryFullName !== `${owner}/${repo}` || !oid(snapshot?.headOid)
+      ||typeof expectedPrivate!=='boolean'||plan?.expectedHeadOid!==snapshot.headOid) throw Error('invalid-object-preparer');
   const expected = structuredClone(snapshot); const additions = structuredClone(plan.additions);
   const api = `https://api.github.com/repos/${owner}/${repo}`;
   let started = false;
@@ -40,7 +57,8 @@ export function createCheckpointObjectPreparer({ owner, repo, snapshot, after, r
     const result = await call('https://api.github.com/installation/repositories');
     const repoData = result?.repositories?.[0];
     return result?.total_count === 1 && Array.isArray(result.repositories) && result.repositories.length === 1
-      && repoData?.node_id === expected.repositoryId && repoData.full_name === expected.repositoryFullName && repoData.private === true;
+      && repoData?.node_id === expected.repositoryId && repoData.full_name === expected.repositoryFullName && repoData.private === expectedPrivate
+      &&(!requireNotFork||repoData.fork===false);
   };
   const refs = async () => [await get(`/git/ref/${CHECKPOINT_BRANCH_REF.slice('refs/'.length)}`),
     await get(`/git/ref/${CHECKPOINT_ANCHOR_REF.slice('refs/'.length)}`)];
