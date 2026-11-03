@@ -1,0 +1,63 @@
+name: App atomic ref-pair probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: app-atomic-ref-probe
+  cancel-in-progress: false
+jobs:
+  probe:
+    if: github.ref == 'refs/heads/main' && github.actor == 'OtisRed' && github.triggering_actor == 'OtisRed'
+    name: Probe scoped App on temporary refs
+    runs-on: ubuntu-24.04
+    environment: flow-controller
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out reviewed revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Validate one target before issuing App token
+        env:
+          TARGET_OWNER: ${{ secrets.FLOW_PROBE_REPO_OWNER }}
+          TARGET_REPO: ${{ secrets.FLOW_PROBE_REPO_NAME }}
+          EXPECTED_REPOSITORY_ID: ${{ secrets.FLOW_PROBE_REPO_ID }}
+          EXPECTED_HEAD: ${{ secrets.FLOW_PROBE_REPO_HEAD }}
+          EXPECTED_PARENT: ${{ secrets.FLOW_PROBE_REPO_PARENT }}
+        run: node src/atomic-ref-target-check.mjs
+      - name: Create scoped App token
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ vars.FLOW_APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ secrets.FLOW_PROBE_REPO_OWNER }}
+          repositories: ${{ secrets.FLOW_PROBE_REPO_NAME }}
+          permission-contents: write
+      - name: Probe temporary refs and conditional cleanup
+        id: probe
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          EXPECTED_APP_SLUG: ${{ vars.FLOW_APP_SLUG }}
+          ACTUAL_APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          TARGET_OWNER: ${{ secrets.FLOW_PROBE_REPO_OWNER }}
+          TARGET_REPO: ${{ secrets.FLOW_PROBE_REPO_NAME }}
+          EXPECTED_REPOSITORY_ID: ${{ secrets.FLOW_PROBE_REPO_ID }}
+          EXPECTED_HEAD: ${{ secrets.FLOW_PROBE_REPO_HEAD }}
+          EXPECTED_PARENT: ${{ secrets.FLOW_PROBE_REPO_PARENT }}
+        run: node src/atomic-ref-probe-cli.mjs
+      - name: Stale CAS response confirmed
+        if: steps.probe.outputs.negative == 'confirmed'
+        run: echo 'The server response identified the intentionally stale comparison.'
+      - name: Stale CAS response unverified
+        if: steps.probe.outputs.negative == 'unverified'
+        run: |
+          echo 'The response did not identify the reason; the negative case remains unverified.'
+          exit 1
