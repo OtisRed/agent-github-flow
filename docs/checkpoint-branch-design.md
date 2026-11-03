@@ -141,6 +141,12 @@ wcześniejsze niepewne żądanie dla tego wykonawcy nie jest w locie. Kod nie
 implementuje jeszcze tego dowodu ani serializacji i nie jest podłączony do
 Actions; test całego cyklu używa fikcyjnych transportów.
 
+`src/flow-project-item-resolver.mjs` wyszukuje aktywną kartę issue przez pełną
+paginację osobistego Projectu, odrzuca brak, duplikaty lub niespójny drugi
+odczyt i wymaga ograniczonego transportu. Jest odczytowy i nie blokuje karty;
+integracja z dalszym odczytem Projectu musi ponowić weryfikację. Wielokrotne
+pełne przeglądanie dużej tablicy wymaga pomiaru wydajności przed wdrożeniem.
+
 ## Rejestracja i utrata danych
 
 Rejestracja projektu jest odrębnym, jawnym krokiem administracyjnym, nie
