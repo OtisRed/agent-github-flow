@@ -331,13 +331,21 @@ klucza również po zakończeniu przekazania. Sama rezerwacja zawiera wyłączni
 czas, a nie ID prywatnych opcji. Zmiana konfiguracji między przekazaniami jest
 blokowana do osobnej migracji. Odłączony verifier sprawdza HMAC, dostępność
 zapisanych komentarzy, widoczność repozytorium i zgodność opcji Projectu z
-prywatną konfiguracją; collector musi mu jeszcze dostarczać uwierzytelnione,
-świeże dane. To nadal nie jest autoryzacja zapisu ani wdrożony kontroler.
+prywatną konfiguracją. Odczytowy collector pierwszego przekazania dostarcza mu
+świeże dane i zatrzymuje się po zmianie widoczności lub konfiguracji podczas
+odczytu. To nadal nie jest autoryzacja zapisu ani wdrożony kontroler.
 Format ma te same statusy i przebieg dla repozytoriów publicznych i prywatnych.
 Odczyt inwentarza i czysty planner rozpoznają v3 wyłącznie po jawnej zgodnej
 rejestracji. Odrzucają mieszany v2/v3 i nie weryfikują same HMAC; właściwe
 podłączenie do sprawdzania ochrony, danych publicznych oraz zapisu pozostaje
 do wykonania.
+
+Dotychczasowy verifier korzysta z bieżącej chronionej rejestracji. Celowa
+zmiana konfiguracji wymaga osobnej procedury zachowującej wcześniejszą
+rejestrację i umożliwiającej sprawdzenie starych potwierdzeń; nie wolno po
+prostu nadpisać rejestracji ani uznać zatrzymania za powód inicjalizacji od
+nowa. Pierwszy rekord musi uzyskać MAC w przyszłym zaufanym adapterze po
+ponownym sprawdzeniu danych, a nie na podstawie samego odczytu collectora.
 
 Rejestracja projektu jest odrębnym, jawnym krokiem administracyjnym, nie
 skutkiem pierwszego zdarzenia. Oprócz gałęzi wymaga chronionego punktu

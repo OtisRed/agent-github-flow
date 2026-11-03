@@ -5,6 +5,25 @@ import { parseFlowComment } from './flow.mjs';
 const blocked=reason=>({kind:'blocked',reason});
 const id=value=>typeof value==='string'&&value.length>0&&value.length<=256&&value.trim()===value;
 
+// Read-only context validation, also usable before a first checkpoint exists.
+export function verifyV3ProjectContext(input={}){
+  if(!input||typeof input!=='object'||Array.isArray(input)||encodeProjectRegistrationV3(input.registration).kind!=='encoded-registration'
+      ||!id(input.issueId))return blocked('invalid-input');
+  const {registration,repository,project,issueId}=input;
+  if(repository?.node_id!==registration.repositoryId||repository.full_name!==registration.repository
+      ||repository.private!==registration.expectedPrivate||repository.fork!==false
+      ||project?.kind!=='branch-project-observed'||project.repository!==registration.repository||project.issueNodeId!==issueId
+      ||project.projectId!==registration.projectId||project.statusFieldId!==registration.statusFieldId||project.statusFieldName!==registration.statusFieldName
+      ||!Array.isArray(project.statusOptions)||project.statusOptions.length!==registration.statusOptions.length)return blocked('observation-mismatch');
+  const names=new Set(),ids=new Set();
+  for(const option of project.statusOptions){
+    if(!option||!id(option.name)||!id(option.id)||names.has(option.name)||ids.has(option.id))return blocked('invalid-status-options');
+    names.add(option.name);ids.add(option.id);
+    if(!registration.statusOptions.some(expected=>expected.name===option.name&&expected.id===option.id))return blocked('status-option-mismatch');
+  }
+  return {kind:'v3-project-context-verified'};
+}
+
 // Pure verification of authenticated observations, never a write permit.
 // Callers must freshly read the repository, exact Project/options and the
 // saved comments (only IDs referenced by the record), prove completeness/latest selection and protect the config,
@@ -15,17 +34,8 @@ export function verifyV3Commitments(input={}){
       ||!Array.isArray(input.comments)||input.comments.length>100)return blocked('invalid-input');
   const {registration,record,keyring,comments,repository,project}=input;
   if(record.repositoryId!==registration.repositoryId||record.cutoverAt!==registration.checkpoint.cutoverAt
-      ||repository?.node_id!==registration.repositoryId||repository.full_name!==registration.repository
-      ||repository.private!==registration.expectedPrivate||repository.fork!==false
-      ||project?.kind!=='branch-project-observed'||project.repository!==registration.repository||project.issueNodeId!==record.issueId
-      ||project.projectId!==registration.projectId||project.statusFieldId!==registration.statusFieldId||project.statusFieldName!==registration.statusFieldName
-      ||!Array.isArray(project.statusOptions)||project.statusOptions.length!==registration.statusOptions.length)return blocked('observation-mismatch');
-  const names=new Set(),ids=new Set();
-  for(const option of project.statusOptions){
-    if(!option||!id(option.name)||!id(option.id)||names.has(option.name)||ids.has(option.id))return blocked('invalid-status-options');
-    names.add(option.name);ids.add(option.id);
-    if(!registration.statusOptions.some(expected=>expected.name===option.name&&expected.id===option.id))return blocked('status-option-mismatch');
-  }
+      ||verifyV3ProjectContext({registration,repository,project,issueId:record.issueId}).kind!=='v3-project-context-verified')
+    return blocked('observation-mismatch');
   const byId=new Map();
   for(const comment of comments){
     if(!comment||typeof comment.id!=='string'||!/^[1-9][0-9]{0,19}$/.test(comment.id)||byId.has(comment.id)

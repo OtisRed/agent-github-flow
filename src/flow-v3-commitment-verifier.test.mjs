@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyV3Commitments } from './flow-v3-commitment-verifier.mjs';
+import { verifyV3Commitments, verifyV3ProjectContext } from './flow-v3-commitment-verifier.mjs';
 import { createCheckpointKeyring } from './flow-checkpoint-keyring.mjs';
 import { CHECKPOINT_BRANCH_REF } from './flow-checkpoint-registration.mjs';
 import { FLOW_STATUSES } from './flow.mjs';
@@ -25,6 +25,10 @@ function fixture(){
 test('verifies historical key commitments and privately matches every live Project option',()=>{
   const result=verifyV3Commitments(fixture());assert.equal(result.kind,'v3-commitments-verified');
   assert.ok(!JSON.stringify(result).includes('private-option'));assert.ok(!JSON.stringify(result).includes('Praca'));
+});
+test('verifies repository visibility and options even before the first checkpoint exists',()=>{
+  const value=fixture();assert.equal(verifyV3ProjectContext({...value,issueId:'issue-id'}).kind,'v3-project-context-verified');
+  value.repository.private=true;assert.equal(verifyV3ProjectContext({...value,issueId:'issue-id'}).kind,'blocked');
 });
 test('fails closed on changed or deleted comments, wrong author, missing old key and config change',()=>{
   for(const change of [v=>{v.comments=[];},v=>{v.comments[0].body+='!';},v=>{v.comments[0].authorId='other';},
