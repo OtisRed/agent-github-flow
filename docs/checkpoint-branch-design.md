@@ -135,11 +135,17 @@ collector, rejestracja, ochrona refów oraz serializacja pozostają konieczne.
 przekazania: publikację `pending`, ewentualną zmianę statusu i zatwierdzenie.
 Ta sama niezależna konfiguracja wiąże we wszystkich krokach repo, Project,
 pole statusu, issue, autorów, reguły, komentarz i checkpoint. Istniejący poprawny
-`pending` można rozpoznać po ponownym odczycie, a niepewnego zapisu nie ponawia
-się w ciemno. Przed każdym przebiegiem wymagany jest zaufany dowód, że żadne
-wcześniejsze niepewne żądanie dla tego wykonawcy nie jest w locie. Kod nie
-implementuje jeszcze tego dowodu ani serializacji i nie jest podłączony do
-Actions; test całego cyklu używa fikcyjnych transportów.
+`pending` można rozpoznać po ponownym odczycie. Po niepewnej odpowiedzi
+właściciel wybrał automatyczne wznowienie po odczekaniu i ponownym odczycie;
+skrajnie opóźnione stare żądanie może mimo to nadpisać późniejszy status.
+Zaufana bramka ma egzekwować kwarantannę, ale nie może twierdzić, że żadne
+żądanie nie jest w locie. Wymaga trwałego stanu próby i czasu dla właściwego
+issue oraz wykonawcy, zaufanego zegara i serializacji odczytu/zapisu; brak
+wiarygodnego stanu inicjalnego lub próby blokuje wznowienie. Nie tworzymy nowego
+identyfikatora operacji. Długość oczekiwania oraz sposób zapisu i inicjalizacji
+pozostają do określenia. Kod nie implementuje jeszcze kwarantanny ani
+serializacji i nie jest podłączony do Actions; test całego cyklu używa
+fikcyjnych transportów.
 
 `src/flow-project-item-resolver.mjs` wyszukuje aktywną kartę issue przez pełną
 paginację osobistego Projectu, odrzuca brak, duplikaty lub niespójny drugi

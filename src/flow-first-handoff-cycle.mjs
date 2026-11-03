@@ -11,11 +11,11 @@ const stopped = phase => ({ kind:'cycle-stopped', phase, retryAllowed:false });
 // preparation/publication/observation and Project transport. Each dependency
 // must be bound to that policy and subject; single-writer discipline is also
 // required. The concrete steps below receive the same cloned policy. Before
-// any publication, an independently trusted confirmStart must prove no prior
-// uncertain request remains in flight for this subject and writer.
-// Never continue or retry automatically after an uncertain result. A precise
-// initial-not-applicable result may be a previously completed pending write;
-// after confirmStart, only a fresh, complete pending plan may advance it.
+// publication, an independently trusted confirmStart must enforce the chosen
+// waiting period and policy for prior uncertain attempts. GitHub does not
+// guarantee that waiting ends every remote request: a very late old status
+// mutation could overwrite later work. Do not retry within the same cycle.
+// Only a fresh, complete pending plan may advance an existing pending write.
 // There is no production implementation of confirmStart in this module.
 export async function runFirstHandoffCycle({ policy, collect, verifyProtection, prepare, publish, observe, transport, confirmStart } = {}) {
   if (!isHandoffSubject(policy)||![collect,verifyProtection,prepare,publish,observe,confirmStart].every(value=>typeof value==='function')
@@ -24,7 +24,7 @@ export async function runFirstHandoffCycle({ policy, collect, verifyProtection, 
   let result;
   const subject=handoffSubject(policy);
   try { result=await confirmStart(structuredClone(subject)); } catch { return stopped('start'); }
-  if (result?.kind!=='execution-safe'||!isDeepStrictEqual(result.subject,subject)) return stopped('start');
+  if (result?.kind!=='quarantine-satisfied'||!isDeepStrictEqual(result.subject,subject)) return stopped('start');
   try { result=await runInitialPublicationStep({policy,collect,verifyProtection,prepare,publish,observe}); } catch { return stopped('initial'); }
   if (result?.kind!=='initial-pending-observed'
       && !(result?.kind==='blocked' && result.reason==='initial-step-not-applicable')) return stopped('initial');

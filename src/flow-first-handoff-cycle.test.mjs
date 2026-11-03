@@ -34,7 +34,7 @@ function fixture({targetAlready=false}={}){
   const transport={projectId:'project',statusFieldId:'status',setStatus:async()=>{writes.push('project');
     if(controls.statusResult==='status-write-acknowledged'){state.project.currentStatus='agent-ready';state.project.statusOptionId='ready';}
     return {kind:controls.statusResult};}};
-  const confirmStart=async subject=>({kind:'execution-safe',subject});
+  const confirmStart=async subject=>({kind:'quarantine-satisfied',subject});
   return {state,policy,protection,controls,writes,input:{policy,collect,verifyProtection,prepare,publish,observe,transport,confirmStart}};
 }
 test('runs the real guarded steps in order with one shared subject and fake transports',async()=>{
@@ -55,7 +55,7 @@ test('resumes only a freshly verified pending record after a stopped status step
   const f=fixture();f.controls.statusResult='status-write-uncertain';assert.equal((await runFirstHandoffCycle(f.input)).phase,'status');
   f.controls.statusResult='status-write-acknowledged';f.input.confirmStart=async()=>({kind:'unresolved'});
   assert.equal((await runFirstHandoffCycle(f.input)).phase,'start');assert.deepEqual(f.writes,['git','project']);
-  f.input.confirmStart=async subject=>({kind:'execution-safe',subject});
+  f.input.confirmStart=async subject=>({kind:'quarantine-satisfied',subject});
   assert.equal((await runFirstHandoffCycle(f.input)).kind,'first-handoff-observed');
   assert.deepEqual(f.writes,['git','project','project','git']);
 });
@@ -69,9 +69,9 @@ test('a different subject appearing after pending publication cannot reach statu
   f.input.collect=async()=>{const snapshot=await collect();if(f.controls.reads===5)snapshot.checkpoint.selection.issueId='other';return snapshot;};
   assert.equal((await runFirstHandoffCycle(f.input)).phase,'pending-read');assert.deepEqual(f.writes,['git']);
 });
-test('does not start or repeat publication without proof earlier requests have settled',async()=>{
+test('does not start or repeat publication without the configured waiting gate',async()=>{
   const f=fixture();delete f.input.confirmStart;
   assert.equal((await runFirstHandoffCycle(f.input)).phase,'configuration');assert.deepEqual(f.writes,[]);
-  f.input.confirmStart=async subject=>({kind:'execution-safe',subject:{...subject,issueId:'other'}});
+  f.input.confirmStart=async subject=>({kind:'quarantine-satisfied',subject:{...subject,issueId:'other'}});
   assert.equal((await runFirstHandoffCycle(f.input)).phase,'start');assert.deepEqual(f.writes,[]);
 });
