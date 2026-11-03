@@ -69,3 +69,17 @@ test('a transport that can see bypasses can run the complete audit, blocking alt
   update.bypass_actors.push({actor_type:'User',actor_id:33,bypass_mode:'always'});
   assert.deepEqual(await readCheckpointProtectionAudit(input),{kind:'blocked',reason:'unexpected-bypass'});
 });
+
+test('bounds the combined audit data across pages and repeated observations',async()=>{
+  let calls=0;const padding='x'.repeat(1024*1024);
+  const request=async raw=>{calls++;const url=new URL(raw);let data,link=null;
+    if(url.pathname.endsWith('/rulesets/1'))data={id:1};
+    else if(url.pathname.endsWith('/rulesets/2'))data={id:2};
+    else if(url.pathname.includes('/rules/branches/')){const page=Number(url.searchParams.get('page'));
+      data=[{padding}];link=`<https://api.github.com${url.pathname}?per_page=100&page=${page+1}>; rel="next"`;}
+    else data={node_id:'id',full_name:'owner/repo',private:true,fork:false,default_branch:'main'};
+    return {status:200,json:async()=>data,headers:{get:()=>link}};};
+  const result=await readCheckpointProtectionAudit({owner:'owner',repo:'repo',repositoryId:'id',appId:12,updateRulesetId:1,
+    historyRulesetId:2,expectedPrivate:true,request});
+  assert.deepEqual(result,{kind:'blocked',reason:'protection-read-unavailable'});assert.ok(calls<20);
+});

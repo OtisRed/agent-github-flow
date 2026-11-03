@@ -193,6 +193,12 @@ test('v3 completes an unchanged status or an already applied reservation without
   result=await runFirstV3Cycle(f.input);assert.equal(result.kind,'first-v3-handoff-observed');
   assert.equal(f.state.publishes,1);assert.equal(f.state.statusWrites,0);assert.equal(f.state.waited,0);
 });
+test('v3 cycle snapshots mutable configuration before checking its protected commitment',async()=>{
+  const f=cycleFixture(),changing=structuredClone(f.input.projectRegistration);let reads=0;
+  Object.defineProperty(changing,'expectedPrivate',{enumerable:true,get:()=>++reads===1?false:true});
+  f.input.projectRegistration=changing;
+  assert.equal((await runFirstV3Cycle(f.input)).kind,'first-v3-handoff-observed');assert.equal(reads,1);
+});
 
 test('rejects foreign card or repository, an existing record, closed issues and done', () => {
   let v = fixture(); v.project.issueNodeId = 'other'; assert.equal(planInitialBranchHandoff(v).reason, 'snapshot-mismatch');

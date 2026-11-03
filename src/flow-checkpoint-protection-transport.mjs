@@ -1,4 +1,5 @@
 import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
+import { matchesV3ProtectedContext } from './flow-v3-protected-context.mjs';
 
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const safeToken = value => typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\s\x00-\x1f\x7f]/.test(value);
@@ -8,11 +9,29 @@ const safeToken = value => typeof value === 'string' && value.length > 0 && valu
 // not owner-audit evidence or permission to write. No API-provided URL is used.
 export function createCheckpointProtectionTransport({ owner, repo, repositoryId, appToken, expectedSlug, actualSlug,
   updateRulesetId, historyRulesetId, request = fetch } = {}) {
+  return createTransport({owner,repo,repositoryId,appToken,expectedSlug,actualSlug,updateRulesetId,historyRulesetId,request,expectedPrivate:true,requireNotFork:false});
+}
+
+// v3 binds visibility and exact rulesets to independently protected full
+// configuration. This remains read-only and is not itself an owner audit.
+export function createV3CheckpointProtectionTransport({policy,projectRegistration,registrationCommitment,keyring,
+  appToken,expectedSlug,actualSlug,request=fetch}={}){
+  try{policy=structuredClone(policy);projectRegistration=structuredClone(projectRegistration);registrationCommitment=structuredClone(registrationCommitment);}
+  catch{throw Error('invalid-v3-protection-context');}
+  if(!matchesV3ProtectedContext({policy,projectRegistration,registrationCommitment,keyring}))throw Error('invalid-v3-protection-context');
+  const parts=policy.repository.split('/');if(parts.length!==2)throw Error('invalid-v3-protection-context');
+  return createTransport({owner:parts[0],repo:parts[1],repositoryId:policy.repositoryId,appToken,expectedSlug,actualSlug,
+    updateRulesetId:policy.updateRulesetId,historyRulesetId:policy.historyRulesetId,request,
+    expectedPrivate:projectRegistration.expectedPrivate,requireNotFork:true});
+}
+
+function createTransport({ owner, repo, repositoryId, appToken, expectedSlug, actualSlug,
+  updateRulesetId, historyRulesetId, request, expectedPrivate, requireNotFork }) {
   if (!/^[A-Za-z0-9-]{1,39}$/.test(owner ?? '') || !/^[A-Za-z0-9_.-]{1,100}$/.test(repo ?? '') || ['.','..'].includes(repo)
       || typeof repositoryId !== 'string' || !repositoryId || repositoryId.length > 256 || repositoryId.trim() !== repositoryId
       || !safeToken(appToken) || !/^[a-z0-9-]{1,100}$/.test(expectedSlug ?? '') || actualSlug !== expectedSlug
       || !positive(updateRulesetId) || !positive(historyRulesetId) || updateRulesetId === historyRulesetId
-      || typeof request !== 'function') throw Error('invalid-protection-transport');
+      || typeof request !== 'function'||typeof expectedPrivate!=='boolean') throw Error('invalid-protection-transport');
   const base = `/repos/${owner}/${repo}`;
   const refs = [CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF].map(ref => `${base}/rules/branches/${encodeURIComponent(ref.slice(11))}`);
   const plain = [base, `${base}/rulesets/${updateRulesetId}`, `${base}/rulesets/${historyRulesetId}`];
@@ -37,7 +56,8 @@ export function createCheckpointProtectionTransport({ owner, repo, repositoryId,
     const installation = await get('https://api.github.com/installation/repositories');
     const items = installation.data?.repositories;
     if (installation.link || installation.data?.total_count !== 1 || !Array.isArray(items) || items.length !== 1
-        || items[0]?.node_id !== repositoryId || items[0]?.full_name !== `${owner}/${repo}` || items[0]?.private !== true) throw Error('scope-mismatch');
+        || items[0]?.node_id !== repositoryId || items[0]?.full_name !== `${owner}/${repo}` || items[0]?.private !== expectedPrivate
+        || (requireNotFork&&items[0]?.fork!==false)) throw Error('scope-mismatch');
     const result = await get(url.toString());
     return { status:200, json:async () => result.data, headers:{ get:name => name.toLowerCase() === 'link' ? result.link : null } };
   };

@@ -14,10 +14,11 @@ const protectedBy=(value,p)=>value?.kind==='checkpoint-protection-observed'&&val
 // GitHub Project status mutation is not conditional; a late old request can
 // still overwrite a later status. Never log inputs, plans or credentials.
 export function createV3ProjectStatusStep({policy,projectRegistration,registrationCommitment,keyring,collectContext,verifyProtection,transport}={}){
+  try{policy=structuredClone(policy);projectRegistration=structuredClone(projectRegistration);registrationCommitment=structuredClone(registrationCommitment);}
+  catch{throw Error('invalid-v3-status-step');}
   if(!matchesV3ProtectedContext({policy,projectRegistration,registrationCommitment,keyring})
       ||typeof collectContext!=='function'||typeof verifyProtection!=='function'||typeof transport?.setStatus!=='function')
     throw Error('invalid-v3-status-step');
-  policy=structuredClone(policy);projectRegistration=structuredClone(projectRegistration);
   const registration=projectRegistration.checkpoint;
   const inspect=context=>inspectV3ReservedHandoff({...context.observation,repository:context.repository,projectRegistration,registration,keyring});
   const binding=context=>v3HandoffBinding(policy,context.observation.checkpoint.selectedRecord,context.observation.checkpoint.headOid);

@@ -17,9 +17,11 @@ const protectedBy=(value,p)=>value?.kind==='checkpoint-protection-observed'&&val
 // here. No secret, private context or plan may be logged.
 export function createV3PublicationStep({policy,projectRegistration,registrationCommitment,keyring,collectContext,
   verifyProtection,prepare,publish,observe}={}){
+  try{policy=structuredClone(policy);projectRegistration=structuredClone(projectRegistration);registrationCommitment=structuredClone(registrationCommitment);}
+  catch{throw Error('invalid-v3-publication-step');}
   if(!matchesV3ProtectedContext({policy,projectRegistration,registrationCommitment,keyring})
       ||![collectContext,verifyProtection,prepare,publish,observe].every(fn=>typeof fn==='function'))throw Error('invalid-v3-publication-step');
-  policy=structuredClone(policy);projectRegistration=structuredClone(projectRegistration);const registration=projectRegistration.checkpoint;
+  const registration=projectRegistration.checkpoint;
   const valid=context=>matchesHandoffSubject(context?.observation,policy)&&context.observation.expectedProjectId===policy.projectId
     &&context.observation.checkpoint?.schemaVersion===3&&context.observation.checkpoint.cutoverAt===registration.cutoverAt;
   const bind=context=>v3HandoffBinding(policy,context.observation.checkpoint.selectedRecord,context.observation.checkpoint.headOid);

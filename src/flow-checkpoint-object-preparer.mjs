@@ -25,6 +25,10 @@ export function createCheckpointObjectPreparer({ owner, repo, snapshot, after, r
 // is not a permission to move refs. No inputs or results may be logged.
 export function createV3CheckpointObjectPreparer({owner,repo,snapshot,after,registration,v3,appToken,request=fetch}={}){
   if(snapshot?.schemaVersion!==3||!v3||typeof v3!=='object')throw Error('invalid-v3-object-context');
+  try{
+    const {keyring,...data}=v3;
+    v3={...structuredClone(data),keyring};snapshot=structuredClone(snapshot);after=structuredClone(after);registration=structuredClone(registration);
+  }catch{throw Error('invalid-v3-object-context');}
   const checked=verifyV3Preparation({...v3,checkpoint:snapshot,after,registration});
   if(checked.kind!=='v3-preparation-consistent')throw Error('invalid-v3-object-plan');
   return prepareFactory({owner,repo,snapshot,plan:checked.commit,appToken,request,

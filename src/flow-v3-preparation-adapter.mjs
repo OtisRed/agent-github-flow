@@ -8,9 +8,10 @@ import { createV3CheckpointObjectPreparer } from './flow-checkpoint-object-prepa
 // collectContext must be authenticated and protected; a caller must independently prove bootstrap, protection and one
 // writer. Do not log observations, callback results or credentials.
 export function createV3PreparationAdapter({policy,projectRegistration,registrationCommitment,keyring,collectContext,appToken,request=fetch}={}){
+  try{policy=structuredClone(policy);projectRegistration=structuredClone(projectRegistration);registrationCommitment=structuredClone(registrationCommitment);}
+  catch{throw Error('invalid-v3-adapter');}
   if(!matchesV3ProtectedContext({policy,projectRegistration,registrationCommitment,keyring})
       ||typeof collectContext!=='function'||typeof request!=='function')throw Error('invalid-v3-adapter');
-  policy=structuredClone(policy);projectRegistration=structuredClone(projectRegistration);
   const registration=projectRegistration.checkpoint,parts=policy.repository.split('/');
   if(parts.length!==2)throw Error('invalid-v3-adapter');
   return async({snapshot,after,registration:observed}={})=>{

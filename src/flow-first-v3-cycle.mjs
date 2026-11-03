@@ -13,10 +13,12 @@ const stopped=phase=>({kind:'v3-cycle-stopped',phase,retryAllowed:false});
 // does not prove a previously timed-out Project request has stopped.
 export async function runFirstV3Cycle({policy,projectRegistration,registrationCommitment,keyring,collectContext,
   verifyBootstrap,makePublicationStep,makeStatusStep,wait,monotonic,timestamp}={}){
+  try{policy=structuredClone(policy);projectRegistration=structuredClone(projectRegistration);registrationCommitment=structuredClone(registrationCommitment);}
+  catch{return stopped('configuration');}
   if(!matchesV3ProtectedContext({policy,projectRegistration,registrationCommitment,keyring})
       ||![collectContext,verifyBootstrap,makePublicationStep,makeStatusStep,wait,monotonic,timestamp].every(fn=>typeof fn==='function'))
     return stopped('configuration');
-  policy=structuredClone(policy);projectRegistration=structuredClone(projectRegistration);const registration=projectRegistration.checkpoint;
+  const registration=projectRegistration.checkpoint;
   const valid=context=>matchesHandoffSubject(context?.observation,policy)&&context.observation.expectedProjectId===policy.projectId
     &&context.observation.checkpoint?.schemaVersion===3&&context.observation.checkpoint.cutoverAt===registration.cutoverAt;
   const bind=context=>v3HandoffBinding(policy,context.observation.checkpoint.selectedRecord,context.observation.checkpoint.headOid);

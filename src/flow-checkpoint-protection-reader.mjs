@@ -4,6 +4,7 @@ import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-
 
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const blocked = reason => ({ kind: 'blocked', reason });
+const MAX_AUDIT_BYTES = 8 * 1024 * 1024;
 
 // Link URLs are never followed. Only a same-endpoint page number is extracted
 // and the next URL is reconstructed locally. Unexpected pagination fails shut.
@@ -42,10 +43,13 @@ export async function readCheckpointProtectionAudit(input) {
       || typeof input.request !== 'function') return blocked('invalid-input');
   const { owner, repo, repositoryId, appId, updateRulesetId, historyRulesetId, expectedPrivate, request } = input;
   const basePath = `/repos/${owner}/${repo}`; const base = `https://api.github.com${basePath}`;
+  let auditBytes=0;
   async function get(url) {
     const response = await request(url);
     if (!response || response.status !== 200 || typeof response.json !== 'function' || typeof response.headers?.get !== 'function') throw Error('read-failed');
-    return { data: structuredClone(await response.json()), link: response.headers.get('link') };
+    const data=structuredClone(await response.json()),encoded=JSON.stringify(data);
+    if(typeof encoded!=='string'||(auditBytes+=Buffer.byteLength(encoded,'utf8'))>MAX_AUDIT_BYTES)throw Error('audit-size-limit');
+    return { data, link: response.headers.get('link') };
   }
   async function readRules(ref) {
     const branch = ref.slice('refs/heads/'.length);

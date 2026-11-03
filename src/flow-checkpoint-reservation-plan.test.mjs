@@ -8,6 +8,7 @@ import { FLOW_STATUSES } from './flow.mjs';
 import { verifyV3Preparation } from './flow-v3-preparation-guard.mjs';
 import { createV3ProjectStatusStep } from './flow-v3-project-status-step.mjs';
 import { v3HandoffBinding } from './flow-v3-handoff-binding.mjs';
+import { createV3CheckpointProtectionTransport } from './flow-checkpoint-protection-transport.mjs';
 
 const body = '[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
 const digest = createHash('sha256').update(body).digest('hex');
@@ -166,4 +167,30 @@ test('v3 status step blocks changed handoff or protection before write and does 
   f=statusFixture();f.state.protected=false;assert.equal((await f.create()({expectedBinding:f.binding})).kind,'blocked');assert.equal(f.state.writes,0);
   f=statusFixture();f.state.fail=true;const run=f.create();assert.equal((await run({expectedBinding:f.binding})).kind,'status-write-uncertain');
   assert.equal(f.state.writes,1);assert.equal((await run({expectedBinding:f.binding})).kind,'blocked');assert.equal(f.state.writes,1);
+});
+test('v3 protection transport reads only the exact registered public or private repository',async()=>{
+  for(const expectedPrivate of [false,true]){
+    const f=fixtureV3();f.projectRegistration.expectedPrivate=expectedPrivate;
+    const policy={repositoryId:'repo-id',repository:'owner/project',projectId:'project',statusFieldId:'status',issueId:'issue',issueNumber:1,
+      appId:12,updateRulesetId:1,historyRulesetId:2,trustedAuthorIds:['user']};
+    const state={private:expectedPrivate,fork:false,calls:0};
+    const request=async url=>{state.calls++;const data=url.endsWith('/installation/repositories')
+      ?{total_count:1,repositories:[{node_id:'repo-id',full_name:'owner/project',private:state.private,fork:state.fork}]}:{id:1};
+      return {status:200,text:async()=>JSON.stringify(data),headers:{get:()=>null}};};
+    const registrationCommitment={keyId:1,mac:f.keyring.current().config(f.projectRegistration)};
+    const args={policy,projectRegistration:f.projectRegistration,registrationCommitment,keyring:f.keyring,appToken:'synthetic',
+      expectedSlug:'agent-flow',actualSlug:'agent-flow',request};
+    const transport=createV3CheckpointProtectionTransport(args);
+    assert.deepEqual(await (await transport('https://api.github.com/repos/owner/project/rulesets/1')).json(),{id:1});
+    state.private=!expectedPrivate;await assert.rejects(transport('https://api.github.com/repos/owner/project/rulesets/1'));
+    state.private=expectedPrivate;state.fork=true;await assert.rejects(transport('https://api.github.com/repos/owner/project/rulesets/1'));
+    assert.throws(()=>createV3CheckpointProtectionTransport({...args,registrationCommitment:{...registrationCommitment,mac:'0'.repeat(64)}}));
+    if(!expectedPrivate){
+      const changing=structuredClone(f.projectRegistration);let reads=0;
+      Object.defineProperty(changing,'expectedPrivate',{enumerable:true,get:()=>++reads===1?false:true});
+      const stable=createV3CheckpointProtectionTransport({...args,projectRegistration:changing});
+      state.fork=false;state.private=false;assert.deepEqual(await (await stable('https://api.github.com/repos/owner/project/rulesets/1')).json(),{id:1});
+      assert.equal(reads,1);
+    }
+  }
 });
