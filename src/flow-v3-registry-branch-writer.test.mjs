@@ -12,6 +12,8 @@ import { createV3RegistryGitReader } from './flow-v3-registry-git-reader.mjs';
 import { createV3RegistryWriteGuard } from './flow-v3-registry-write-guard.mjs';
 import { createV3RegistryProtectionTransport } from './flow-checkpoint-protection-transport.mjs';
 import { readV3RegistryProtectionAudit } from './flow-checkpoint-protection-reader.mjs';
+import { createV3RegistryCompareTransport } from './flow-v3-registry-compare-transport.mjs';
+import { createV3RegistryLineageGuard } from './flow-v3-registry-lineage.mjs';
 
 const oid=c=>c.repeat(40),reply=(value,status=200)=>({status,text:async()=>JSON.stringify(value),headers:{get:()=>null}});
 const blob=text=>{const bytes=Buffer.from(text);return {text,bytes,sha:createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')};};
@@ -36,6 +38,8 @@ function fixture(role){
     if(path.endsWith('/rulesets/2'))return reply({...common,id:2,rules:[{type:'deletion'},{type:'non_fast_forward'}],bypass_actors:[]});
     if(path.includes('/rules/branches/'))return reply(['update','deletion','non_fast_forward'].map((type,index)=>({type,ruleset_id:index?2:1,
       ruleset_source_type:'Repository',ruleset_source:repository})));
+    if(path.includes('/compare/')){const [base,head]=path.split('/').at(-1).split('...');return reply({status:'ahead',ahead_by:1,behind_by:0,
+      base_commit:{sha:base},merge_base_commit:{sha:base},commits:[{sha:head}]});}
     if(path.includes('/git/ref/'))return reply({ref,object:{type:'commit',sha:state.head}});
     if(path.includes('/git/commits/')&&options.method==='GET'){const sha=path.split('/').at(-1);return reply({sha,tree:{sha:state.trees[sha]},parents:sha===oid('d')?[{sha:oid('a')}]:[]});}
     if(path.includes('/git/trees/')&&options.method==='GET'){const sha=path.split('/').at(-1),files=state.files[sha];
@@ -130,12 +134,13 @@ test('branch writer requires a fresh real reader and ruleset audit before and af
   const [owner,repo]=f.repository.split('/');
   const readProtection=()=>readV3RegistryProtectionAudit({role,owner,repo,repositoryId,appId,updateRulesetId:1,historyRulesetId:2,
     expectedPrivate:true,request:transport});
-  const genesisOid=oid('e'),verifyLineage=async({expectedHeadOid})=>({kind:'v3-registry-lineage-observed',role,repositoryId,
-    ref:V3_REGISTRY_REF,genesisOid,headOid:expectedHeadOid,rollbackProtected:false});
+  const genesisOid=oid('e'),compare=createV3RegistryCompareTransport({role,repository:f.repository,repositoryId,appToken:'synthetic-app',request:f.request});
+  const verifyLineage=createV3RegistryLineageGuard({role,repositoryId,registryGenesisOid:genesisOid,readBranch,compare});
   const verifyProtection=createV3RegistryWriteGuard({role,repositoryId,appId,registryGenesisOid:genesisOid,updateRulesetId:1,historyRulesetId:2,readBranch,readProtection,verifyLineage});
   const writer=createV3RegistryBranchWriter({role,repository:f.repository,repositoryId,appId,appToken:'synthetic-app',
     keyring:f.keyring,verifyProtection,request:f.request});
   assert.equal((await writer.write({expectedHead:oid('a'),content:f.newContent,anchor:f.newAnchor})).kind,'registry-private-advanced');
   assert.equal(f.state.calls.filter(call=>call.url==='https://api.github.com/graphql').length,1);
   assert.ok(f.state.calls.filter(call=>call.url.includes('/rulesets/1')).length>=6);
+  assert.ok(f.state.calls.filter(call=>call.url.includes(`/compare/${genesisOid}...`)).length>=3);
 });
