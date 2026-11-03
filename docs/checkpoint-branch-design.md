@@ -237,6 +237,10 @@ blokuje. Brak obu refów po niepewnej odpowiedzi również nie daje zgody na
 ponowienie. Rejestracji nie wolno aktywować bez tych kontroli. Integracja musi
 dodatkowo przypiąć token do tej samej GitHub App, której ID dopuszczono do
 omijania reguły; sam dostęp tokenu do jednego repo nie dowodzi tożsamości App.
+Odłączony cykl bootstrapu składa te kontrole i zwraca jedynie kandydata
+rejestracji. Zakłada zaufane potwierdzenie pierwszej rejestracji, tożsamości
+App i ochrony, a także serializację; samo utrwalenie i aktywacja rejestracji
+nie są jeszcze zaimplementowane. Testy cyklu używają fikcyjnych transportów.
 
 ### Serializacja centralnego runnera
 
