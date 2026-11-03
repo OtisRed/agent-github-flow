@@ -306,9 +306,16 @@ lub nieprawidłowy komentarz nie może zostać pominięty przez naprawę starego
 
 Git i Project nie tworzą wspólnej transakcji. Nawet po ponownym odczycie
 zewnętrzny writer może zmienić status przed mutacją lub po niej. Reguła
-jednego automatycznego właściciela nie blokuje ręcznej edycji; przed
-wdrożeniem trzeba jawnie opisać i sprawdzić tę granicę. Wykryty konflikt
-zatrzymuje przetwarzanie, ale odczyty nie dowodzą braku niewykrytego wyścigu.
+jednego automatycznego właściciela nie blokuje ręcznej edycji. Decyzja
+właściciela: na tablicach objętych flow statusy zmienia automat według
+przekazań FLOW; ręczne poprawki wykonuje się dopiero po wstrzymaniu automatu
+dla danej tablicy i zakończeniu aktywnych przebiegów. Przed wznowieniem trzeba
+rozliczyć korektę z aktualnym przekazaniem i checkpointem, aby planowana nocna naprawa
+nie cofnęła jej po cichu. Mechanizm wstrzymania, drain i bezpiecznego
+wznowienia pozostaje do wykonania i sprawdzenia. Ta zasada nie jest techniczną
+blokadą innych writerów: nieuprawniona lub przypadkowa zmiana w oknie zapisu
+nadal może zostać nadpisana. Wykryty konflikt zatrzymuje przetwarzanie, ale
+odczyty nie dowodzą braku niewykrytego wyścigu.
 
 ## Ponowne otwarcie
 
