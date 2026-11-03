@@ -109,6 +109,18 @@ lecz same nie uwierzytelniają dostarczonych danych, listy autorów, konfiguracj
 ani ochrony gałęzi. Caller musi ponowić odczyty i porównać plan przed mutacją.
 Plannery nie wykonują mutacji; testy używają fikcyjnych obserwacji.
 
+`src/flow-project-status-step.mjs` przygotowuje pojedynczy krok zmiany opcji
+Projectu dla pierwszego `pending`: dwukrotnie porównuje dane, sprawdza
+niezależnie podaną konfigurację, wykonuje jedną próbę przez ograniczony
+transport i ponownie odczytuje stan. `status-target-observed` oznacza tylko,
+że po próbie zaobserwowano status docelowy, nie kto go ustawił ani że ręczna
+zmiana nie została nadpisana między odczytem a zapisem. Nie ma automatycznego
+retry. `src/flow-project-status-transport.mjs` ogranicza token PAT do jednej
+mutacji i przypiętej tablicy oraz pola; token pozostaje w closure, a odpowiedzi
+błędów nie są ujawniane. Kod nie jest podłączony do workflow ani prawdziwych
+poświadczeń; testy używają fikcyjnych danych i transportu. Uwierzytelniony
+collector, rejestracja, ochrona refów oraz serializacja pozostają konieczne.
+
 ## Rejestracja i utrata danych
 
 Rejestracja projektu jest odrębnym, jawnym krokiem administracyjnym, nie
