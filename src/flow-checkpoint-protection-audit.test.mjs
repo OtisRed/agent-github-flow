@@ -8,7 +8,7 @@ function fixture() {
   const common = { target: 'branch', source_type: 'Repository', source: 'owner/repo', enforcement: 'active',
     conditions: { ref_name: { include: [CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF], exclude: [] } } };
   return { repositoryId: 'repo-id', repository: 'owner/repo', appId: 12, expectedPrivate: true,
-    repositoryData: { node_id: 'repo-id', full_name: 'owner/repo', fork: false, private: true },
+    repositoryData: { node_id: 'repo-id', full_name: 'owner/repo', fork: false, private: true, default_branch: 'main' },
     updateRuleset: { ...common, id: 1, rules: [{ type: 'update', parameters: { update_allows_fetch_and_merge: false } }],
       bypass_actors: [{ actor_type: 'Integration', actor_id: 12, bypass_mode: 'always' }] },
     historyRuleset: { ...common, id: 2, rules: [{ type: 'deletion' }, { type: 'non_fast_forward' }], bypass_actors: [] },
@@ -33,6 +33,8 @@ test('requires both exact refs, all rules and active repository-owned rulesets',
   v = fixture(); v.updateRuleset.enforcement = 'disabled'; assert.equal(auditCheckpointProtection(v).reason, 'ruleset-details-unavailable');
   v = fixture(); v.historyRuleset.source = 'owner/other'; assert.equal(auditCheckpointProtection(v).reason, 'ruleset-details-unavailable');
   v = fixture(); v.repositoryData.node_id = 'other'; assert.equal(auditCheckpointProtection(v).reason, 'invalid-input');
+  v = fixture(); v.repositoryData.default_branch = 'agent-github-flow/checkpoints';
+  assert.equal(auditCheckpointProtection(v).reason, 'invalid-input');
 });
 test('rejects bypass through fetch-and-merge and rules with wrong provenance', () => {
   let v = fixture(); v.updateRuleset.rules[0].parameters.update_allows_fetch_and_merge = true;

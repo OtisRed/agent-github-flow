@@ -27,6 +27,8 @@ export function auditCheckpointProtection(input) {
       || typeof input.expectedPrivate !== 'boolean' || input.repositoryData?.private !== input.expectedPrivate
       || input.repositoryData?.fork !== false
       || input.repositoryData?.node_id !== input.repositoryId || input.repositoryData?.full_name !== input.repository
+      || !nonempty(input.repositoryData?.default_branch)
+      || [CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF].includes(`refs/heads/${input.repositoryData.default_branch}`)
       || !Array.isArray(input.effective) || input.effective.length !== 2) return blocked('invalid-input');
   const { updateRuleset, historyRuleset, appId, repository } = input;
   if (!validRuleSet(updateRuleset, repository) || !validRuleSet(historyRuleset, repository)
@@ -51,7 +53,12 @@ export function auditCheckpointProtection(input) {
   if (new Set(input.effective.map(value => value?.ref)).size !== names.length) return blocked('invalid-ref-evidence');
   for (const name of names) {
     const evidence = input.effective.find(value => value?.ref === name);
-    if (!evidence || !hasRule(evidence.rules, 'update', updateRuleset.id, repository)
+    if (!evidence || !Array.isArray(evidence.rules) || evidence.rules.some(rule => !nonempty(rule?.type)
+        || !positiveId(rule.ruleset_id) || !nonempty(rule.ruleset_source_type) || !nonempty(rule.ruleset_source))
+        || new Set(evidence.rules.map(rule => `${rule.ruleset_id}:${rule.type}`)).size !== evidence.rules.length) {
+      return blocked('invalid-effective-rules');
+    }
+    if (!hasRule(evidence.rules, 'update', updateRuleset.id, repository)
         || !hasRule(evidence.rules, 'deletion', historyRuleset.id, repository)
         || !hasRule(evidence.rules, 'non_fast_forward', historyRuleset.id, repository)) return blocked('required-rules-not-effective');
   }

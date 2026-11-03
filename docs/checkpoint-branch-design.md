@@ -237,7 +237,11 @@ wyjątku App dla reguły update i braku wyjątków dla deletion/non-fast-forward
 Identyfikator App i tożsamość repo muszą pochodzić z niezależnie zaufanej
 konfiguracji; pełna paginacja i świeżość odczytu należą do collectora. Wynik
 jest obserwacją chwili, nie pozwoleniem na zapis ani dowodem odporności na
-późniejszą zmianę rulesetów. Runtime nie ma jeszcze takiego collectora.
+późniejszą zmianę rulesetów. `src/flow-checkpoint-protection-reader.mjs`
+odczytuje obie nazwy, stronicuje i powtarza obserwację, a następny URL
+rekonstruuje lokalnie. Porównuje pięć istotnych pól repo oraz pełne reguły,
+nie zmienne metadane niezwiązane z audytem. Wymaga zaufanego transportu
+właściciela; bezpieczny produkcyjny transport i rejestracja nie są podłączone.
 
 W ograniczonej próbie w prywatnym non-fork SECosystem GitHub zwrócił regułę
 `update` bez pola `parameters` zarówno po żądaniu z `false`, jak i z `true`.
@@ -250,6 +254,11 @@ nie na odczytaniu nieobecnej wartości. Po normalizacji wyłącznie nazw
 tymczasowych refów do nazw docelowych audyt przeszedł dla rzeczywistych
 odpowiedzi właściciela; tymczasowe reguły usunięto i ich brak potwierdzono.
 Nie jest to audyt chroniący docelowe refy ani dowód faktycznego bypassu App.
+Osobna próba rzeczywistego readera właściciela na dwóch losowych, nieistniejących
+refach również przeszła po przemapowaniu wyłącznie nazw w pamięci; powtórzono
+odczyty, a tymczasowe reguły usunięto i potwierdzono ich brak. Ta próba nie
+potwierdza produkcyjnego transportu, rzeczywistej ochrony docelowych refów,
+działania App ani uprawniań do wykonania mutacji.
 Samo zarezerwowanie nazwy nie dowodzi, że istniejąca gałąź nie jest
 używana przez produkt; onboarding musi to wcześniej ustalić i nie może jej
 nadpisać. Testy tego adaptera używają fikcyjnych odpowiedzi.
