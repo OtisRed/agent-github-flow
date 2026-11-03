@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { planInitialBranchHandoff, planInitialV2Handoff } from './flow-checkpoint-initial-handoff.mjs';
 import { planPendingBranchHandoff } from './flow-checkpoint-pending-handoff.mjs';
-import { planStatusReservation, planReservedHandoffCommit } from './flow-checkpoint-reservation-plan.mjs';
-import { runInitialPublicationStep, runPendingCommitPublicationStep, runStatusReservationPublicationStep, runReservedCommitPublicationStep, runInitialV2PublicationStep } from './flow-initial-publication-step.mjs';
+import { planStatusReservation, planReservedHandoffCommit, planUnchangedHandoffCommit } from './flow-checkpoint-reservation-plan.mjs';
+import { runInitialPublicationStep, runPendingCommitPublicationStep, runStatusReservationPublicationStep, runReservedCommitPublicationStep, runInitialV2PublicationStep, runUnchangedCommitPublicationStep } from './flow-initial-publication-step.mjs';
 
 function fixture() {
   const body='[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
@@ -196,4 +196,23 @@ test('blocks final v2 commit before target or on wrong binding, and does not ret
   f=reservedCommitFixture();f.state.write='ref-update-uncertain';
   assert.deepEqual(await runReservedCommitPublicationStep(f.input),{kind:'publication-uncertain',retryAllowed:false});
   assert.equal(f.state.calls.filter(x=>x==='publish').length,1);
+});
+
+test('commits an unchanged status without a Project mutation or reservation',async()=>{
+  const f=reservationFixture(),pending=f.state.base;pending.checkpoint.selectedRecord.current.fromStatus='agent-ready';
+  pending.project.currentStatus='agent-ready';pending.project.statusOptionId='ready';
+  const plan=planUnchangedHandoffCommit({...pending,registration:f.input.registration});assert.equal(plan.kind,'commit-handoff-v2-planned');
+  f.state.after=structuredClone(pending);f.state.after.checkpoint.headOid='e'.repeat(40);f.state.after.checkpoint.selectedRecord=structuredClone(plan.record);
+  f.input.prepare=async({snapshot,after})=>{assert.deepEqual(snapshot,pending.checkpoint);assert.deepEqual(after,plan.record);
+    return {kind:'checkpoint-objects-prepared',expectedHeadOid:'c'.repeat(40),expectedTreeOid:'d'.repeat(40),
+      commit:{sha:'e'.repeat(40),tree:{sha:'d'.repeat(40)},parents:[{sha:'c'.repeat(40)}]}};};
+  const result=await runUnchangedCommitPublicationStep(f.input);
+  assert.equal(result.kind,'unchanged-commit-observed');assert.equal(result.binding.checkpointOid,'c'.repeat(40));
+});
+
+test('unchanged status cannot commit a different handoff binding',async()=>{
+  const f=reservationFixture(),pending=f.state.base;pending.checkpoint.selectedRecord.current.fromStatus='agent-ready';
+  pending.project.currentStatus='agent-ready';pending.project.statusOptionId='ready';f.input.expectedBinding.commentId='other';
+  assert.equal((await runUnchangedCommitPublicationStep(f.input)).reason,'handoff-binding-mismatch');
+  assert.equal(f.state.calls.includes('prepare'),false);assert.equal(f.state.calls.includes('publish'),false);
 });

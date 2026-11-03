@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { planStatusReservation, planReservedHandoffCommit } from './flow-checkpoint-reservation-plan.mjs';
+import { planStatusReservation, planReservedHandoffCommit, planUnchangedHandoffCommit } from './flow-checkpoint-reservation-plan.mjs';
 
 const body = '[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
 const digest = createHash('sha256').update(body).digest('hex');
@@ -61,4 +61,15 @@ test('plans final v2 checkpoint only after the reserved target is observed', () 
   assert.equal(result.kind, 'commit-handoff-v2-planned'); assert.equal(result.record.current.phase, 'committed');
   assert.equal(result.record.reservation, null); assert.equal(result.commit.expectedHeadOid, v.checkpoint.headOid);
   v.project.statusOptions[0].id = 'changed'; assert.equal(planReservedHandoffCommit(v).kind, 'blocked');
+});
+
+test('allows a handoff with unchanged status without manufacturing a reservation', () => {
+  const v = fixture();v.checkpoint.selectedRecord.current.fromStatus = 'agent-ready';
+  v.project.currentStatus = 'agent-ready';v.project.statusOptionId = 'ready';
+  const plan = planUnchangedHandoffCommit(v);
+  assert.equal(plan.kind, 'commit-handoff-v2-planned');assert.equal(plan.record.reservation, null);
+  assert.equal(plan.record.current.phase, 'committed');assert.equal(plan.commit.expectedHeadOid, v.checkpoint.headOid);
+  v.project.currentStatus = 'needs-design';v.project.statusOptionId = 'design';assert.equal(planUnchangedHandoffCommit(v).kind, 'blocked');
+  v.project.currentStatus = 'agent-ready';v.project.statusOptionId = 'ready';v.handoffEvidence.handoff.body += '!';
+  assert.equal(planUnchangedHandoffCommit(v).kind, 'blocked');
 });

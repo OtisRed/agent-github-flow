@@ -205,6 +205,9 @@ zaobserwowanego stanu, nie tego, który przebieg wykonał zmianę statusu.
 Pierwsze przekazanie może zostać zaplanowane i opublikowane jako `pending` v2
 bez rezerwacji tylko po uzyskaniu odpowiedniego snapshotu i rejestracji v2;
 same te kroki nie weryfikują jeszcze zaufanego bootstrapu w produkcji.
+Jeżeli status źródłowy i docelowy są takie same, osobny krok potwierdza
+aktualne przekazanie i stan, po czym finalizuje checkpoint bez rezerwacji oraz
+bez zbędnej mutacji Projectu.
 
 `src/flow-project-item-resolver.mjs` wyszukuje aktywną kartę issue przez pełną
 paginację osobistego Projectu, odrzuca brak, duplikaty lub niespójny drugi

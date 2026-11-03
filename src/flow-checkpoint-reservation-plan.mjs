@@ -61,3 +61,20 @@ export function planReservedHandoffCommit(input) {
   return commit.kind === 'checkpoint-commit-plan' ? { kind: 'commit-handoff-v2-planned', record: after, commit }
     : blocked('commit-plan-invalid');
 }
+
+// A no-op handoff needs no status mutation or reservation. Complete current
+// evidence still must establish that the unchanged target is present.
+export function planUnchangedHandoffCommit(input) {
+  const before = input?.checkpoint?.selectedRecord;
+  if (input?.checkpoint?.schemaVersion !== 2 || encodeCheckpointV2(before).kind !== 'encoded-record'
+      || before.current?.phase !== 'pending' || before.reservation !== null
+      || before.current.fromStatus !== before.current.targetStatus) return blocked('not-unchanged-handoff');
+  let projected; try { projected = structuredClone(input); } catch { return blocked('invalid-input'); }
+  projected.checkpoint.schemaVersion = 1; projected.checkpoint.selectedRecord.version = 1;
+  delete projected.checkpoint.selectedRecord.reservation;
+  if (planPendingBranchHandoff(projected).kind !== 'commit-handoff-planned') return blocked('unchanged-status-unverified');
+  const after = structuredClone(before); after.current.phase = 'committed';
+  const commit = planCheckpointV2Commit({ registration: input.registration, snapshot: input.checkpoint, after });
+  return commit.kind === 'checkpoint-commit-plan' ? { kind: 'commit-handoff-v2-planned', record: after, commit }
+    : blocked('commit-plan-invalid');
+}

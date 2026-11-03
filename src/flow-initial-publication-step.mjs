@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { planInitialBranchHandoff, planInitialV2Handoff } from './flow-checkpoint-initial-handoff.mjs';
 import { planPendingBranchHandoff } from './flow-checkpoint-pending-handoff.mjs';
-import { planStatusReservation, planReservedHandoffCommit } from './flow-checkpoint-reservation-plan.mjs';
+import { planStatusReservation, planReservedHandoffCommit, planUnchangedHandoffCommit } from './flow-checkpoint-reservation-plan.mjs';
 import { isHandoffSubject, matchesHandoffSubject, handoffBinding } from './flow-handoff-binding.mjs';
 
 const blocked = reason => ({ kind:'blocked', reason });
@@ -117,4 +117,14 @@ export async function runReservedCommitPublicationStep(input = {}) {
   return runPublication({ ...input, prepare: args => prepare({ ...args, registration: structuredClone(registration) }) },
     observed => planReservedHandoffCommit({ ...observed, registration }),
     'commit-handoff-v2-planned', 'reserved-commit-observed', 'reserved-commit-not-applicable');
+}
+
+export async function runUnchangedCommitPublicationStep(input = {}) {
+  let registration;
+  try { registration = structuredClone(input.registration); } catch { return blocked('invalid-input'); }
+  if (typeof input.prepare !== 'function') return blocked('invalid-input');
+  const prepare = input.prepare;
+  return runPublication({ ...input, prepare: args => prepare({ ...args, registration: structuredClone(registration) }) },
+    observed => planUnchangedHandoffCommit({ ...observed, registration }),
+    'commit-handoff-v2-planned', 'unchanged-commit-observed', 'unchanged-commit-not-applicable');
 }
