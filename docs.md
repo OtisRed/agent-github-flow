@@ -11,3 +11,4 @@
 - [Współdzielony nadawca sygnału](docs/shared-relay.md) — konfiguracja, granice i testy.
 - [Wspólny token relay w Windows](docs/windows-relay-vault.md) — ograniczony helper magazynu, ręczne wprowadzenie i granice dowodu.
 - [Model preflightu onboardingu relay](docs/relay-onboarding-preflight.md) — ocena dowodów bez dostępu do GitHuba ani operacji zapisu.
+- [Staging rotacji relay](docs/relay-rotation.md) — oddzielny slot i granice bezpiecznego zapisu.
