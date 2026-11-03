@@ -222,6 +222,10 @@ Odczytowy verifier bootstrapu wymaga rootowego genesis bez rodziców z pustym
 repozytorium i cutover. Sprawdza też ancestry, parę refów i ten sam marker na
 HEAD. Nie dowodzi uprawnionych autorów historii, braku rollbacku ani ochrony;
 nie tworzy jeszcze genesis i nie zastępuje odczytu bieżącego inwentarza v2.
+Preparer potrafi na podstawie tego samego planu utworzyć i sprawdzić
+nieosiągalne obiekty Git w jednym prywatnym repozytorium, bez tworzenia refów;
+przy niepewnej odpowiedzi zatrzymuje się bez ponawiania. Nie wykonano jeszcze
+produkcyjnego bootstrapu ani nie ustanowiono rejestracji i ochrony.
 
 ### Serializacja centralnego runnera
 
