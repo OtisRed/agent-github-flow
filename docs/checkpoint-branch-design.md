@@ -43,6 +43,10 @@ zduplikowanych pól, maksymalnie 10 000 wpisów i 1 MiB. Decoder wymaga
 identyfikatora oczekiwanego repozytorium. Te limity są kandydatem do pomiaru,
 a nie gwarancją, że obsłużą każde przyszłe repozytorium. Kodowanie nie czyta
 gałęzi i nie potwierdza kompletności, pochodzenia ani aktualności rekordu.
+Odczytowy prototyp `src/flow-checkpoint-index-blob.mjs` sprawdza także rozmiar,
+kodowanie i Git SHA-1 konkretnych bajtów indeksu przed jego dekodowaniem.
+Przyszły reader musi jeszcze powiązać ten obiekt z pełnym drzewem właściwego
+commitu oraz zarejestrowaną gałęzią; sam blob tego nie dowodzi.
 
 ## Rejestracja i utrata danych
 
