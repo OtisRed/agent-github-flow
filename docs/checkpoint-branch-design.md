@@ -147,6 +147,43 @@ pozostają do określenia. Kod nie implementuje jeszcze kwarantanny ani
 serializacji i nie jest podłączony do Actions; test całego cyklu używa
 fikcyjnych transportów.
 
+### Kandydat: trwała rezerwacja próby statusu
+
+Przed wysłaniem mutacji Projectu automat ma zapisać w checkpointcie wersji 2
+`pending` rezerwację: czas oraz istniejące ID źródłowej i docelowej opcji pola.
+Rekord przechowuje je przy istniejącym komentarzu, issue i nazwach statusów;
+przed rezerwacją i mutacją trzeba na świeżo potwierdzić, że ID opcji należą do
+właściwego pola i odpowiadają tym nazwom. Nie tworzymy identyfikatora operacji ani
+osobnego komentarza. Po potwierdzeniu atomowego zapisu checkpointu i ponownym
+odczycie danych ten sam przebieg może wykonać jedną próbę zmiany statusu.
+Jeżeli proces przerwie się przed wysłaniem lub po wysłaniu żądania, następny
+przebieg nie rozróżnia tych przypadków i traktuje rezerwację tak samo.
+
+Przy wznowieniu status docelowy pozwala przejść do zatwierdzenia checkpointu.
+Jeśli widoczny jest status źródłowy, automat rozpoczyna w tym przebiegu
+proponowane 120 sekund oczekiwania od świeżego pełnego odczytu, po czym ponownie
+odczytuje komplet danych i dopiero wtedy zapisuje nową rezerwację przez CAS.
+Czas zapisany w poprzedniej rezerwacji nie wyznacza początku oczekiwania,
+ponieważ żądanie mogło zostać wysłane znacznie później. Inny status albo
+niekompletne, sprzeczne dane blokują zapis. Początkowy `pending` bez rezerwacji
+oznacza brak uprzedniej próby wyłącznie po zaufanym bootstrapie schematu v2;
+starsze lub nieznane zapisy nie mogą być automatycznie tak interpretowane.
+
+120 sekund to bufor operacyjny, nie gwarancja zakończenia żądania: GitHub
+[opisuje](https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#timeouts)
+obecny limit przetwarzania GraphQL jako 10 sekund i zastrzega jego zmianę, a
+z lokalnego zerwania połączenia nie wynika, kiedy serwer przyjął żądanie.
+Właściciel zaakceptował ryzyko spóźnionego nadpisania. Potrzebne są zaufane
+zabezpieczenie przed cofnięciem czasu i zmianą rezerwacji, wspólna serializacja
+właściciela tablicy oraz testy przerwań. Nowy komentarz lub zmiana epoki blokuje
+starą próbę. To kandydat projektu,
+nie wdrożona funkcja; brak wiarygodnej rezerwacji lub niezgodność danych blokują write.
+
+Oddzielny moduł `src/flow-checkpoint-v2.mjs` definiuje i sprawdza kształt zapisu
+oraz jego ciągłość; nie ustanawia zaufanego bootstrapu ani uprawnienia do
+zapisu i nie jest jeszcze używany przez kontroler. Rekordu v1 nie wolno uznawać
+za bezpieczne v2 przez zmianę numeru wersji.
+
 `src/flow-project-item-resolver.mjs` wyszukuje aktywną kartę issue przez pełną
 paginację osobistego Projectu, odrzuca brak, duplikaty lub niespójny drugi
 odczyt i wymaga ograniczonego transportu. Jest odczytowy i nie blokuje karty;
