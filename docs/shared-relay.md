@@ -6,6 +6,17 @@ Workflow korzysta ze środowiska `flow-relay` w repozytorium wywołującym. Prze
 
 Poświadczenie relay powinno obejmować wyłącznie centralne repozytorium. GitHub wymaga `contents:write` do `repository_dispatch`; ten zakres pozwala również na inne operacje na zawartości i nie jest prawem wyłącznie do wysłania sygnału. Ochronę gałęzi, środowisko, czas ważności, przechowywanie oraz rotację należy faktycznie skonfigurować i sprawdzić, nie zakładać ich z samej obecności workflow.
 
+Workflow ma dwa jawne warianty na czas rotacji: domyślne `relay-token-slot: active`
+czyta `FLOW_RELAY_TOKEN`, a `relay-token-slot: next` czyta wyłącznie
+`FLOW_RELAY_TOKEN_NEXT` z tego samego chronionego środowiska. Wybór `next`
+nigdy nie wraca automatycznie do starej wartości: brak nowego sekretu blokuje
+wysyłkę. Nieznany slot blokuje job. Dotychczasowe wywołania zachowują domyślne
+`active`. Wybór i powrót wymagają osobnego przejrzanego PR w projekcie; samo
+dodanie slotu nie zmienia aktywnego nadawcy ani nie dowodzi rotacji.
+Ścieżki są rozłączne w użyciu, ale job nadal ma dostęp do sekretów swojego
+środowiska; dotychczasowa deklaracja wymaga też nazwy `FLOW_RELAY_TOKEN`
+w wywołaniu. To nie jest pełna izolacja obu poświadczeń od kodu jobu.
+
 Wywołanie należy przypiąć do pełnego przejrzanego SHA współdzielonego workflow. Workflow pobiera własne źródła z tożsamości wersji joba, a nie z kodu wywołującego projektu. Wzór — nazwy i `<SHA>` wymagają świadomego uzupełnienia:
 
 ```yaml
