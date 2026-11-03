@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createCheckpointObjectPreparer } from './flow-checkpoint-object-preparer.mjs';
+import { createV2PreparationAdapter } from './flow-v2-preparation-adapter.mjs';
 import { planCheckpointCommit, planCheckpointV2Commit } from './flow-checkpoint-commit-plan.mjs';
 import { encodeCheckpointV2 } from './flow-checkpoint-v2.mjs';
 import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
@@ -61,7 +62,7 @@ function fixture(version = 1, existing = false) {
   };
   const build = () => createCheckpointObjectPreparer({ owner: 'owner', repo: 'project', snapshot, after, ...(version === 2 ? { registration } : {}),
     appToken: 'synthetic-app-token', request });
-  return { build, state, snapshot, after, plan };
+  return { build, state, snapshot, after, plan, request, registration };
 }
 
 test('prepares and reads back only a private repository tree and commit, without moving refs', async () => {
@@ -90,6 +91,20 @@ test('rechecks the existing v2 record before preparing its reservation', async (
   assert.equal(result.kind, 'checkpoint-objects-prepared');
   const entries = JSON.parse(f.state.calls.find(call => call.url.endsWith('/git/trees') && call.method === 'POST').body).tree;
   assert.deepEqual(JSON.parse(entries.find(entry => entry.path === 'issues/1.json').content).reservation, f.after.reservation);
+});
+
+test('v2 cycle adapter uses the real preparer and binds it to the selected subject', async () => {
+  const f=fixture(2,true),policy={repositoryId:'repo-id',repository:'owner/project',projectId:'project',statusFieldId:'status',
+    issueId:'issue',issueNumber:1,appId:12,updateRulesetId:1,historyRulesetId:2,trustedAuthorIds:['user']};
+  const prepare=createV2PreparationAdapter({policy,registration:f.registration,appToken:'synthetic-app-token',request:f.request});
+  const result=await prepare({snapshot:f.snapshot,after:f.after,registration:f.registration});
+  assert.equal(result.kind,'checkpoint-objects-prepared');
+  const other=structuredClone(f.snapshot);other.selection.issueId='other';
+  assert.deepEqual(await prepare({snapshot:other,after:f.after,registration:f.registration}),{kind:'blocked',reason:'adapter-subject-mismatch'});
+  const wrongRegistration=structuredClone(f.registration);wrongRegistration.genesisOid='8'.repeat(40);
+  const calls=f.state.calls.length;
+  assert.deepEqual(await prepare({snapshot:f.snapshot,after:f.after,registration:wrongRegistration}),{kind:'blocked',reason:'adapter-subject-mismatch'});
+  assert.equal(f.state.calls.length,calls);
 });
 
 test('rejects a public or wrongly scoped repository before any object creation', async () => {

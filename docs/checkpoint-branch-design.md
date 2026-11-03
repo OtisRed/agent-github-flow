@@ -209,6 +209,14 @@ Jeżeli status źródłowy i docelowy są takie same, osobny krok potwierdza
 aktualne przekazanie i stan, po czym finalizuje checkpoint bez rezerwacji oraz
 bez zbędnej mutacji Projectu.
 
+Odłączony cykl `src/flow-first-v2-cycle.mjs` łączy powyższe kroki dla pierwszego
+przekazania. Po niepewnej zmianie Projectu kolejny przebieg potwierdza stan
+docelowy albo, widząc stan źródłowy, czeka 120 sekund monotonicznego czasu
+pomiędzy kompletnymi odczytami przed nową rezerwacją i próbą. Testy używają
+fikcyjnych transportów; adapter preparera obiektów działa z jego właściwą
+fabryką, lecz rzeczywisty runner, weryfikacja bootstrapu, serializacja oraz
+publikacja i test pełnej ścieżki w Actions pozostają do wykonania.
+
 `src/flow-project-item-resolver.mjs` wyszukuje aktywną kartę issue przez pełną
 paginację osobistego Projectu, odrzuca brak, duplikaty lub niespójny drugi
 odczyt i wymaga ograniczonego transportu. Jest odczytowy i nie blokuje karty;
