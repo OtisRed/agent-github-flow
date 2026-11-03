@@ -5,6 +5,7 @@ import { planStatusReservation, planReservedHandoffCommit, planUnchangedHandoffC
 import { inspectV3ReservedHandoff, planV3StatusReservation, planV3HandoffCommit } from './flow-v3-reservation-plan.mjs';
 import { createCheckpointKeyring } from './flow-checkpoint-keyring.mjs';
 import { FLOW_STATUSES } from './flow.mjs';
+import { verifyV3Preparation } from './flow-v3-preparation-guard.mjs';
 
 const body = '[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
 const digest = createHash('sha256').update(body).digest('hex');
@@ -94,6 +95,13 @@ function fixtureV3(){
 test('v3 reserves and completes a verified handoff without publishing private configuration',()=>{
   const v=fixtureV3(),first=planV3StatusReservation(v);assert.equal(first.kind,'v3-status-reservation-planned');
   assert.deepEqual(first.record.reservation,{reservedAt:v.reservedAt});
+  assert.equal(verifyV3Preparation({...v,after:first.record}).kind,'v3-preparation-consistent');
+  const forged=structuredClone(first.record);forged.current.configMac='d'.repeat(64);
+  assert.equal(verifyV3Preparation({...v,after:forged}).kind,'blocked');
+  const noReservation=structuredClone(v.checkpoint.selectedRecord);noReservation.current.phase='committed';
+  assert.equal(verifyV3Preparation({...v,after:noReservation}).kind,'blocked');
+  const wrongTime=structuredClone(first.record);wrongTime.reservation.reservedAt='not-a-time';
+  assert.equal(verifyV3Preparation({...v,after:wrongTime}).kind,'blocked');
   const published=first.commit.additions.map(entry=>Buffer.from(entry.contents,'base64').toString()).join('\n');
   assert.equal(published.includes('private-option-'),false);assert.equal(published.includes(body),false);
   v.checkpoint.selectedRecord=first.record;assert.equal(inspectV3ReservedHandoff(v).kind,'status-update-planned');
@@ -101,6 +109,7 @@ test('v3 reserves and completes a verified handoff without publishing private co
   v.project.currentStatus='agent-ready';v.project.statusOptionId='ready';
   assert.equal(inspectV3ReservedHandoff(v).kind,'commit-handoff-planned');
   const done=planV3HandoffCommit(v);assert.equal(done.kind,'v3-commit-handoff-planned');
+  assert.equal(verifyV3Preparation({...v,after:done.record}).kind,'v3-preparation-consistent');
   assert.equal(done.record.reservation,null);assert.equal(done.record.current.phase,'committed');
 });
 

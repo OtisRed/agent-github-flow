@@ -5,6 +5,7 @@ import { planInitialBranchHandoff, planInitialV2Handoff } from './flow-checkpoin
 import { planInitialV3Handoff } from './flow-v3-initial-handoff.mjs';
 import { createCheckpointKeyring } from './flow-checkpoint-keyring.mjs';
 import { FLOW_STATUSES } from './flow.mjs';
+import { verifyV3Preparation } from './flow-v3-preparation-guard.mjs';
 
 const body = '[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
 const digest = value => createHash('sha256').update(value, 'utf8').digest('hex');
@@ -71,6 +72,13 @@ test('plans a first keyed v3 checkpoint without exposing private option IDs or c
     assert.equal(serialized.includes(`"${name}":`),false);
   assert.equal(serialized.includes(body),false);assert.equal(serialized.includes('private-option-'),false);
   assert.equal(Object.hasOwn(result.record.current,'digest'),false);
+  const checked=verifyV3Preparation({...v,after:result.record});assert.equal(checked.kind,'v3-preparation-consistent');
+  assert.deepEqual(checked.commit,result.commit);assert.equal(Object.isFrozen(checked.commit.additions),true);
+  const newer=structuredClone(v.checkpoint);newer.headOid='d'.repeat(40);
+  const checkedNew=verifyV3Preparation({...v,checkpoint:newer,after:result.record});
+  assert.equal(checkedNew.commit.expectedHeadOid,newer.headOid);assert.notDeepEqual(checkedNew.commit,result.commit);
+  const forged=structuredClone(result.record);forged.current.fromStatus='spike';
+  assert.equal(verifyV3Preparation({...v,after:forged}).kind,'blocked');
 });
 
 test('v3 first handoff refuses changed private configuration, visibility, comments and keys',()=>{
