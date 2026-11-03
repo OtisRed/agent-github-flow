@@ -97,6 +97,18 @@ mutacji i nie daje do niej upoważnienia. Plan zawiera metadane prywatnego
 projektu, więc nie wolno go logować. Kontrola prawdziwości dowodów, ochrony
 gałęzi, obsługa niepewnych odpowiedzi i rzeczywisty CAS pozostają do wdrożenia.
 
+`src/flow-checkpoint-initial-handoff.mjs` wiąże obserwowany stan karty i
+gałęzi z komentarzem FLOW oraz dowodem początkowej epoki; przygotowuje tylko
+pierwszy rekord `pending` i plan commitu. Nie podejmuje decyzji przy istniejącym
+rekordzie, reopen, zamkniętym issue ani docelowym `done`. Sprawdza istnienie i
+jednoznaczność opcji statusu oraz wiąże komentarz z podaną listą autorów i
+tablicę z podaną konfiguracją. `src/flow-checkpoint-pending-handoff.mjs`
+planuje kolejny krok: zmianę opcji statusu albo zatwierdzenie checkpointu po
+odczytaniu stanu docelowego. Oba wymagają dowodu najnowszego przekazania,
+lecz same nie uwierzytelniają dostarczonych danych, listy autorów, konfiguracji
+ani ochrony gałęzi. Caller musi ponowić odczyty i porównać plan przed mutacją.
+Plannery nie wykonują mutacji; testy używają fikcyjnych obserwacji.
+
 ## Rejestracja i utrata danych
 
 Rejestracja projektu jest odrębnym, jawnym krokiem administracyjnym, nie

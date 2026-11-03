@@ -56,12 +56,19 @@ test('propagates a malformed, visibly edited or ambiguous latest trusted comment
   assert.deepEqual(await collectHandoffEvidence(args(async () => tie)), { kind: 'blocked', reason: 'ambiguous-order' });
 });
 
-test('preserves exact large database IDs and returns no false handoff for another author', async () => {
+test('preserves exact large database IDs and blocks the latest untrusted author', async () => {
   const big = comment('9223372036854775807', '01');
   const one = page([big], false, null, 1);
   assert.equal((await collectHandoffEvidence(args(async () => one))).handoff.id, '9223372036854775807');
   big.author.id = 'different-user';
-  assert.deepEqual(await collectHandoffEvidence(args(async () => one)), { kind: 'evidence', handoff: { kind: 'absent' }, commentCount: 1 });
+  assert.deepEqual(await collectHandoffEvidence(args(async () => one)), { kind: 'blocked', reason: 'untrusted-latest-handoff' });
+});
+
+test('does not return an older checkpointed handoff when a later untrusted comment exists', async () => {
+  const later = comment(12, '02', 'unexpected'); later.author.id = 'other';
+  const graphql = async () => page([comment(10, '01'), later]);
+  assert.deepEqual(await collectHandoffEvidence({ ...args(graphql), checkpointCommentId: '10' }),
+    { kind: 'blocked', reason: 'untrusted-latest-handoff' });
 });
 
 test('retrieves the exact trusted checkpointed comment across all pages and blocks missing or edited history', async () => {

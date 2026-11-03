@@ -28,7 +28,6 @@ export function selectLatestHandoff(input) {
       || typeof comment.authorId !== 'string' || !comment.authorId) return blocked('invalid-comment-metadata');
     ids.add(comment.id);
     nodes.add(comment.nodeId);
-    if (!trusted.has(comment.authorId)) continue;
     const created = timestamp(comment.createdAt);
     if (created === null || typeof comment.body !== 'string' || !Object.hasOwn(comment, 'lastEditedAt')
       || (comment.lastEditedAt !== null && timestamp(comment.lastEditedAt) === null)) return blocked('invalid-comment-metadata');
@@ -39,6 +38,7 @@ export function selectLatestHandoff(input) {
   selected.sort((a, b) => b.created - a.created);
   if (selected.length > 1 && selected[0].created === selected[1].created) return blocked('ambiguous-order');
   const latest = selected[0].comment;
+  if (!trusted.has(latest.authorId)) return blocked('untrusted-latest-handoff');
   if (latest.lastEditedAt !== null) return blocked('edited-latest-handoff');
   const parsed = parseFlowComment(latest.body);
   if (!parsed.ok) return blocked('invalid-latest-handoff');

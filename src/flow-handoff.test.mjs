@@ -20,10 +20,17 @@ test('ignores legacy comments through the fixed cutover but never ignores new ma
     { kind: 'blocked', reason: 'invalid-comment-metadata' });
 });
 
-test('selects the newest trusted handoff regardless of input order', () => {
+test('selects the newest handoff regardless of input order when its author is trusted', () => {
   const latest = item('12', '02', body('smoke'));
-  const result = selectLatestHandoff(args([latest, item('10', '01'), item('13', '03', 'ignored', 'other')]));
+  const result = selectLatestHandoff(args([latest, item('10', '01', 'older', 'other')]));
   assert.equal(result.kind, 'handoff'); assert.equal(result.id, '12'); assert.equal(result.nodeId, 'node-12'); assert.equal(result.parsed.targetStatus, 'smoke');
+});
+
+test('does not fall back to an older handoff when a newer author is untrusted', () => {
+  assert.deepEqual(selectLatestHandoff(args([item('10', '01'), item('11', '02', 'other', 'stranger')])),
+    { kind: 'blocked', reason: 'untrusted-latest-handoff' });
+  assert.deepEqual(selectLatestHandoff({ ...args([item('10', '01', 'legacy', 'stranger')]), cutoverAt: '2026-01-01T10:00:02Z' }),
+    { kind: 'absent' });
 });
 
 test('does not fall back when the latest trusted comment is malformed', () => {
@@ -49,7 +56,7 @@ test('stops for a visibly edited latest handoff or missing edit metadata', () =>
 
 test('handles no trusted handoff and rejects invalid trusted metadata or allowlists', () => {
   assert.deepEqual(selectLatestHandoff(args([])), { kind: 'absent' });
-  assert.deepEqual(selectLatestHandoff(args([item('10', '01', 'ignored', 'other')])), { kind: 'absent' });
+  assert.deepEqual(selectLatestHandoff(args([item('10', '01', 'ignored', 'other')])), { kind: 'blocked', reason: 'untrusted-latest-handoff' });
   const invalidDate = item('10', '01'); invalidDate.createdAt = '2026-02-30T10:00:00Z';
   assert.deepEqual(selectLatestHandoff(args([invalidDate])), { kind: 'blocked', reason: 'invalid-comment-metadata' });
   assert.deepEqual(selectLatestHandoff({ ...args([]), trustedAuthorIds: [] }), { kind: 'blocked', reason: 'invalid-input' });
