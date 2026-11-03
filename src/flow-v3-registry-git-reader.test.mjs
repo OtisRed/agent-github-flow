@@ -6,6 +6,7 @@ import { reserveV3Project } from './flow-v3-registry.mjs';
 import { createV3RegistryAnchor } from './flow-v3-registry-anchor.mjs';
 import { createV3RegistryGitReader } from './flow-v3-registry-git-reader.mjs';
 import { V3_REGISTRY_REF,V3_REGISTRY_ANCHOR_REF } from './flow-v3-registry-git-plan.mjs';
+import { createV3RegistryPairReader } from './flow-v3-registry-pair-reader.mjs';
 
 const oid=c=>c.repeat(40),reply=data=>({status:200,text:async()=>JSON.stringify(data),headers:{get:()=>null}});
 function fixture(role){
@@ -39,4 +40,10 @@ test('reads exact private registry and public anchor with scoped App GET request
 test('blocks changed visibility, fork, extra files and moving refs',async()=>{
   for(const mutate of [s=>{s.private=false;},s=>{s.fork=true;},s=>{s.extra=true;},s=>{s.change=true;}]){
     const f=fixture('private');mutate(f.state);assert.equal((await f.read()).kind,'blocked');}
+});
+test('pairs the actual scoped branch readers without exposing private content on the anchor branch',async()=>{
+  const privateBranch=fixture('private'),anchorBranch=fixture('anchor');
+  const read=createV3RegistryPairReader({readPrivate:privateBranch.read,readAnchor:anchorBranch.read}),pair=await read();
+  assert.equal(pair.content,privateBranch.content);assert.deepEqual(pair.stagedAnchor,pair.anchor);
+  assert.ok(privateBranch.state.calls.every(call=>call.method==='GET'));assert.ok(anchorBranch.state.calls.every(call=>call.method==='GET'));
 });
