@@ -361,6 +361,29 @@ genesis. Konkretny format rejestru i procedura jego ochrony są otwarte.
 Brak tego powiązania po uprzedniej rejestracji wymaga interwencji, a nie
 automatycznej ponownej inicjalizacji.
 
+### Kierunek trwałego rejestru v3
+
+Kod flow pozostaje w publicznym repozytorium. Prywatna konfiguracja projektów
+ma być przechowywana w osobnym prywatnym repozytorium stanu; klucz HMAC jest
+oddzielnym sekretem środowiska kontrolera, z bezpieczną kopią i procedurą
+rotacji. To repozytorium nie istnieje jeszcze i nie jest drugim pipeline'em.
+Projekt zakłada jeden centralny wykonawca wszystkich zmian stanu oraz
+chronione gałęzie z warunkowymi aktualizacjami Git. Rejestr zachowuje wpisy
+`reserved`, `initializing`, `active` i `retired`; przed pierwszą publikacją
+gałęzi projektu stan `initializing` przypina dokładny genesis i tree.
+
+Niezależny punkt odniesienia dla rejestru musi być chroniony poza samym
+prywatnym payloadem; w publicznej historii wolno umieścić co najwyżej jego
+kluczowane potwierdzenie i rewizję, bez nazw projektów, ID Projectu ani
+konfiguracji. GitHub nie zapewnia transakcji obejmującej dwa repozytoria:
+zapis obu stron musi być protokołem etapowym, w którym niedopasowanie blokuje
+pracę, a odzyskiwanie weryfikuje wcześniejszy i następny stan bez ślepego
+ponowienia. Nie wolno przedstawiać dwóch osobnych zapisów jako atomowego CAS.
+Ochrona przed skoordynowanym cofnięciem obu stron, odzyskiwanie oraz
+uwierzytelnienie pierwszej rezerwacji wymagają jeszcze dopracowania. Obecny
+interfejs testowego CAS nie jest backendem dla GitHub Secrets ani dla tej
+niezaimplementowanej transakcji.
+
 Utworzenie refu jest osobną operacją, która nie może użyć warunku HEAD dla
 nieistniejącej gałęzi. Należy jednoznacznie określić bazę, wykonać pojedyncze
 utworzenie i niezależnie odczytać wynik; konflikt lub niejasna odpowiedź

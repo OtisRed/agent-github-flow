@@ -61,7 +61,11 @@ test('does not return a candidate if enrollment, App or protection changes after
 });
 
 function fixtureV3(expectedPrivate=false){
-  const f=fixture();f.policy.expectedPrivate=expectedPrivate;f.registration.checkpointSchemaVersion=3;
+  const f=fixture();f.policy.expectedPrivate=expectedPrivate;f.policy.source='a'.repeat(32);f.registration.checkpointSchemaVersion=3;
+  f.state.phase='reserved';f.state.bootstrap=null;
+  f.input.verifyEnrollment=async p=>{f.state.calls.push('enrollment');return {kind:'bootstrap-permitted',policy:p,phase:f.state.phase,bootstrap:f.state.bootstrap};};
+  f.input.pinGenesis=async(p,bootstrap)=>{f.state.calls.push('pin');f.state.phase='initializing';f.state.bootstrap=structuredClone(bootstrap);
+    return {kind:'v3-genesis-pinned',policy:p,bootstrap};};
   f.input.prepare=async intent=>{f.state.calls.push('prepare');assert.deepEqual(intent,{repository:'owner/project',repositoryId:'repo',expectedPrivate,
     cutoverAt:f.policy.cutoverAt});return {kind:'v3-genesis-objects-prepared',genesisOid:oid('a'),treeOid:oid('b')};};
   f.input.verifyGenesis=async()=>{f.state.calls.push('genesis');return {kind:'v3-bootstrap-verified',registration:structuredClone(f.registration)};};
@@ -80,5 +84,7 @@ test('v3 bootstrap never infers enrollment from missing refs or retries uncertai
   f=fixtureV3();f.input.verifyApp=async()=>({kind:'app-identity-verified',repositoryId:'repo',appId:13});
   assert.equal((await runV3BootstrapCycle(f.input)).kind,'blocked');assert.equal(f.state.calls.includes('publish'),false);
   f=fixtureV3();f.input.prepare=async()=>({kind:'genesis-preparation-uncertain',retryAllowed:false});
+  assert.equal((await runV3BootstrapCycle(f.input)).kind,'bootstrap-uncertain');assert.equal(f.state.calls.includes('publish'),false);
+  f=fixtureV3();f.input.pinGenesis=async()=>{throw Error('uncertain');};
   assert.equal((await runV3BootstrapCycle(f.input)).kind,'bootstrap-uncertain');assert.equal(f.state.calls.includes('publish'),false);
 });

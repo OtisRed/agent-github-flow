@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { encodeProjectRegistrationV3 } from './flow-project-registration-v3.mjs';
+import { encodeV3Registry } from './flow-v3-registry.mjs';
 
 const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const exact=(value,keys)=>object(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
@@ -25,10 +26,14 @@ export function createCheckpointMac({key,keyId}={}){
         ||typeof value.body!=='string'||Buffer.byteLength(value.body,'utf8')>1024*1024)return invalid();
     return sign('agent-github-flow/comment/v3',{repositoryId:value.repositoryId,issueId:value.issueId,commentId:value.commentId,body:value.body});
   };
+  const registry=value=>{
+    const encoded=encodeV3Registry(value);if(encoded.kind!=='encoded-v3-registry')return invalid();
+    return sign('agent-github-flow/registry/v1',JSON.parse(encoded.content));
+  };
   const verify=(fn,value,expected)=>{
     if(typeof expected!=='string'||!/^[a-f0-9]{64}$/.test(expected))return false;
     try{return timingSafeEqual(Buffer.from(fn(value),'hex'),Buffer.from(expected,'hex'));}catch{return false;}
   };
-  return Object.freeze({keyId,config,comment,verifyConfig:(value,expected)=>verify(config,value,expected),
-    verifyComment:(value,expected)=>verify(comment,value,expected)});
+  return Object.freeze({keyId,config,comment,registry,verifyConfig:(value,expected)=>verify(config,value,expected),
+    verifyComment:(value,expected)=>verify(comment,value,expected),verifyRegistry:(value,expected)=>verify(registry,value,expected)});
 }

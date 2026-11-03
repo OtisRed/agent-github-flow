@@ -5,24 +5,32 @@ import { createV3BootstrapAdapters } from './flow-v3-bootstrap-adapters.mjs';
 import { runV3BootstrapCycle } from './flow-v3-bootstrap-cycle.mjs';
 import { planV3Genesis } from './flow-v3-genesis-plan.mjs';
 import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
+import { createV3BootstrapRecoveryAdapters } from './flow-v3-bootstrap-recovery-adapters.mjs';
+import { recoverV3Bootstrap } from './flow-v3-bootstrap-recovery.mjs';
+import { reserveV3Project, encodeV3Registry } from './flow-v3-registry.mjs';
+import { createV3RegistryAnchor } from './flow-v3-registry-anchor.mjs';
+import { verifyV3BootstrapEnrollment } from './flow-v3-bootstrap-enrollment.mjs';
+import { createV3GenesisPinStep } from './flow-v3-genesis-pin-step.mjs';
+import { createCheckpointKeyring } from './flow-checkpoint-keyring.mjs';
 
 const oid=c=>c.repeat(40);
 function fixture(expectedPrivate=false){
-  const policy={repository:'owner/project',repositoryId:'repo-id',expectedPrivate,cutoverAt:'2026-01-01T10:00:00Z',
+  const policy={source:'1'.repeat(32),repository:'owner/project',repositoryId:'repo-id',expectedPrivate,cutoverAt:'2026-01-01T10:00:00Z',
     appId:12,updateRulesetId:1,historyRulesetId:2};
   const setupIntent={repository:policy.repository,repositoryId:policy.repositoryId,expectedPrivate,cutoverAt:policy.cutoverAt};
   const plan=planV3Genesis({repositoryId:policy.repositoryId,cutoverAt:policy.cutoverAt});
   const blobs=plan.files.map(file=>{const bytes=Buffer.from(file.contents,'base64');return {file,bytes,
     sha:createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')};});
   const tree={sha:oid('a'),truncated:false,tree:blobs.map(b=>({path:b.file.path,type:'blob',mode:'100644',sha:b.sha,size:b.bytes.length}))};
-  const state={created:false,mutations:0,calls:[],throwAfterSet:false};
+  const state={created:false,mixed:false,mutations:0,calls:[],throwAfterSet:false,phase:'reserved',bootstrap:null};
   const reply=(value,status=200)=>({status,text:async()=>JSON.stringify(value),headers:{get:()=>null}});
   const request=async(url,options)=>{state.calls.push({url,method:options.method,body:options.body});assert.equal(options.headers.Authorization,'Bearer synthetic-app');
     const path=new URL(url).pathname;
     if(path==='/installation/repositories')return reply({total_count:1,repositories:[{node_id:'repo-id',full_name:'owner/project',private:expectedPrivate,fork:false}]});
     if(path==='/repos/owner/project')return reply({node_id:'repo-id',full_name:'owner/project',private:expectedPrivate,fork:false,default_branch:'main'});
     if(path.includes('/git/ref/heads/agent-github-flow/')){
-      if(!state.created)return reply({},404);const ref=path.endsWith('/checkpoints')?CHECKPOINT_BRANCH_REF:CHECKPOINT_ANCHOR_REF;
+      if(!state.created||(state.mixed&&path.endsWith('/checkpoint-anchor')))return reply({},404);
+      const ref=path.endsWith('/checkpoints')?CHECKPOINT_BRANCH_REF:CHECKPOINT_ANCHOR_REF;
       return reply({ref,object:{type:'commit',sha:oid('b')}});}
     if(path==='/repos/owner/project/git/trees'&&options.method==='POST')return reply({sha:oid('a')},201);
     if(path===`/repos/owner/project/git/trees/${oid('a')}`)return reply(tree);
@@ -36,10 +44,11 @@ function fixture(expectedPrivate=false){
       return reply({data:{updateRefs:{__typename:'UpdateRefsPayload'}}});}
     throw Error('unexpected');};
   const adapters=createV3BootstrapAdapters({setupIntent,appToken:'synthetic-app',request});
-  const input={policy,...adapters,verifyEnrollment:async p=>({kind:'bootstrap-permitted',policy:p}),
+  const input={policy,...adapters,verifyEnrollment:async p=>({kind:'bootstrap-permitted',policy:p,phase:state.phase,bootstrap:state.bootstrap}),
+    pinGenesis:async(p,bootstrap)=>{state.phase='initializing';state.bootstrap=structuredClone(bootstrap);return {kind:'v3-genesis-pinned',policy:p,bootstrap};},
     verifyApp:async()=>({kind:'app-identity-verified',repositoryId:'repo-id',appId:12}),
     verifyProtection:async()=>({kind:'checkpoint-protection-observed',repositoryId:'repo-id',appId:12,updateRulesetId:1,historyRulesetId:2})};
-  return {policy,setupIntent,state,adapters,input};
+  return {policy,setupIntent,state,adapters,input,request};
 }
 test('v3 bootstrap composes real bounded adapters and reads genesis back on modeled GitHub',async()=>{
   for(const expectedPrivate of [false,true]){const f=fixture(expectedPrivate),result=await runV3BootstrapCycle(f.input);
@@ -58,4 +67,33 @@ test('bootstrap adapters do not prepare a different setup or publish unprepared 
   const f=fixture();assert.equal((await f.adapters.prepare({...f.setupIntent,repository:'owner/other'})).kind,'blocked');
   assert.equal((await f.adapters.publish({setupIntent:f.setupIntent,genesisOid:oid('b'),expectedTreeOid:oid('a')})).kind,'blocked');
   assert.equal(f.state.calls.length,0);
+});
+test('recovery recognizes the exact previously created genesis without another mutation',async()=>{
+  const f=fixture();assert.equal((await runV3BootstrapCycle(f.input)).kind,'v3-registration-candidate');assert.equal(f.state.mutations,1);
+  const recovery=createV3BootstrapRecoveryAdapters({setupIntent:f.setupIntent,bootstrap:f.state.bootstrap,appToken:'synthetic-app',request:f.request});
+  const result=await recoverV3Bootstrap({policy:f.policy,verifyEnrollment:f.input.verifyEnrollment,verifyApp:f.input.verifyApp,
+    verifyProtection:f.input.verifyProtection,...recovery});
+  assert.equal(result.kind,'v3-registration-candidate');assert.equal(result.registration.genesisOid,oid('b'));assert.equal(f.state.mutations,1);
+});
+test('recovery after a persisted pin never creates a new genesis or blindly retries absent or mixed refs',async()=>{
+  for(const mixed of [false,true]){const f=fixture();f.state.phase='initializing';f.state.bootstrap={genesisOid:oid('b'),treeOid:oid('a')};
+    f.state.created=mixed;f.state.mixed=mixed;
+    const recovery=createV3BootstrapRecoveryAdapters({setupIntent:f.setupIntent,bootstrap:f.state.bootstrap,appToken:'synthetic-app',request:f.request});
+    const result=await recoverV3Bootstrap({policy:f.policy,verifyEnrollment:f.input.verifyEnrollment,verifyApp:f.input.verifyApp,
+      verifyProtection:f.input.verifyProtection,...recovery});
+    assert.equal(result.kind,mixed?'bootstrap-uncertain':'bootstrap-recovery-needed');assert.equal(result.retryAllowed,false);
+    assert.equal(f.state.mutations,0);assert.ok(f.state.calls.every(call=>call.method==='GET'));
+  }
+});
+test('bootstrap pins the anchored registry before creating refs using a modeled atomic store',async()=>{
+  const f=fixture(),keyring=createCheckpointKeyring({currentKeyId:1,keys:[{id:1,key:Buffer.alloc(32,1)}]});
+  const reserved=JSON.parse(reserveV3Project({version:1,revision:1,entries:[]},f.policy).content);
+  const store={content:encodeV3Registry(reserved).content,anchor:createV3RegistryAnchor(reserved,keyring).anchor,version:'v1'};
+  const load=async()=>structuredClone(store),commit=async update=>{assert.equal(update.expectedVersion,store.version);
+    store.content=update.content;store.anchor=update.anchor;store.version='v2';return {kind:'registry-update-acknowledged'};};
+  f.input.verifyEnrollment=async policy=>verifyV3BootstrapEnrollment({...store,keyring,policy});
+  f.input.pinGenesis=createV3GenesisPinStep({keyring,load,commit});
+  const result=await runV3BootstrapCycle(f.input);assert.equal(result.kind,'v3-registration-candidate');assert.equal(f.state.mutations,1);
+  const proof=verifyV3BootstrapEnrollment({...store,keyring,policy:f.policy});assert.equal(proof.phase,'initializing');
+  assert.deepEqual(proof.bootstrap,{genesisOid:oid('b'),treeOid:oid('a')});
 });
