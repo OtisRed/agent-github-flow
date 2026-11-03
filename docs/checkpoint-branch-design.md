@@ -344,8 +344,15 @@ Dotychczasowy verifier korzysta z bieżącej chronionej rejestracji. Celowa
 zmiana konfiguracji wymaga osobnej procedury zachowującej wcześniejszą
 rejestrację i umożliwiającej sprawdzenie starych potwierdzeń; nie wolno po
 prostu nadpisać rejestracji ani uznać zatrzymania za powód inicjalizacji od
-nowa. Pierwszy rekord musi uzyskać MAC w przyszłym zaufanym adapterze po
-ponownym sprawdzeniu danych, a nie na podstawie samego odczytu collectora.
+nowa. Planner pierwszego rekordu oblicza MAC po sprawdzeniu danych; adapter
+ponawia odczyt i odtwarza plan, zanim przygotuje obiekty Git.
+
+Eksperymentalny adapter przygotowania obiektów Git ponawia odczyt i wymaga
+niezależnie chronionego HMAC całej rejestracji, również przed pierwszym
+checkpointem. Dopiero przygotowuje nieosiągalne obiekty; nie przesuwa refów.
+Jeszcze nie wdrożono źródła rejestracji ani niezależnego punktu odniesienia
+dla jej HMAC i wersji. Przechowywanie obu wyłącznie w jednym edytowalnym
+rekordzie nie chroniłoby przed równoczesnym cofnięciem obu wartości.
 
 Rejestracja projektu jest odrębnym, jawnym krokiem administracyjnym, nie
 skutkiem pierwszego zdarzenia. Oprócz gałęzi wymaga chronionego punktu

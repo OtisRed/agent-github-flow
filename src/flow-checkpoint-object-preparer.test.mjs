@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createCheckpointObjectPreparer, createV3CheckpointObjectPreparer } from './flow-checkpoint-object-preparer.mjs';
 import { createV2PreparationAdapter } from './flow-v2-preparation-adapter.mjs';
+import { createV3PreparationAdapter } from './flow-v3-preparation-adapter.mjs';
 import { planCheckpointCommit, planCheckpointV2Commit, planCheckpointV3Commit } from './flow-checkpoint-commit-plan.mjs';
 import { encodeCheckpointV2 } from './flow-checkpoint-v2.mjs';
 import { createCheckpointKeyring } from './flow-checkpoint-keyring.mjs';
@@ -122,6 +123,30 @@ test('uses the same guarded v3 format with a private repository',async()=>{
   const f=fixture(3,false,true),result=await f.build().prepare();assert.equal(result.kind,'checkpoint-objects-prepared');
   const entries=JSON.parse(f.state.calls.find(call=>call.url.endsWith('/git/trees')&&call.method==='POST').body).tree;
   assert.equal(JSON.parse(entries.find(entry=>entry.path==='issues/1.json').content).version,3);
+});
+
+test('v3 adapter prepares only the exact protected subject and fresh observation',async()=>{
+  const f=fixture(3),policy={repositoryId:'repo-id',repository:'owner/project',projectId:'project',statusFieldId:'status',
+    issueId:'issue',issueNumber:1,appId:12,updateRulesetId:1,historyRulesetId:2,trustedAuthorIds:['user']};
+  let changed=false;
+  const collectContext=async()=>({repository:f.v3.repository,observation:{checkpoint:changed?{...f.snapshot,headOid:oid('8')}:f.snapshot,
+    project:f.v3.project,handoffEvidence:f.v3.handoffEvidence,epochProof:f.v3.epochProof,
+    expectedProjectId:f.v3.expectedProjectId,trustedAuthorIds:f.v3.trustedAuthorIds}});
+  const registrationCommitment={keyId:1,mac:f.v3.keyring.current().config(f.v3.projectRegistration)};
+  const prepare=createV3PreparationAdapter({policy,projectRegistration:f.v3.projectRegistration,registrationCommitment,keyring:f.v3.keyring,
+    collectContext,appToken:'synthetic-app-token',request:f.request});
+  assert.equal((await prepare({snapshot:f.snapshot,after:f.after,registration:f.registration})).kind,'checkpoint-objects-prepared');
+  const calls=f.state.calls.length;changed=true;
+  assert.deepEqual(await prepare({snapshot:f.snapshot,after:f.after,registration:f.registration}),{kind:'blocked',reason:'adapter-observation-mismatch'});
+  assert.equal(f.state.calls.length,calls);
+  const wrong={...f.registration,genesisOid:oid('8')};
+  assert.deepEqual(await prepare({snapshot:f.snapshot,after:f.after,registration:wrong}),{kind:'blocked',reason:'adapter-subject-mismatch'});
+  assert.equal(f.state.calls.length,calls);
+  for(const modify of [r=>r.source='b'.repeat(32),r=>r.expectedPrivate=true,r=>r.statusOptions[0].id='other']){
+    const registration=structuredClone(f.v3.projectRegistration);modify(registration);
+    assert.throws(()=>createV3PreparationAdapter({policy,projectRegistration:registration,registrationCommitment,keyring:f.v3.keyring,
+      collectContext,appToken:'synthetic-app-token',request:f.request}),/invalid-v3-adapter/);
+  }
 });
 
 test('v3 refuses invalid commitments, visibility or fork before object creation',async()=>{
