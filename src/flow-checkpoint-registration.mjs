@@ -7,6 +7,10 @@ const id = value => typeof value === 'string' && value.length > 0 && value.lengt
 const branchRef = value => typeof value === 'string' && /^refs\/heads\/[A-Za-z0-9._/-]{1,200}$/.test(value)
   && !value.includes('..') && !value.includes('//') && !value.includes('@{')
   && value.split('/').every(part => part && !part.startsWith('.') && !part.endsWith('.') && !part.endsWith('.lock'));
+export const isCheckpointBranchRef = branchRef;
+export const CHECKPOINT_BRANCH_REF = 'refs/heads/agent-github-flow/checkpoints';
+export const isCheckpointRegistration = registration => object(registration) && id(registration.repositoryId)
+  && registration.ref === CHECKPOINT_BRANCH_REF && oid(registration.genesisOid) && parseFlowTimestamp(registration.cutoverAt) !== null;
 
 // This only checks a trusted registration against independently supplied GitHub
 // observations. It cannot authenticate the registration or API responses, and
@@ -15,8 +19,7 @@ export function observeCheckpointGenesis(input) {
   if (!object(input)) return blocked('invalid-input');
   const { registration, repositoryId, ref, comparison } = input;
   if (registration === null || registration === undefined) return blocked('not-registered');
-  if (!object(registration) || !id(registration.repositoryId) || !branchRef(registration.ref)
-      || !oid(registration.genesisOid) || parseFlowTimestamp(registration.cutoverAt) === null) return blocked('invalid-registration');
+  if (!isCheckpointRegistration(registration)) return blocked('invalid-registration');
   if (repositoryId !== registration.repositoryId) return blocked('repository-mismatch');
   if (!object(ref)) return blocked('missing-ref');
   if (ref.ref !== registration.ref || ref.object?.type !== 'commit' || !oid(ref.object?.sha)) return blocked('invalid-ref');

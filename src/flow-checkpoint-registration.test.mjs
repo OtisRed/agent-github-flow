@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { observeCheckpointGenesis } from './flow-checkpoint-registration.mjs';
 
 const fixture = () => {
-  const genesisOid = 'a'.repeat(40); const headOid = 'b'.repeat(40); const ref = 'refs/heads/agent-flow/checkpoints';
+  const genesisOid = 'a'.repeat(40); const headOid = 'b'.repeat(40); const ref = 'refs/heads/agent-github-flow/checkpoints';
   return { registration: { repositoryId: 'repo', ref, genesisOid, cutoverAt: '2026-01-01T10:00:00Z' }, repositoryId: 'repo',
     ref: { ref, object: { type: 'commit', sha: headOid } },
     comparison: { status: 'ahead', ahead_by: 1, behind_by: 0, base_commit: { sha: genesisOid },
@@ -37,6 +37,8 @@ test('blocks missing registration, foreign repositories and missing or mismatche
 test('blocks invalid registration names, invalid ancestry and wrong compared head', () => {
   rejected(v => { v.registration.ref = 'refs/heads/../main'; }, 'invalid-registration');
   rejected(v => { v.registration.ref = 'refs/heads/thing.lock'; }, 'invalid-registration');
+  rejected(v => { v.registration.ref = 'refs/heads/main'; }, 'invalid-registration');
+  rejected(v => { v.registration.ref = 'refs/heads/smoke'; }, 'invalid-registration');
   rejected(v => { v.registration.cutoverAt = 'invalid'; }, 'invalid-registration');
   rejected(v => { v.comparison.status = 'diverged'; }, 'invalid-ancestry');
   rejected(v => { v.comparison.merge_base_commit.sha = 'c'.repeat(40); }, 'invalid-ancestry');

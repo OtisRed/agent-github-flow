@@ -1,3 +1,5 @@
+import { isCheckpointBranchRef } from './flow-checkpoint-registration.mjs';
+
 const oid = value => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
 
 // request is a trusted authenticated GET-only transport. URLs are constructed
@@ -5,12 +7,22 @@ const oid = value => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
 export function createCheckpointGitReader({ owner, repo, request } = {}) {
   if (!/^[A-Za-z0-9-]{1,39}$/.test(owner ?? '') || !/^[A-Za-z0-9_.-]{1,100}$/.test(repo ?? '')
       || repo === '.' || repo === '..' || typeof request !== 'function') throw Error('invalid-checkpoint-reader');
-  const root = `https://api.github.com/repos/${owner}/${repo}/git`;
+  const apiRoot = `https://api.github.com/repos/${owner}/${repo}`;
+  const root = `${apiRoot}/git`;
   const get = (kind, value, query = '') => {
     if (!oid(value)) throw Error('invalid-oid');
     return request(`${root}/${kind}/${value}${query}`);
   };
   return Object.freeze({
+    readRepository: () => request(apiRoot),
+    readRef: value => {
+      if (!isCheckpointBranchRef(value)) throw Error('invalid-ref');
+      return request(`${root}/ref/${value.slice('refs/'.length)}`);
+    },
+    compare: (base, head) => {
+      if (!oid(base) || !oid(head)) throw Error('invalid-oid');
+      return request(`${apiRoot}/compare/${base}...${head}`);
+    },
     readCommit: value => get('commits', value),
     readTree: (value, options) => {
       if (!options || options.recursive !== true || Object.keys(options).length !== 1) throw Error('recursive-read-required');

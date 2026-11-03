@@ -109,6 +109,12 @@ Prototyp `src/flow-checkpoint-registration.mjs` sprawdza wyłącznie zgodność
 rejestracji z repozytorium, refem i obserwowanym porównaniem genesis do HEAD.
 Jego wynik wprost nie deklaruje ochrony przed takim cofnięciem; caller musi
 jeszcze uwierzytelnić rejestr, pobrać właściwe porównanie i odczytać ref ponownie.
+Kandydat rezerwuje wspólny ref `refs/heads/agent-github-flow/checkpoints`.
+Odczytowy adapter porównuje repozytorium, ten ref i historię, ponawia odczyt
+refu oraz gałęzi domyślnej i blokuje przypadek, gdy ref techniczny jest
+domyślny. Samo zarezerwowanie nazwy nie dowodzi, że istniejąca gałąź nie jest
+używana przez produkt; onboarding musi to wcześniej ustalić i nie może jej
+nadpisać. Testy tego adaptera używają fikcyjnych odpowiedzi.
 Ochrona refu przed usunięciem i force-push również nie dowodzi, że uprawniony
 administrator nie zmieni ustawień. Nie wolno deklarować ochrony przed takim
 cofnięciem bez osobnego dowodu.
