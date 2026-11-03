@@ -246,7 +246,9 @@ Kandydat prywatnego wpisu rejestracji łączy istniejący klucz źródła relay,
 repozytorium, Project, pole statusu, App, reguły, zaufanych autorów oraz
 rejestrację checkpointu v2. `src/flow-project-registration.mjs` sprawdza tylko
 jego format i zgodność z wybraną trasą; nie uwierzytelnia danych ani nie
-zapisuje ich. Wpis nie powinien trafiać do publicznych logów. Naturalnym
+zapisuje ich. Odłączony resolver dwukrotnie odczytuje ID wskazanego issue i
+repozytorium, zanim zbuduje policy dla pojedynczego przebiegu; nie autoryzuje
+zapisu i używa w testach fikcyjnego transportu. Wpis nie powinien trafiać do publicznych logów. Naturalnym
 miejscem dostępu dla centralnego joba jest chroniony environment secret, ale
 konieczne pozostają atomowość onboardingu, obsługa utraty wpisu oraz wybór
 projektów w nocnym przebiegu bez ujawniania prywatnych danych. Obecne trasy
