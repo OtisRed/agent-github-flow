@@ -31,7 +31,8 @@ function fixture() {
   const expectedBinding={repositoryId:'repo-id',repository:'owner/project',projectId:'project',statusFieldId:'status',issueId:'issue',issueNumber:1,
     appId:12,updateRulesetId:1,historyRulesetId:2,trustedAuthorIds:['user'],
     commentId:'4',commentDigest:digest,checkpointOid:'b'.repeat(40)};
-  return { state, writes, collect, transport: { projectId: 'project', statusFieldId: 'status', setStatus }, policy, expectedBinding };
+  const verifyProtection=async()=>({kind:'checkpoint-protection-observed',repositoryId:'repo-id',appId:12,updateRulesetId:1,historyRulesetId:2});
+  return { state, writes, collect, transport: { projectId: 'project', statusFieldId: 'status', setStatus }, policy, expectedBinding, verifyProtection };
 }
 
 test('performs exactly one bounded status mutation and checks the resulting state', async () => {
@@ -99,6 +100,15 @@ test('rejects a binding from a different handoff before writing',async()=>{
     const f=fixture();f.expectedBinding[key]=value;
     assert.deepEqual(await runPendingProjectStatusStep(f),{kind:'blocked',reason:'handoff-binding-mismatch'});assert.equal(f.writes.length,0);
   }
+});
+test('does not write a status if checkpoint protection is no longer verified',async()=>{
+  const f=fixture();f.verifyProtection=async()=>({kind:'blocked'});
+  assert.deepEqual(await runPendingProjectStatusStep(f),{kind:'blocked',reason:'protection-unverified'});assert.equal(f.writes.length,0);
+});
+test('does not claim a confirmed status if protection changes after mutation',async()=>{
+  const f=fixture();let count=0;f.verifyProtection=async()=>++count===1
+    ?{kind:'checkpoint-protection-observed',repositoryId:'repo-id',appId:12,updateRulesetId:1,historyRulesetId:2}:{kind:'blocked'};
+  assert.deepEqual(await runPendingProjectStatusStep(f),{kind:'status-write-uncertain',retryAllowed:false});assert.equal(f.writes.length,1);
 });
 
 test('composes the status step with the policy-bound PAT transport', async () => {

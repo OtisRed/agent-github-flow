@@ -39,7 +39,7 @@ export async function runFirstHandoffCycle({ policy, collect, verifyProtection, 
     if(!binding || (initialResult.kind==='initial-pending-observed'&&!isDeepStrictEqual(initialResult.binding,binding))) return stopped('pending-read');
   } catch { return stopped('pending-read'); }
   if (plan.kind==='status-update-planned') {
-    try { result=await runPendingProjectStatusStep({policy,collect,transport,expectedBinding:structuredClone(binding)}); } catch { return stopped('status'); }
+    try { result=await runPendingProjectStatusStep({policy,collect,transport,verifyProtection,expectedBinding:structuredClone(binding)}); } catch { return stopped('status'); }
     if (result?.kind!=='status-target-observed'||!isDeepStrictEqual(result.binding,binding)) return stopped('status');
   } else if (plan.kind!=='commit-handoff-planned') return stopped('pending-read');
   try { result=await runPendingCommitPublicationStep({policy,collect,verifyProtection,prepare,publish,observe,expectedBinding:structuredClone(binding)}); } catch { return stopped('commit'); }

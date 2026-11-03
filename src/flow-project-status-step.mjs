@@ -12,6 +12,8 @@ const matchesPolicy = (observation, policy) => matchesHandoffSubject(observation
   && observation.checkpoint.repositoryFullName === policy.repository && observation.project?.repository === policy.repository
   && observation.project.projectId === policy.projectId && observation.expectedProjectId === policy.projectId
   && observation.project.statusFieldId === policy.statusFieldId && isDeepStrictEqual(observation.trustedAuthorIds, policy.trustedAuthorIds);
+const protectedBy = (value,policy) => value?.kind==='checkpoint-protection-observed'&&value.repositoryId===policy.repositoryId
+  &&value.appId===policy.appId&&value.updateRulesetId===policy.updateRulesetId&&value.historyRulesetId===policy.historyRulesetId;
 
 // One bounded step, not a production entrypoint. collect must be a trusted,
 // authenticated, complete branch-checkpoint/Project/handoff collector. The
@@ -21,8 +23,8 @@ const matchesPolicy = (observation, policy) => matchesHandoffSubject(observation
 // a manual writer can still race even with identical pre/post observations.
 // transport must be a dedicated PAT transport bound to the same policy, never
 // an arbitrary GraphQL writer. No runtime wiring is provided here.
-export async function runPendingProjectStatusStep({ collect, transport, policy, expectedBinding } = {}) {
-  if (typeof collect !== 'function' || typeof transport?.setStatus !== 'function' || !validPolicy(policy)) return blocked('invalid-input');
+export async function runPendingProjectStatusStep({ collect, transport, policy, expectedBinding, verifyProtection } = {}) {
+  if (typeof collect !== 'function' || typeof verifyProtection !== 'function' || typeof transport?.setStatus !== 'function' || !validPolicy(policy)) return blocked('invalid-input');
   policy = structuredClone(policy);
   if (transport.projectId !== policy.projectId || transport.statusFieldId !== policy.statusFieldId) return blocked('transport-policy-mismatch');
   let first; let second; let plan;
@@ -35,6 +37,7 @@ export async function runPendingProjectStatusStep({ collect, transport, policy, 
     if (!binding || !isDeepStrictEqual(binding,expectedBinding)) return blocked('handoff-binding-mismatch');
     second = structuredClone(await collect());
     if (!isDeepStrictEqual(first, second) || !isDeepStrictEqual(plan, planPendingBranchHandoff(second))) return blocked('snapshot-changed');
+    if (!protectedBy(await verifyProtection(),policy)) return blocked('protection-unverified');
   } catch { return blocked('preflight-unavailable'); }
   let result;
   try {
@@ -53,6 +56,7 @@ export async function runPendingProjectStatusStep({ collect, transport, policy, 
         || planPendingBranchHandoff(after).kind !== 'commit-handoff-planned') {
       return { kind: 'status-write-uncertain', retryAllowed: false };
     }
+    if (!protectedBy(await verifyProtection(),policy)) return { kind:'status-write-uncertain', retryAllowed:false };
   } catch { return { kind: 'status-write-uncertain', retryAllowed: false }; }
   const binding=handoffBinding(policy,plan.commentId,plan.commentDigest,plan.expectedCheckpointOid);
   if (!binding) return { kind:'status-write-uncertain', retryAllowed:false };
