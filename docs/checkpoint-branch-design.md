@@ -95,10 +95,44 @@ zatrzymuje przetwarzanie, ale odczyty nie dowodzą braku niewykrytego wyścigu.
 Świeże native reopen obsługuje się przed późniejszym handoffem. Reentry ma
 zachować dowód ostatniego komentarza i powiązanie z nową epoką, doprowadzić
 otwarte issue do `needs-design`, a dopiero później dopuścić nowy handoff.
-Historyczne reopen sprzed ustalonego cutover nie jest nowym reentry. Dokładna
-tabela stanów przerwanego reentry, w tym kolejnego reopen i zamknięcia w
-trakcie, musi powstać przed implementacją; nie zakładać, że stary sentinel
-Projectu z draftu #25 można bez zmian przenieść do gałęzi.
+Historyczne reopen w chwili cutover lub wcześniejsze nie jest nowym reentry.
+
+Każdy krok wymaga pełnego snapshotu, jednego automatycznego właściciela,
+jednoznacznej istniejącej karty, aktualnego i powiązanego z tym issue dowodu
+native reopen oraz potwierdzenia wcześniejszego zapamiętanego komentarza,
+jeśli istnieje. Tożsamość zdarzenia reopen jest istniejącą tożsamością
+GitHuba, nie nowym identyfikatorem operacji. Rekord nie usuwa starego dowodu
+po zakończeniu reentry; zmiana lub brak tego komentarza zatrzymuje proces.
+Rekord `pending-reentry` i `reentered` wiąże stabilny ID reopen z dokładną,
+chronioną wartością cutover. Wznowienie po zmianie ID albo cutover blokuje
+krok. Każdy późniejszy `pending` i `committed` zachowuje ID ostatniego
+obsłużonego reopen, powiązany cutover oraz fakt zakończenia reentry, tak aby
+zwykły handoff nie wymazał informacji o już obsłużonej epoce. Porządek
+zdarzeń ustala kompletny dowód native; równego czasu zdarzeń nie wolno
+rozstrzygać przez zgadywanie z ich ID. Tak samo porządek komentarza względem
+reopen wymaga ścisłego `comment.createdAt > reopen.createdAt`; równy czas lub
+niepełny dowód blokuje handoff, bez rozstrzygania kolejności przez ID.
+
+| Stan rekordu | Sprawdzenie | Jedna dopuszczalna następna czynność |
+| --- | --- | --- |
+| `committed`, `reentered` albo pierwszy wpis bez wcześniejszego handoffu | Issue jest otwarte; latest native reopen jest po cutover, należy do nowej epoki i nie został już obsłużony w zapisanej epoce; poprzednie reentry, jeśli było, jest zakończone | Zapisać `pending-reentry` z dowodem nowej epoki, dokładnym cutover, aktualnym statusem i zachowanym wcześniejszym checkpointem. |
+| `committed` lub `reentered` | Latest native reopen jest tym samym zdarzeniem co już obsłużona epoka | Nie rozpoczynać kolejnego reentry; rozpatrywać tylko zgodny zwykły handoff albo brak pracy. |
+| `pending-reentry` | Ta sama epoka, issue nadal otwarte; status to zapisany stan początkowy różny od `needs-design` | Ustawić `needs-design` i osobno odczytać wynik. |
+| `pending-reentry` | Ta sama epoka, issue nadal otwarte; status to `needs-design` | Warunkowo zapisać `reentered` dla tej epoki, zachowując dawny dowód. |
+| `reentered` | Ta sama epoka; status nadal `needs-design`; brak nowego handoffu po reopen | Bez zapisu; oczekiwać przekazania. |
+| `reentered` | Ta sama epoka; status nadal `needs-design`; najnowszy zaufany handoff utworzono po reopen | Rozpocząć zwykły handoff według jego tabeli i dowodu nowej epoki. |
+| Dowolny | Issue jest zamknięte, karta jest niejednoznaczna, epoka lub wcześniejszy dowód są niedostępne | Nie wykonywać kroku reentry; stan zamknięcia rozlicza odrębny właściciel projekcji. |
+| Zwykły `pending` handoffu | Późniejsze native reopen należy do innej epoki | Zatrzymać się; nie kończyć starego handoffu ani nie zastępować go nową epoką bez osobnej procedury odzyskania. |
+| `pending-reentry` | Odczytano późniejsze reopen niż zapisane w rekordzie albo status inny niż znane stany pośrednie | Zatrzymać się; nie kończyć starego reentry ani nie zastępować jego dowodu bez jawnej procedury odzyskania. |
+
+Jeśli stan początkowy to `needs-design`, pierwszy wiersz `pending-reentry`
+nie aktualizuje statusu; następny zapis zatwierdza reentry. Niejasny wynik
+mutacji wymaga świeżego odczytu przed dalszą decyzją. Nowy handoff nie
+zwalnia z weryfikacji dawnego checkpointu i nie wyprzedza reentry. Zamknięcie
+issue podczas przerwanego reentry nie uprawnia tego modułu do jego ponownego
+otwarcia. Zasady automatycznego wznowienia po kolejnym reopen oraz dokładny
+schemat rekordu pozostają otwarte; stary sentinel Projectu z draftu #25 nie
+jest gotowym rozwiązaniem dla gałęzi.
 
 ## Weryfikacja przed uruchomieniem
 
