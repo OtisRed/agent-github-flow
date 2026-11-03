@@ -181,7 +181,9 @@ nie wdrożona funkcja; brak wiarygodnej rezerwacji lub niezgodność danych blok
 
 Oddzielny moduł `src/flow-checkpoint-v2.mjs` definiuje i sprawdza kształt zapisu
 oraz jego ciągłość; nie ustanawia zaufanego bootstrapu ani uprawnienia do
-zapisu i nie jest jeszcze używany przez kontroler. Rekordu v1 nie wolno uznawać
+zapisu i nie jest jeszcze używany przez kontroler. Odłączony planner v2 wymaga
+deklaracji wersji schematu w rejestracji zgodnej z repozytorium i granicą
+`cutoverAt`, ale sam nie potwierdza jej autentyczności ani genesis. Rekordu v1 nie wolno uznawać
 za bezpieczne v2 przez zmianę numeru wersji.
 
 `src/flow-project-item-resolver.mjs` wyszukuje aktywną kartę issue przez pełną
