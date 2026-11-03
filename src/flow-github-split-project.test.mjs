@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readSplitProjectIssue, SPLIT_PROJECT_QUERY, SPLIT_ISSUE_QUERY } from './flow-github-split-project.mjs';
+import { readSplitProjectIssue, readBranchProjectIssue, SPLIT_PROJECT_QUERY, BRANCH_PROJECT_QUERY, SPLIT_ISSUE_QUERY, BRANCH_ISSUE_QUERY } from './flow-github-split-project.mjs';
 
 const project = () => ({ data: { user: { projectV2: { id: 'project' } }, node: { id: 'item', isArchived: false,
   project: { id: 'project', statusField: { id: 'status-field', name: 'Status', dataType: 'SINGLE_SELECT',
@@ -68,4 +68,31 @@ test('rejects missing or repeated REST cursors and API failures without leaking 
   assert.deepEqual(await readSplitProjectIssue(value), { kind: 'blocked', reason: 'invalid-cursor' });
   value = input(); value.issueGraphql = async () => ({ errors: [{ message: 'no access' }] });
   assert.deepEqual(await readSplitProjectIssue(value), { kind: 'blocked', reason: 'invalid-issue' });
+});
+
+test('branch checkpoint reads the Project without legacy checkpoint fields or parsing issue markers', async () => {
+  const value = input(); delete value.checkpointFieldId; delete value.checkpointFieldName;
+  value.projectGraphql = async (query, variables) => {
+    assert.equal(query, BRANCH_PROJECT_QUERY);
+    assert.equal(Object.hasOwn(variables, 'checkpointName'), false);
+    const response = project(); delete response.data.node.project.checkpointField; delete response.data.node.checkpoint;
+    return response;
+  };
+  value.issueGraphql = async query => { assert.equal(query, BRANCH_ISSUE_QUERY); assert.doesNotMatch(query, /\bbody\b/);
+    const response = issue(); delete response.data.node.body; return response; };
+  const result = await readBranchProjectIssue(value);
+  assert.equal(result.kind, 'branch-project-observed');
+  assert.equal(result.currentStatus, 'needs-design');
+  assert.equal(Object.hasOwn(result, 'marker'), false);
+  assert.equal(Object.hasOwn(result, 'witness'), false);
+  assert.equal(Object.hasOwn(result, 'issueBody'), false);
+});
+
+test('branch Project reader rejects duplicate cards and changed issue data', async () => {
+  let value = input(); value.projectGraphql = async () => project(); value.issueGraphql = async () => issue();
+  value.listItems = async () => ({ items: [card(), { ...card(), nodeId: 'other' }], nextCursor: null });
+  assert.deepEqual(await readBranchProjectIssue(value), { kind: 'blocked', reason: 'ambiguous-card' });
+  value = input(); value.projectGraphql = async () => project(); let count = 0;
+  value.issueGraphql = async () => { const response = issue(); if (++count > 1) response.data.node.updatedAt = '2026-01-01T00:00:01Z'; return response; };
+  assert.deepEqual(await readBranchProjectIssue(value), { kind: 'blocked', reason: 'snapshot-changed' });
 });

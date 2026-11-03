@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createFlowReadTransports } from './flow-read-transports.mjs';
-import { SPLIT_PROJECT_QUERY, SPLIT_ISSUE_QUERY } from './flow-github-split-project.mjs';
+import { SPLIT_PROJECT_QUERY, BRANCH_PROJECT_QUERY, SPLIT_ISSUE_QUERY, BRANCH_ISSUE_QUERY } from './flow-github-split-project.mjs';
 import { HANDOFF_QUERY } from './flow-handoff-reader.mjs';
 import { EPOCH_QUERY } from './flow-epoch-reader.mjs';
 import { NATIVE_EPOCH_QUERY } from './flow-native-epoch-reader.mjs';
@@ -46,6 +46,17 @@ test('uses project token and a fixed GET endpoint for Project item bindings', as
   assert.equal(calls[0].url, 'https://api.github.com/users/owner/projectsV2/13/items?per_page=100');
   assert.equal(calls[0].options.method, 'GET'); assert.equal(calls[0].options.headers.Authorization, 'Bearer project-token');
   assert.equal(Object.hasOwn(calls[0].options, 'body'), false);
+});
+
+test('routes the branch-checkpoint Project query to the Project token only', async () => {
+  const { calls, transports } = fixture();
+  await transports.projectGraphql(BRANCH_PROJECT_QUERY, {});
+  assert.equal(calls[0].options.headers.Authorization, 'Bearer project-token');
+  assert.throws(() => transports.issueGraphql(BRANCH_PROJECT_QUERY, {}), /unsupported-read/);
+  assert.equal(calls.length, 1);
+  await transports.issueGraphql(BRANCH_ISSUE_QUERY, {});
+  assert.equal(calls[1].options.headers.Authorization, 'Bearer issue-token');
+  assert.throws(() => transports.projectGraphql(BRANCH_ISSUE_QUERY, {}), /unsupported-read/);
 });
 
 test('rejects invalid credentials and sanitizes transport or response failures', async () => {

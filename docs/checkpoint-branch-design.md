@@ -58,6 +58,12 @@ drzewem i żąda rekurencyjnego odczytu oraz blobu indeksu. Testy używają
 fikcyjnego transportu; prawdziwy adapter musi wykonać te odczyty w wybranym
 repozytorium, a osobny mechanizm powiązać commit z zarejestrowanym refem.
 Plan jest danymi do dalszej weryfikacji, nie upoważnieniem do zapisu.
+`readBranchProjectIssue` we wspólnym readerze rozdzielonych poświadczeń
+odczytuje status i powiązanie karty z issue bez dawnego pola checkpointu na
+Project i bez treści issue. Utrzymuje sprawdzenie tożsamości, kompletności
+listy kart, braku duplikatów i ponowny odczyt. Jest obserwacją, nie dowodem
+pochodzenia poświadczeń, zaufania do autorów ani wyłączności zapisu; testy
+używają fikcyjnych odpowiedzi. Nie podłącza jeszcze nowego kontrolera.
 Adapter `src/flow-checkpoint-git-reader.mjs` buduje wyłącznie adresy odczytowe
 GitHub API dla wskazanego repozytorium, a wspólny transport kieruje je przez
 token App i odrzuca przekierowania. Test kompozycji używa fikcyjnych odpowiedzi;

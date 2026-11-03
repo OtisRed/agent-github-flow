@@ -1,12 +1,12 @@
 import { createProjectItemsReader } from './flow-project-rest.mjs';
-import { SPLIT_PROJECT_QUERY, SPLIT_ISSUE_QUERY } from './flow-github-split-project.mjs';
+import { SPLIT_PROJECT_QUERY, BRANCH_PROJECT_QUERY, SPLIT_ISSUE_QUERY, BRANCH_ISSUE_QUERY } from './flow-github-split-project.mjs';
 import { HANDOFF_QUERY } from './flow-handoff-reader.mjs';
 import { EPOCH_QUERY } from './flow-epoch-reader.mjs';
 import { NATIVE_EPOCH_QUERY } from './flow-native-epoch-reader.mjs';
 import { createCheckpointGitReader } from './flow-checkpoint-git-reader.mjs';
 
 const GRAPHQL_URL = 'https://api.github.com/graphql';
-const issueQueries = new Set([SPLIT_ISSUE_QUERY, HANDOFF_QUERY, EPOCH_QUERY, NATIVE_EPOCH_QUERY]);
+const issueQueries = new Set([SPLIT_ISSUE_QUERY, BRANCH_ISSUE_QUERY, HANDOFF_QUERY, EPOCH_QUERY, NATIVE_EPOCH_QUERY]);
 const validToken = value => typeof value === 'string' && value.length > 0 && !/[\s\x00-\x1f\x7f]/.test(value);
 const limit = 8_000_000;
 
@@ -36,7 +36,7 @@ export function createFlowReadTransports({ projectToken, issueToken, request = f
     return (await call(GRAPHQL_URL, token, 'POST', body)).data;
   };
   const projectGraphql = (query, variables) => {
-    if (query !== SPLIT_PROJECT_QUERY) throw Error('unsupported-read');
+    if (query !== SPLIT_PROJECT_QUERY && query !== BRANCH_PROJECT_QUERY) throw Error('unsupported-read');
     return graphql(query, variables, projectToken);
   };
   const issueGraphql = (query, variables) => {

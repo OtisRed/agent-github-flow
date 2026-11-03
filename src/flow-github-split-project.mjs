@@ -14,8 +14,23 @@ export const SPLIT_PROJECT_QUERY = `query FlowSplitProject($owner: String!, $num
     }
   }
 }`;
+export const BRANCH_PROJECT_QUERY = `query FlowBranchProject($owner: String!, $number: Int!, $item: ID!, $statusName: String!) {
+  user(login: $owner) { projectV2(number: $number) { id } }
+  node(id: $item) {
+    ... on ProjectV2Item {
+      id isArchived project {
+        id
+        statusField: field(name: $statusName) { ... on ProjectV2SingleSelectField { id name dataType options { id name } } }
+      }
+      status: fieldValueByName(name: $statusName) { ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2SingleSelectField { id } } } }
+    }
+  }
+}`;
 export const SPLIT_ISSUE_QUERY = `query FlowSplitIssue($issue: ID!) {
   node(id: $issue) { ... on Issue { id number state body updatedAt repository { nameWithOwner } } }
+}`;
+export const BRANCH_ISSUE_QUERY = `query FlowBranchIssue($issue: ID!) {
+  node(id: $issue) { ... on Issue { id number state updatedAt repository { nameWithOwner } } }
 }`;
 
 const blocked = reason => ({ kind: 'blocked', reason });
@@ -27,45 +42,52 @@ const dataOf = response => response && (!Object.hasOwn(response, 'errors')
 // and the item/content binding through the user-owned Project REST API.
 // listItems receives only validated owner/number and an opaque next cursor;
 // its transport must constrain requests to the expected GitHub API endpoint.
-export async function readSplitProjectIssue(input) {
+export async function readSplitProjectIssue(input) { return readProjectIssue(input, false); }
+
+// Branch checkpoints require no Project checkpoint field and never parse an
+// issue-body marker. This remains an observation, not authority to write.
+export async function readBranchProjectIssue(input) { return readProjectIssue(input, true); }
+
+async function readProjectIssue(input, branchCheckpoint) {
   if (!input || typeof input.projectGraphql !== 'function' || typeof input.issueGraphql !== 'function'
     || typeof input.listItems !== 'function' || !['projectId', 'itemId', 'issueId', 'repository', 'projectOwner',
-      'statusFieldId', 'statusFieldName', 'checkpointFieldId', 'checkpointFieldName'].every(k => nonempty(input[k]))
+      'statusFieldId', 'statusFieldName'].every(k => nonempty(input[k]))
     || !/^[A-Za-z0-9-]{1,39}$/.test(input.projectOwner) || !Number.isSafeInteger(input.projectNumber) || input.projectNumber < 1
     || !Number.isSafeInteger(input.number) || input.number < 1
-    || input.statusFieldId === input.checkpointFieldId || input.statusFieldName === input.checkpointFieldName) return blocked('invalid-input');
+    || (!branchCheckpoint && (!nonempty(input.checkpointFieldId) || !nonempty(input.checkpointFieldName)
+      || input.statusFieldId === input.checkpointFieldId || input.statusFieldName === input.checkpointFieldName))) return blocked('invalid-input');
   const projectVars = { owner: input.projectOwner, number: input.projectNumber, item: input.itemId,
-    statusName: input.statusFieldName, checkpointName: input.checkpointFieldName };
+    statusName: input.statusFieldName, ...(!branchCheckpoint ? { checkpointName: input.checkpointFieldName } : {}) };
   const getProject = async () => {
-    try { return dataOf(await input.projectGraphql(SPLIT_PROJECT_QUERY, projectVars)); } catch { return null; }
+    try { return dataOf(await input.projectGraphql(branchCheckpoint ? BRANCH_PROJECT_QUERY : SPLIT_PROJECT_QUERY, projectVars)); } catch { return null; }
   };
   const getIssue = async () => {
-    try { return dataOf(await input.issueGraphql(SPLIT_ISSUE_QUERY, { issue: input.issueId }))?.node ?? null; } catch { return null; }
+    try { return dataOf(await input.issueGraphql(branchCheckpoint ? BRANCH_ISSUE_QUERY : SPLIT_ISSUE_QUERY, { issue: input.issueId }))?.node ?? null; } catch { return null; }
   };
   const first = await getProject(); const issue = await getIssue(); const item = first?.node;
   if (first?.user?.projectV2?.id !== input.projectId || item?.id !== input.itemId || item.isArchived !== false
     || item.project?.id !== input.projectId) return blocked('invalid-item');
   if (issue?.id !== input.issueId || issue.repository?.nameWithOwner !== input.repository
     || issue.number !== input.number || !['OPEN', 'CLOSED'].includes(issue.state)
-    || typeof issue.body !== 'string' || !nonempty(issue.updatedAt)) return blocked('invalid-issue');
+    || (!branchCheckpoint && typeof issue.body !== 'string') || !nonempty(issue.updatedAt)) return blocked('invalid-issue');
   const statusField = item.project.statusField; const checkpointField = item.project.checkpointField;
   if (statusField?.id !== input.statusFieldId || statusField.name !== input.statusFieldName || statusField.dataType !== 'SINGLE_SELECT'
-    || !Array.isArray(statusField.options) || checkpointField?.id !== input.checkpointFieldId
-    || checkpointField.name !== input.checkpointFieldName || checkpointField.dataType !== 'TEXT') return blocked('invalid-fields');
+    || !Array.isArray(statusField.options) || (!branchCheckpoint && (checkpointField?.id !== input.checkpointFieldId
+    || checkpointField.name !== input.checkpointFieldName || checkpointField.dataType !== 'TEXT'))) return blocked('invalid-fields');
   if (statusField.options.some(o => !nonempty(o?.id) || !nonempty(o?.name))
     || new Set(statusField.options.map(o => o.id)).size !== statusField.options.length
     || new Set(statusField.options.map(o => o.name)).size !== statusField.options.length) return blocked('invalid-options');
   if (!item.status || item.status.field?.id !== input.statusFieldId || !nonempty(item.status.optionId)
     || !statusField.options.some(o => o.id === item.status.optionId && o.name === item.status.name)) return blocked('invalid-status');
-  if (item.checkpoint !== null && (!item.checkpoint || item.checkpoint.field?.id !== input.checkpointFieldId
+  if (!branchCheckpoint && item.checkpoint !== null && (!item.checkpoint || item.checkpoint.field?.id !== input.checkpointFieldId
     || typeof item.checkpoint.text !== 'string')) return blocked('invalid-checkpoint-field');
   let witness = null;
-  if (item.checkpoint !== null) {
+  if (!branchCheckpoint && item.checkpoint !== null) {
     try { witness = JSON.parse(item.checkpoint.text); } catch { return blocked('invalid-checkpoint-json'); }
     if (!witness || typeof witness !== 'object' || Array.isArray(witness)) return blocked('invalid-checkpoint-json');
   }
-  const marker = readFlowMarker(issue.body);
-  if (marker.kind === 'blocked') return marker;
+  const marker = branchCheckpoint ? null : readFlowMarker(issue.body);
+  if (!branchCheckpoint && marker.kind === 'blocked') return marker;
   const fetchPage = async after => {
     let page;
     try { page = await input.listItems({ owner: input.projectOwner, projectNumber: input.projectNumber, after }); } catch { return null; }
@@ -94,6 +116,10 @@ export async function readSplitProjectIssue(input) {
       }
       const projectAgain = await getProject(); const issueAgain = await getIssue();
       if (JSON.stringify(projectAgain) !== JSON.stringify(first) || JSON.stringify(issueAgain) !== JSON.stringify(issue)) return blocked('snapshot-changed');
+      if (branchCheckpoint) return { kind: 'branch-project-observed', projectId: input.projectId, itemId: input.itemId,
+        repository: input.repository, statusFieldId: input.statusFieldId, issueNodeId: input.issueId, issueState: issue.state,
+        issueUpdatedAt: issue.updatedAt, currentStatus: item.status.name, statusOptionId: item.status.optionId,
+        statusOptions: structuredClone(statusField.options) };
       return { kind: 'snapshot', projectId: input.projectId, itemId: input.itemId, repository: input.repository,
         statusFieldId: input.statusFieldId, checkpointFieldId: input.checkpointFieldId,
         issueNodeId: input.issueId, issueState: issue.state, issueBody: issue.body, issueUpdatedAt: issue.updatedAt,
