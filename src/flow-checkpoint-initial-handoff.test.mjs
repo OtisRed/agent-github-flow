@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { planInitialBranchHandoff } from './flow-checkpoint-initial-handoff.mjs';
+import { planInitialBranchHandoff, planInitialV2Handoff } from './flow-checkpoint-initial-handoff.mjs';
 
 const body = '[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
 const digest = value => createHash('sha256').update(value, 'utf8').digest('hex');
@@ -28,6 +28,19 @@ test('plans only a pending record tied to the observed Project and checkpoint HE
   assert.deepEqual(result.commit.additions.map(item => item.path), ['index.json', 'issues/1.json']);
   assert.equal(result.itemId, 'item');
   assert.equal(result.targetOptionId, 'ready');
+});
+
+test('plans the first v2 handoff without a reservation only for explicit matching v2 registration', () => {
+  const v = fixture(); v.checkpoint.schemaVersion = 2;
+  v.registration = { repositoryId: 'repo-id', ref: 'refs/heads/agent-github-flow/checkpoints', genesisOid: 'a'.repeat(40),
+    cutoverAt: v.checkpoint.cutoverAt, checkpointSchemaVersion: 2 };
+  const plan = planInitialV2Handoff(v);
+  assert.equal(plan.kind, 'initial-handoff-v2-planned'); assert.equal(plan.record.version, 2); assert.equal(plan.record.reservation, null);
+  assert.equal(plan.commit.expectedHeadOid, v.checkpoint.headOid); assert.equal(v.checkpoint.selectedRecord, null);
+  v.registration.checkpointSchemaVersion = 1; assert.equal(planInitialV2Handoff(v).kind, 'blocked');
+  v.registration.checkpointSchemaVersion = 2; v.checkpoint.schemaVersion = 1; assert.equal(planInitialV2Handoff(v).kind, 'blocked');
+  v.checkpoint.schemaVersion = 2; v.checkpoint.index.issues.push({ number: 1, issueId: 'issue' });
+  assert.equal(planInitialV2Handoff(v).kind, 'blocked');
 });
 
 test('rejects foreign card or repository, an existing record, closed issues and done', () => {

@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { planInitialBranchHandoff } from './flow-checkpoint-initial-handoff.mjs';
+import { planInitialBranchHandoff, planInitialV2Handoff } from './flow-checkpoint-initial-handoff.mjs';
 import { planPendingBranchHandoff } from './flow-checkpoint-pending-handoff.mjs';
 import { planStatusReservation, planReservedHandoffCommit } from './flow-checkpoint-reservation-plan.mjs';
 import { isHandoffSubject, matchesHandoffSubject, handoffBinding } from './flow-handoff-binding.mjs';
@@ -69,13 +69,23 @@ async function runPublication({ policy, collect, verifyProtection, prepare, publ
     if (!isDeepStrictEqual(expected,await collect()) || !protectedBy(await verifyProtection(),policy)) return uncertain();
   } catch { return uncertain(); }
   const binding=handoffBinding(policy,plan.record.current.commentId,plan.record.current.digest,
-    ['initial-pending-observed','status-reservation-observed'].includes(resultKind)?newOid:oldOid);
+    ['initial-pending-observed','initial-v2-pending-observed','status-reservation-observed'].includes(resultKind)?newOid:oldOid);
   if (!binding) return uncertain();
   return { kind:resultKind, binding, retryAllowed:false };
 }
 
 export async function runInitialPublicationStep(input) {
   return runPublication(input, planInitialBranchHandoff, 'initial-handoff-planned', 'initial-pending-observed', 'initial-step-not-applicable');
+}
+
+export async function runInitialV2PublicationStep(input = {}) {
+  let registration;
+  try { registration = structuredClone(input.registration); } catch { return blocked('invalid-input'); }
+  if (typeof input.prepare !== 'function') return blocked('invalid-input');
+  const prepare = input.prepare;
+  return runPublication({ ...input, prepare: args => prepare({ ...args, registration: structuredClone(registration) }) },
+    observed => planInitialV2Handoff({ ...observed, registration }),
+    'initial-handoff-v2-planned', 'initial-v2-pending-observed', 'initial-v2-step-not-applicable');
 }
 
 // Only commits an existing first pending record after the target status is

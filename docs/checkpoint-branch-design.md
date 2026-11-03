@@ -202,6 +202,9 @@ tym przebiegu. Oczekiwanie i wznowienie nie są w tym kroku zaimplementowane.
 Oddzielny krok może następnie zaplanować i opublikować `committed` v2 po
 ponownym potwierdzeniu docelowego statusu, opcji i rezerwacji. Dowodzi on
 zaobserwowanego stanu, nie tego, który przebieg wykonał zmianę statusu.
+Pierwsze przekazanie może zostać zaplanowane i opublikowane jako `pending` v2
+bez rezerwacji tylko po uzyskaniu odpowiedniego snapshotu i rejestracji v2;
+same te kroki nie weryfikują jeszcze zaufanego bootstrapu w produkcji.
 
 `src/flow-project-item-resolver.mjs` wyszukuje aktywną kartę issue przez pełną
 paginację osobistego Projectu, odrzuca brak, duplikaty lub niespójny drugi

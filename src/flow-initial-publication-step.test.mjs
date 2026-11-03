@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { planInitialBranchHandoff } from './flow-checkpoint-initial-handoff.mjs';
+import { planInitialBranchHandoff, planInitialV2Handoff } from './flow-checkpoint-initial-handoff.mjs';
 import { planPendingBranchHandoff } from './flow-checkpoint-pending-handoff.mjs';
 import { planStatusReservation, planReservedHandoffCommit } from './flow-checkpoint-reservation-plan.mjs';
-import { runInitialPublicationStep, runPendingCommitPublicationStep, runStatusReservationPublicationStep, runReservedCommitPublicationStep } from './flow-initial-publication-step.mjs';
+import { runInitialPublicationStep, runPendingCommitPublicationStep, runStatusReservationPublicationStep, runReservedCommitPublicationStep, runInitialV2PublicationStep } from './flow-initial-publication-step.mjs';
 
 function fixture() {
   const body='[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
@@ -40,6 +40,33 @@ test('publishes one pending checkpoint only after fresh full audits and verifies
   const f=fixture();const result=await runInitialPublicationStep(f.input);assert.equal(result.kind,'initial-pending-observed');
   assert.equal(result.binding.issueId,'issue');assert.equal(result.binding.issueNumber,1);assert.equal(result.binding.checkpointOid,'c'.repeat(40));
   assert.deepEqual(f.state.calls,['collect','audit','collect','prepare','collect','audit','publish','observe','collect','audit']);
+});
+
+test('publishes the initial v2 checkpoint only with an explicit registration',async()=>{
+  const f=fixture();f.state.base.checkpoint.schemaVersion=2;
+  const registration={repositoryId:'repo-id',ref:'refs/heads/agent-github-flow/checkpoints',genesisOid:'a'.repeat(40),
+    cutoverAt:f.state.base.checkpoint.cutoverAt,checkpointSchemaVersion:2};
+  const plan=planInitialV2Handoff({...f.state.base,registration});assert.equal(plan.kind,'initial-handoff-v2-planned');
+  f.state.after=structuredClone(f.state.base);f.state.after.checkpoint.headOid='c'.repeat(40);
+  f.state.after.checkpoint.selectedRecord=structuredClone(plan.record);
+  f.state.after.checkpoint.index=JSON.parse(Buffer.from(plan.commit.additions.find(x=>x.path==='index.json').contents,'base64').toString());
+  f.input.registration=registration;
+  f.input.prepare=async({snapshot,after,registration:actual})=>{assert.deepEqual(snapshot,f.state.base.checkpoint);assert.deepEqual(after,plan.record);
+    assert.deepEqual(actual,registration);return {kind:'checkpoint-objects-prepared',expectedHeadOid:'b'.repeat(40),expectedTreeOid:'d'.repeat(40),
+      commit:{sha:'c'.repeat(40),tree:{sha:'d'.repeat(40)},parents:[{sha:'b'.repeat(40)}]}};};
+  const result=await runInitialV2PublicationStep(f.input);
+  assert.equal(result.kind,'initial-v2-pending-observed');assert.equal(result.binding.checkpointOid,'c'.repeat(40));
+});
+
+test('initial v2 does not prepare or publish against an unrelated registration',async()=>{
+  for (const change of ['repositoryId','cutoverAt']) {
+    const f=fixture();f.state.base.checkpoint.schemaVersion=2;
+    f.input.registration={repositoryId:'repo-id',ref:'refs/heads/agent-github-flow/checkpoints',genesisOid:'a'.repeat(40),
+      cutoverAt:f.state.base.checkpoint.cutoverAt,checkpointSchemaVersion:2};
+    f.input.registration[change]=change==='repositoryId'?'other':'2025-01-01T00:00:00Z';
+    assert.equal((await runInitialV2PublicationStep(f.input)).reason,'initial-v2-step-not-applicable');
+    assert.equal(f.state.calls.includes('prepare'),false);assert.equal(f.state.calls.includes('publish'),false);
+  }
 });
 test('does not publish without protection or when the source changes during preparation',async()=>{
   let f=fixture();f.state.protection.historyRulesetId=9;

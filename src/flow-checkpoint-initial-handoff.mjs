@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { FLOW_STATUSES, parseFlowComment } from './flow.mjs';
 import { matchesHandoffEpoch } from './flow-epoch-proof.mjs';
-import { planCheckpointCommit } from './flow-checkpoint-commit-plan.mjs';
+import { planCheckpointCommit, planCheckpointV2Commit } from './flow-checkpoint-commit-plan.mjs';
 
 const blocked = reason => ({ kind: 'blocked', reason });
 const active = value => FLOW_STATUSES.includes(value) && value !== 'done';
@@ -46,4 +46,18 @@ export function planInitialBranchHandoff(input) {
   if (commit.kind !== 'checkpoint-commit-plan') return commit;
   return { kind: 'initial-handoff-planned', record, commit, projectId: project.projectId, itemId: project.itemId,
     statusFieldId: project.statusFieldId, fromOptionId: currentOption.id, targetOptionId: targetOption.id };
+}
+
+// v2 still needs authenticated registration and independently proven bootstrap.
+// The v1 projection is evidence-only; only the v2 commit plan is returned.
+export function planInitialV2Handoff(input) {
+  if (input?.checkpoint?.schemaVersion !== 2) return blocked('invalid-v2-snapshot');
+  let projected; try { projected = structuredClone(input); } catch { return blocked('invalid-input'); }
+  projected.checkpoint.schemaVersion = 1;
+  const initial = planInitialBranchHandoff(projected);
+  if (initial.kind !== 'initial-handoff-planned') return blocked('initial-handoff-invalid');
+  const record = { ...initial.record, version: 2, reservation: null };
+  const commit = planCheckpointV2Commit({ snapshot: input.checkpoint, after: record, registration: input.registration });
+  if (commit.kind !== 'checkpoint-commit-plan') return blocked('initial-v2-plan-invalid');
+  return { ...initial, kind: 'initial-handoff-v2-planned', record, commit };
 }
