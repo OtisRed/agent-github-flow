@@ -2,6 +2,7 @@ import { readCheckpointTreePlan } from './flow-checkpoint-tree-reader.mjs';
 import { decodeCheckpointRecordIdentity } from './flow-checkpoint-record-identity.mjs';
 import { validateCheckpointInventory } from './flow-checkpoint-inventory.mjs';
 import { encodeCheckpointRecord } from './flow-checkpoint-record.mjs';
+import { encodeCheckpointV2 } from './flow-checkpoint-v2.mjs';
 
 const blocked = reason => ({ kind: 'blocked', reason });
 const MAX_INVENTORY_BYTES = 16 * 1024 * 1024;
@@ -13,6 +14,9 @@ const MAX_INVENTORY_BYTES = 16 * 1024 * 1024;
 export async function readCheckpointInventory(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.readBlob !== 'function') return blocked('invalid-input');
   const { repositoryId, readBlob } = input;
+  const schemaVersion = Object.hasOwn(input, 'schemaVersion') ? input.schemaVersion : 1;
+  if (![1, 2].includes(schemaVersion) || (schemaVersion === 2 && typeof input.expectedCutoverAt !== 'string'))
+    return blocked('invalid-schema-version');
   let selection = null;
   if (input.selection !== undefined) {
     if (!input.selection || typeof input.selection !== 'object' || Array.isArray(input.selection)
@@ -31,11 +35,12 @@ export async function readCheckpointInventory(input) {
     try { blob = await readBlob(entry.oid); } catch { return blocked('record-read-failed'); }
     if (!blob || blob.size !== entry.size) return blocked('record-size-mismatch');
     const decoded = decodeCheckpointRecordIdentity({ expectedOid: entry.oid, blob, repositoryId,
-      number: identity.number, issueId: identity.issueId });
+      number: identity.number, issueId: identity.issueId, schemaVersion });
     if (decoded.kind !== 'record-identity-verified') return decoded;
-    const encoded = encodeCheckpointRecord(decoded.record);
+    const encoded = schemaVersion === 2 ? encodeCheckpointV2(decoded.record) : encodeCheckpointRecord(decoded.record);
     if (encoded.kind !== 'encoded-record') return encoded;
     if (encoded.content !== JSON.stringify(decoded.record)) return blocked('noncanonical-record');
+    if (schemaVersion === 2 && decoded.record.cutoverAt !== input.expectedCutoverAt) return blocked('cutover-mismatch');
     if (selection && identity.number === selection.number) {
       if (identity.issueId !== selection.issueId) return blocked('selection-identity-mismatch');
       selectedRecord = decoded.record;
@@ -43,7 +48,7 @@ export async function readCheckpointInventory(input) {
     const { version, repositoryId: recordRepositoryId, number, issueId } = decoded.record;
     records.push({ path: entry.path, value: { version, repositoryId: recordRepositoryId, number, issueId } });
   }
-  const inventory = validateCheckpointInventory({ repositoryId, complete: true, index: plan.index, records });
+  const inventory = validateCheckpointInventory({ repositoryId, complete: true, index: plan.index, records, schemaVersion });
   if (inventory.kind !== 'valid-inventory') return inventory;
   const result = { kind: 'inventory-records-structurally-valid', commitOid: plan.commitOid, treeOid: plan.treeOid,
     issueCount: inventory.issueCount, index: plan.index, records };

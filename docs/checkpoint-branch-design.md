@@ -185,6 +185,10 @@ zapisu i nie jest jeszcze używany przez kontroler. Odłączony planner v2 wymag
 deklaracji wersji schematu w rejestracji zgodnej z repozytorium i granicą
 `cutoverAt`, ale sam nie potwierdza jej autentyczności ani genesis. Rekordu v1 nie wolno uznawać
 za bezpieczne v2 przez zmianę numeru wersji.
+Czytnik pełnego inwentarza wybiera format zgodny z rejestracją i zwraca go w
+snapshotcie; wymaga jednakowego v2 i granicy cutover we wszystkich rekordach.
+Nie oznacza to automatycznej migracji, zaufanego bootstrapu ani obsługi v2 przez
+preparer i Actions.
 
 `src/flow-project-item-resolver.mjs` wyszukuje aktywną kartę issue przez pełną
 paginację osobistego Projectu, odrzuca brak, duplikaty lub niespójny drugi

@@ -9,6 +9,8 @@ const number = value => Number.isSafeInteger(value) && value > 0;
 // its result establishes branch provenance, record contents or write safety.
 export function validateCheckpointInventory(input) {
   if (!object(input) || !id(input.repositoryId)) return blocked('invalid-input');
+  const schemaVersion = Object.hasOwn(input, 'schemaVersion') ? input.schemaVersion : 1;
+  if (![1, 2].includes(schemaVersion)) return blocked('invalid-schema-version');
   if (input.complete !== true) return blocked('incomplete-tree');
   const { repositoryId, index, records } = input;
   if (!object(index) || index.version !== 1 || index.repositoryId !== repositoryId
@@ -25,7 +27,7 @@ export function validateCheckpointInventory(input) {
   for (const entry of records) {
     if (!object(entry) || typeof entry.path !== 'string' || !object(entry.value)) return blocked('invalid-record');
     const record = entry.value;
-    if (record.version !== 1 || record.repositoryId !== repositoryId || !number(record.number)
+    if (record.version !== schemaVersion || record.repositoryId !== repositoryId || !number(record.number)
         || !id(record.issueId) || entry.path !== `issues/${record.number}.json`) return blocked('invalid-record');
     if (seen.has(record.number)) return blocked('duplicate-record');
     seen.add(record.number);

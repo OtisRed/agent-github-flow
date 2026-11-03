@@ -15,6 +15,8 @@ const content = text => Buffer.from(text, 'utf8').toString('base64');
 // issue/Project evidence, establish branch protection and handle rollback.
 // The returned private metadata and file contents must never be logged.
 export function planCheckpointCommit(input) {
+  if (Object.hasOwn(input?.snapshot ?? {}, 'schemaVersion') && input.snapshot.schemaVersion !== 1)
+    return blocked('invalid-v1-snapshot');
   return planCommit(input, encodeCheckpointRecord, verifyCheckpointContinuity);
 }
 
@@ -24,7 +26,8 @@ export function planCheckpointV2Commit(input) {
   const registration = input?.registration;
   if (!isCheckpointRegistration(registration) || registration.checkpointSchemaVersion !== 2
       || registration.repositoryId !== input?.snapshot?.repositoryId
-      || registration.cutoverAt !== input?.snapshot?.cutoverAt) return blocked('invalid-v2-registration');
+      || registration.cutoverAt !== input?.snapshot?.cutoverAt
+      || input?.snapshot?.schemaVersion !== 2) return blocked('invalid-v2-registration');
   return planCommit(input, encodeCheckpointV2, verifyCheckpointV2Continuity);
 }
 

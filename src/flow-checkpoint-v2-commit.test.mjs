@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planCheckpointV2Commit } from './flow-checkpoint-commit-plan.mjs';
+import { planCheckpointCommit, planCheckpointV2Commit } from './flow-checkpoint-commit-plan.mjs';
 
 const pending = () => ({ version: 2, repositoryId: 'repo-id', number: 1, issueId: 'issue', cutoverAt: '2026-01-01T10:00:00Z',
   epoch: { kind: 'initial', anchor: 'issue' }, reentry: null, current: { phase: 'pending', commentId: '1',
@@ -8,7 +8,7 @@ const pending = () => ({ version: 2, repositoryId: 'repo-id', number: 1, issueId
     epoch: { kind: 'initial', anchor: 'issue' } }, previous: null, reservation: null });
 const fixture = () => ({ registration: { repositoryId: 'repo-id', ref: 'refs/heads/agent-github-flow/checkpoints',
   genesisOid: 'a'.repeat(40), cutoverAt: '2026-01-01T10:00:00Z', checkpointSchemaVersion: 2 },
-  snapshot: { kind: 'checkpoint-snapshot-observed', headOid: 'b'.repeat(40), repositoryId: 'repo-id',
+  snapshot: { kind: 'checkpoint-snapshot-observed', schemaVersion: 2, headOid: 'b'.repeat(40), repositoryId: 'repo-id',
     repositoryFullName: 'owner/project', cutoverAt: '2026-01-01T10:00:00Z', selection: { number: 1, issueId: 'issue' },
     index: { version: 1, repositoryId: 'repo-id', issues: [{ number: 1, issueId: 'issue' }] }, selectedRecord: pending() },
   after: { ...pending(), reservation: { reservedAt: '2026-01-01T10:02:00Z', fromOptionId: 'source', targetOptionId: 'target' } } });
@@ -21,6 +21,12 @@ test('plans a v2 reservation against the exact observed head without changing th
   assert.deepEqual(JSON.parse(Buffer.from(result.additions[0].contents, 'base64').toString()), value.snapshot.index);
 });
 
+test('a v2 snapshot without an issue record cannot create a v1 record through the old planner', () => {
+  const value = fixture(); value.snapshot.selectedRecord = null; value.snapshot.index.issues = [];
+  value.after.version = 1; delete value.after.reservation;
+  assert.equal(planCheckpointCommit(value).kind, 'blocked');
+});
+
 test('requires the explicitly registered v2 schema, matching repository, cutover and observed selected record', () => {
   for (const change of [
     v => { delete v.registration.checkpointSchemaVersion; },
@@ -28,6 +34,8 @@ test('requires the explicitly registered v2 schema, matching repository, cutover
     v => { v.registration.repositoryId = 'other'; },
     v => { v.registration.cutoverAt = '2025-01-01T00:00:00Z'; },
     v => { v.registration.genesisOid = 'invalid'; },
+    v => { v.snapshot.schemaVersion = 1; },
+    v => { delete v.snapshot.schemaVersion; },
     v => { v.snapshot.selection.issueId = 'other'; },
     v => { v.snapshot.selectedRecord.version = 1; delete v.snapshot.selectedRecord.reservation; }
   ]) { const value = fixture(); change(value); assert.equal(planCheckpointV2Commit(value).kind, 'blocked'); }
