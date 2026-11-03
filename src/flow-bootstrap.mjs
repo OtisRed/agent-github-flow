@@ -20,7 +20,8 @@ const previousMatches = (marker, comment) => marker === null || (isFlowMarker(ma
   && createHash('sha256').update(comment.body, 'utf8').digest('hex') === marker.digest);
 const expected = input => ({ witness: structuredClone(input.witness), marker: structuredClone(input.marker),
   issueState: input.issueState, currentStatus: input.currentStatus, epoch: structuredClone(input.epoch),
-  cutoverAt: input.cutoverAt, handoff: { id: input.handoff.id, nodeId: input.handoff.nodeId,
+  cutoverAt: input.cutoverAt, nativeReopenEvidence: structuredClone(input.nativeReopenEvidence ?? null),
+  handoff: { id: input.handoff.id, nodeId: input.handoff.nodeId,
     authorId: input.handoff.authorId, createdAt: input.handoff.createdAt, digest: createHash('sha256').update(input.handoff.body, 'utf8').digest('hex') } });
 const mutation = (input, plan) => ({ ...plan, expected: expected(input) });
 
@@ -67,6 +68,17 @@ export function planBootstrap(input) {
     || proof.issueNodeId !== input.issueNodeId || proof.commentNodeId !== handoff.nodeId || proof.commentId !== handoff.id || proof.commentCreatedAt !== handoff.createdAt
     || proof.commentDigest !== digest || proof.epoch?.kind !== input.epoch.kind || proof.epoch?.anchor !== input.epoch.anchor) {
     return blocked('unverified-handoff');
+  }
+
+  // A fresh reopen can race a new handoff. Do not initialize a checkpoint
+  // before reentry has reset that epoch; historical reopens remain eligible.
+  if (input.witness === null && input.marker === null && input.epoch.kind === 'reopened') {
+    const native = input.nativeReopenEvidence;
+    const reopenedAt = validTime(native?.reopenedAt);
+    if (native?.kind !== 'native-reopen-evidence' || native.issueNodeId !== input.issueNodeId
+      || native.epoch?.kind !== input.epoch.kind || native.epoch?.anchor !== input.epoch.anchor
+      || reopenedAt === null) return blocked('unverified-native-reopen');
+    if (reopenedAt > cutover) return blocked('reentry-required');
   }
 
   if (input.witness === null || reentryReady) {

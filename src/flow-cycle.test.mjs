@@ -94,3 +94,26 @@ test('never resets a real-looking active card for a historical reopen', async ()
     { kind: 'blocked', reason: 'reopen-before-or-at-cutover', steps: [] });
   assert.equal(ctx.state.currentStatus, 'smoke'); assert.equal(ctx.writes(), 0);
 });
+
+test('does not process a fresh handoff before handling a newer native reopen', async () => {
+  const ctx = harness();
+  ctx.state.epoch = { kind: 'reopened', anchor: 'reopen' };
+  ctx.state.currentStatus = 'review';
+  ctx.state.handoffEpochEvidence.epoch = structuredClone(ctx.state.epoch);
+  ctx.state.nativeReopenEvidence = { kind: 'native-reopen-evidence', issueNodeId: 'issue',
+    epoch: structuredClone(ctx.state.epoch), reopenedAt: '2026-01-01T00:00:01Z' };
+  const result = await runFlowCycle({ mode: 'handoff', ...ctx });
+  assert.deepEqual(result, { kind: 'blocked', reason: 'reentry-required', steps: [] });
+  assert.equal(ctx.writes(), 0);
+});
+
+test('allows initial onboarding after a historical reopen before the cutover', async () => {
+  const ctx = harness();
+  ctx.state.epoch = { kind: 'reopened', anchor: 'old-reopen' };
+  ctx.state.handoffEpochEvidence.epoch = structuredClone(ctx.state.epoch);
+  ctx.state.nativeReopenEvidence = { kind: 'native-reopen-evidence', issueNodeId: 'issue',
+    epoch: structuredClone(ctx.state.epoch), reopenedAt: '2025-12-31T23:59:59Z' };
+  const result = await runFlowCycle({ mode: 'handoff', ...ctx });
+  assert.equal(result.kind, 'complete');
+  assert.equal(ctx.state.currentStatus, 'agent-ready');
+});

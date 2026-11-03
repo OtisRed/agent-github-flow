@@ -34,7 +34,7 @@ export async function runBootstrapStep({ readSnapshot, writeStep }) {
   try { after = await readSnapshot({ readbackCheckpoint }); } catch { return blocked('readback-failed'); }
   if (after?.kind !== 'snapshot') return blocked('readback-failed');
   const stableKeys = ['projectId', 'itemId', 'issueNodeId', 'repository', 'statusFieldId', 'checkpointFieldId',
-    'issueState', 'epoch', 'handoff', 'handoffEpochEvidence', 'cutoverAt'];
+    'issueState', 'epoch', 'handoff', 'handoffEpochEvidence', 'nativeReopenEvidence', 'cutoverAt'];
   if (stableKeys.some(key => !isDeepStrictEqual(fresh[key], after[key]))) return blocked('readback-conflict');
   if (readbackCheckpoint && (!isDeepStrictEqual(fresh.previousComment, after.readbackPreviousComment)
     || !isDeepStrictEqual(readbackCheckpoint.epochEvidence, after.readbackPreviousEpochEvidence)

@@ -61,6 +61,18 @@ test('combines initial evidence but never grants production trust or writer owne
   assert.deepEqual(planBootstrap(result), { kind: 'blocked', reason: 'unverified-snapshot' });
 });
 
+test('binds native reopen evidence for a handoff snapshot and refuses mismatched epochs', async () => {
+  const r = readers(); const reopened = { kind: 'reopened', anchor: 'event' };
+  r.epoch = async () => proof(handoff, reopened);
+  const native = { kind: 'native-reopen-evidence', issueNodeId: 'issue', epoch: reopened,
+    reopenedAt: '2026-01-01T00:00:01Z' };
+  r.native = async () => native;
+  const result = await collectFlowSnapshot(input(), r);
+  assert.equal(result.kind, 'snapshot'); assert.deepEqual(result.nativeReopenEvidence, native);
+  r.native = async () => ({ ...native, epoch: { kind: 'reopened', anchor: 'other' } });
+  assert.deepEqual(await collectFlowSnapshot(input(), r), { kind: 'blocked', reason: 'native-read-failed' });
+});
+
 test('uses the issue identity for comment and timeline readers when transports are split', async () => {
   const r = readers(); const value = input();
   const projectTransport = async () => ({}); const issueTransport = async () => ({});

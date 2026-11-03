@@ -80,6 +80,20 @@ test('readback also protects the old comment and epoch evidence after reopen', a
   assert.equal(ctx.mutations.length, 1);
 });
 
+test('readback detects changed native reopen evidence during historical bootstrap', async () => {
+  const ctx = harness();
+  ctx.state.epoch = { kind: 'reopened', anchor: 'reopen' };
+  ctx.state.handoffEpochEvidence.epoch = structuredClone(ctx.state.epoch);
+  ctx.state.nativeReopenEvidence = { kind: 'native-reopen-evidence', issueNodeId: 'issue',
+    epoch: structuredClone(ctx.state.epoch), reopenedAt: '2025-12-31T23:59:59Z' };
+  const writeStep = async (snapshot, plan) => {
+    await ctx.writeStep(snapshot, plan);
+    ctx.state.nativeReopenEvidence.reopenedAt = '2025-12-31T23:59:58Z';
+  };
+  assert.deepEqual(await runBootstrapStep({ readSnapshot: ctx.readSnapshot, writeStep }),
+    { kind: 'blocked', reason: 'readback-conflict' });
+});
+
 test('blocks invalid options and GraphQL mutation errors', async () => {
   const ctx = harness(); const snapshot = structuredClone(ctx.state);
   await assert.rejects(writeBootstrapGitHubStep({ graphql: async () => ({}), snapshot,

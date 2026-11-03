@@ -92,6 +92,13 @@ export async function collectFlowSnapshot(input, readers = {}, options = {}) {
     try { current = await epochReader({ ...args, commentNodeId: comments.handoff.nodeId }); } catch { return blocked('handoff-epoch-read-failed'); }
     if (!matchesHandoffEpoch({ issueNodeId: input.issueId, epoch: current?.epoch }, comments.handoff, current)) return blocked('handoff-epoch-read-failed');
     output.epoch = current.epoch; output.handoffEpochEvidence = current; output.cutoverAt = input.cutoverAt;
+    if (current.epoch.kind === 'reopened') {
+      let native;
+      try { native = await nativeReader({ ...args, issueNodeId: input.issueId }); } catch { return blocked('native-read-failed'); }
+      if (native?.kind !== 'native-reopen-evidence' || native.issueNodeId !== input.issueId
+        || native.epoch?.kind !== current.epoch.kind || native.epoch?.anchor !== current.epoch.anchor) return blocked('native-read-failed');
+      output.nativeReopenEvidence = native;
+    }
     if (previousMarker) {
       if (first.witness?.kind === 'reentry' || first.witness?.kind === 'bootstrap') {
         let previous;
