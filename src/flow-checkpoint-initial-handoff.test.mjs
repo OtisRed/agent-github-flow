@@ -6,6 +6,8 @@ import { planInitialV3Handoff } from './flow-v3-initial-handoff.mjs';
 import { createCheckpointKeyring } from './flow-checkpoint-keyring.mjs';
 import { FLOW_STATUSES } from './flow.mjs';
 import { verifyV3Preparation } from './flow-v3-preparation-guard.mjs';
+import { createV3PublicationStep } from './flow-v3-publication-step.mjs';
+import { v3HandoffBinding } from './flow-v3-handoff-binding.mjs';
 
 const body = '[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
 const digest = value => createHash('sha256').update(value, 'utf8').digest('hex');
@@ -90,6 +92,57 @@ test('v3 first handoff refuses changed private configuration, visibility, commen
   v=fixtureV3();v.keyring={current:()=>null,forId:()=>null};assert.equal(planInitialV3Handoff(v).kind,'blocked');
   v=fixtureV3();const other=createCheckpointKeyring({currentKeyId:1,keys:[{id:1,key:Buffer.alloc(32,2)}]});
   v.keyring={current:v.keyring.current,forId:other.forId};assert.equal(planInitialV3Handoff(v).reason,'v3-commitments-unverified');
+});
+
+function publicationFixture(mode='initial'){
+  const v=fixtureV3(),policy={repositoryId:'repo-id',repository:'owner/project',projectId:'project',statusFieldId:'status',issueId:'issue',issueNumber:1,
+    appId:12,updateRulesetId:1,historyRulesetId:2,trustedAuthorIds:['user']};
+  if(mode!=='initial'){
+    v.checkpoint.selectedRecord=planInitialV3Handoff(v).record;v.checkpoint.index.issues.push({number:1,issueId:'issue'});
+    if(mode==='commit'){v.checkpoint.selectedRecord.reservation={reservedAt:'2026-01-01T10:02:00Z'};
+      v.project.currentStatus='agent-ready';v.project.statusOptionId='ready';}
+  }
+  const binding=mode==='initial'?null:v3HandoffBinding(policy,v.checkpoint.selectedRecord,v.checkpoint.headOid);
+  const state={reads:0,publishes:0,prepared:null,changeAt:0,failPublish:false};
+  const collectContext=async()=>{state.reads++;if(state.reads===state.changeAt)v.project.currentStatus='review';
+    return {repository:v.repository,observation:{checkpoint:v.checkpoint,project:v.project,handoffEvidence:v.handoffEvidence,
+      epochProof:v.epochProof,trustedAuthorIds:v.trustedAuthorIds,expectedProjectId:v.expectedProjectId}};};
+  const verifyProtection=async()=>({kind:'checkpoint-protection-observed',repositoryId:'repo-id',appId:12,updateRulesetId:1,historyRulesetId:2});
+  const prepare=async({snapshot,after})=>{state.prepared=structuredClone(after);return {kind:'checkpoint-objects-prepared',expectedHeadOid:snapshot.headOid,
+    expectedTreeOid:'c'.repeat(40),commit:{sha:'d'.repeat(40),tree:{sha:'c'.repeat(40)},parents:[{sha:snapshot.headOid}]}};};
+  const publish=async()=>{state.publishes++;if(state.failPublish)throw Error('uncertain');
+    v.checkpoint.headOid='d'.repeat(40);if(v.checkpoint.index.issues.length===0)v.checkpoint.index.issues.push({number:1,issueId:'issue'});
+    v.checkpoint.selectedRecord=state.prepared;
+    return {kind:'ref-update-acknowledged'};};
+  const observe=async()=>({kind:'publication-observed'});
+  const step=createV3PublicationStep({policy,projectRegistration:v.projectRegistration,
+    registrationCommitment:{keyId:1,mac:v.keyring.current().config(v.projectRegistration)},keyring:v.keyring,
+    collectContext,verifyProtection,prepare,publish,observe});
+  return {v,state,step,binding};
+}
+test('v3 initial publication binds the observed result and never repeats a publication',async()=>{
+  const f=publicationFixture(),result=await f.step({operation:'initial'});
+  assert.equal(result.kind,'v3-initial-observed');assert.equal(result.binding.checkpointOid,'d'.repeat(40));assert.equal(f.state.publishes,1);
+  assert.equal((await f.step({operation:'initial'})).kind,'blocked');assert.equal(f.state.publishes,1);
+});
+test('v3 publication refuses changed observations and treats unconfirmed writes as uncertain',async()=>{
+  let f=publicationFixture();f.state.changeAt=2;assert.equal((await f.step({operation:'initial'})).kind,'blocked');assert.equal(f.state.publishes,0);
+  f=publicationFixture();f.state.changeAt=3;assert.equal((await f.step({operation:'initial'})).kind,'blocked');assert.equal(f.state.publishes,0);
+  f=publicationFixture();f.state.changeAt=4;assert.equal((await f.step({operation:'initial'})).kind,'publication-uncertain');assert.equal(f.state.publishes,1);
+  f=publicationFixture();f.state.failPublish=true;const result=await f.step({operation:'initial'});
+  assert.equal(result.kind,'publication-uncertain');assert.equal(result.retryAllowed,false);assert.equal(f.state.publishes,1);
+});
+test('v3 publication binds reservation to prior handoff and commits only observed target',async()=>{
+  let f=publicationFixture('reservation');
+  let result=await f.step({operation:'reservation',expectedBinding:f.binding,reservedAt:'2026-01-01T10:02:00Z'});
+  assert.equal(result.kind,'v3-reservation-observed');assert.equal(result.binding.reservation.reservedAt,'2026-01-01T10:02:00Z');
+  f=publicationFixture('commit');result=await f.step({operation:'commit',expectedBinding:f.binding});
+  assert.equal(result.kind,'v3-commit-observed');assert.equal(f.v.checkpoint.selectedRecord.current.phase,'committed');
+  assert.equal(result.receipt.phase,'committed');assert.equal(result.receipt.checkpointOid,'d'.repeat(40));assert.equal(Object.hasOwn(result,'binding'),false);
+  f=publicationFixture('reservation');result=await f.step({operation:'reservation',expectedBinding:{...f.binding,commentId:'9'},reservedAt:'2026-01-01T10:02:00Z'});
+  assert.equal(result.kind,'blocked');assert.equal(f.state.publishes,0);
+  f=publicationFixture('commit');result=await f.step({operation:'commit',expectedBinding:{...f.binding,checkpointOid:'e'.repeat(40)}});
+  assert.equal(result.kind,'blocked');assert.equal(f.state.publishes,0);
 });
 
 test('rejects foreign card or repository, an existing record, closed issues and done', () => {
