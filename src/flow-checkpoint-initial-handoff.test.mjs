@@ -8,6 +8,8 @@ import { FLOW_STATUSES } from './flow.mjs';
 import { verifyV3Preparation } from './flow-v3-preparation-guard.mjs';
 import { createV3PublicationStep } from './flow-v3-publication-step.mjs';
 import { v3HandoffBinding } from './flow-v3-handoff-binding.mjs';
+import { createV3ProjectStatusStep } from './flow-v3-project-status-step.mjs';
+import { runFirstV3Cycle } from './flow-first-v3-cycle.mjs';
 
 const body = '[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
 const digest = value => createHash('sha256').update(value, 'utf8').digest('hex');
@@ -143,6 +145,53 @@ test('v3 publication binds reservation to prior handoff and commits only observe
   assert.equal(result.kind,'blocked');assert.equal(f.state.publishes,0);
   f=publicationFixture('commit');result=await f.step({operation:'commit',expectedBinding:{...f.binding,checkpointOid:'e'.repeat(40)}});
   assert.equal(result.kind,'blocked');assert.equal(f.state.publishes,0);
+});
+
+function cycleFixture(retry=false){
+  const v=fixtureV3(),policy={repositoryId:'repo-id',repository:'owner/project',projectId:'project',statusFieldId:'status',issueId:'issue',issueNumber:1,
+    appId:12,updateRulesetId:1,historyRulesetId:2,trustedAuthorIds:['user']};
+  if(retry){v.checkpoint.selectedRecord=planInitialV3Handoff(v).record;
+    v.checkpoint.selectedRecord.reservation={reservedAt:'2026-01-01T10:02:00Z'};v.checkpoint.index.issues.push({number:1,issueId:'issue'});}
+  const state={publishes:0,statusWrites:0,time:0,waited:0,after:null,nextOid:null,failStatus:false};
+  const collectContext=async()=>({repository:v.repository,observation:{checkpoint:v.checkpoint,project:v.project,handoffEvidence:v.handoffEvidence,
+    epochProof:v.epochProof,trustedAuthorIds:v.trustedAuthorIds,expectedProjectId:v.expectedProjectId}});
+  const verifyProtection=async()=>({kind:'checkpoint-protection-observed',repositoryId:'repo-id',appId:12,updateRulesetId:1,historyRulesetId:2});
+  const registrationCommitment={keyId:1,mac:v.keyring.current().config(v.projectRegistration)};
+  const common={policy,projectRegistration:v.projectRegistration,registrationCommitment,keyring:v.keyring,collectContext,verifyProtection};
+  const prepare=async({snapshot,after})=>{state.after=structuredClone(after);state.nextOid=['d','e','f'][state.publishes].repeat(40);
+    return {kind:'checkpoint-objects-prepared',expectedHeadOid:snapshot.headOid,expectedTreeOid:'c'.repeat(40),
+      commit:{sha:state.nextOid,tree:{sha:'c'.repeat(40)},parents:[{sha:snapshot.headOid}]}};};
+  const publish=async()=>{state.publishes++;v.checkpoint.headOid=state.nextOid;if(!v.checkpoint.index.issues.length)
+    v.checkpoint.index.issues.push({number:1,issueId:'issue'});v.checkpoint.selectedRecord=state.after;return {kind:'ref-update-acknowledged'};};
+  const observe=async()=>({kind:'publication-observed'});
+  const transport={projectId:'project',statusFieldId:'status',setStatus:async()=>{state.statusWrites++;if(state.failStatus)throw Error('uncertain');
+    v.project.currentStatus='agent-ready';v.project.statusOptionId='ready';return {kind:'status-write-acknowledged'};}};
+  const input={policy,projectRegistration:v.projectRegistration,registrationCommitment,keyring:v.keyring,collectContext,
+    verifyBootstrap:async registration=>({kind:'v3-bootstrap-verified',registration}),
+    makePublicationStep:()=>createV3PublicationStep({...common,prepare,publish,observe}),
+    makeStatusStep:()=>createV3ProjectStatusStep({...common,transport}),
+    wait:async ms=>{state.waited=ms;state.time+=ms;},monotonic:()=>state.time,timestamp:()=> '2026-01-01T10:03:00Z'};
+  return {v,state,input};
+}
+test('v3 first handoff composes initial, reservation, status and completion in order',async()=>{
+  const f=cycleFixture(),result=await runFirstV3Cycle(f.input);assert.equal(result.kind,'first-v3-handoff-observed');
+  assert.equal(result.receipt.phase,'committed');assert.equal(f.state.publishes,3);assert.equal(f.state.statusWrites,1);assert.equal(f.state.waited,0);
+});
+test('v3 retry waits and rechecks before a new reservation; uncertain status stops',async()=>{
+  let f=cycleFixture(true);let result=await runFirstV3Cycle(f.input);assert.equal(result.kind,'first-v3-handoff-observed');
+  assert.equal(f.state.waited,120000);assert.equal(f.state.publishes,2);assert.equal(f.state.statusWrites,1);
+  f=cycleFixture(true);f.input.wait=async()=>{};result=await runFirstV3Cycle(f.input);assert.equal(result.phase,'wait');
+  assert.equal(f.state.publishes,0);assert.equal(f.state.statusWrites,0);
+  f=cycleFixture();f.state.failStatus=true;result=await runFirstV3Cycle(f.input);assert.equal(result.phase,'status');
+  assert.equal(f.state.publishes,2);assert.equal(f.state.statusWrites,1);
+});
+test('v3 completes an unchanged status or an already applied reservation without a second status write',async()=>{
+  let f=cycleFixture();f.v.project.currentStatus='agent-ready';f.v.project.statusOptionId='ready';
+  let result=await runFirstV3Cycle(f.input);assert.equal(result.kind,'first-v3-handoff-observed');
+  assert.equal(f.state.publishes,2);assert.equal(f.state.statusWrites,0);assert.equal(f.state.waited,0);
+  f=cycleFixture(true);f.v.project.currentStatus='agent-ready';f.v.project.statusOptionId='ready';
+  result=await runFirstV3Cycle(f.input);assert.equal(result.kind,'first-v3-handoff-observed');
+  assert.equal(f.state.publishes,1);assert.equal(f.state.statusWrites,0);assert.equal(f.state.waited,0);
 });
 
 test('rejects foreign card or repository, an existing record, closed issues and done', () => {
