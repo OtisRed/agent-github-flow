@@ -162,7 +162,16 @@ Odczytowy adapter porównuje repozytorium, ten ref i historię, ponawia odczyt
 obu refów oraz gałęzi domyślnej i blokuje brak lub nierówność pary oraz
 przypadek, gdy którykolwiek z technicznych refów jest domyślny. Nie sprawdza
 rulesetów ani uprawnionych writerów; przed podłączeniem zapisu potrzebny jest
-osobny fail-closed preflight ochrony obu refów. Samo zarezerwowanie nazwy nie dowodzi, że istniejąca gałąź nie jest
+osobny fail-closed preflight ochrony obu refów. Endpoint skutecznych reguł
+gałęzi może działać z uprawnieniem App `Metadata: read`, ale nie dowodzi,
+kto może je obejść. GitHub udostępnia `bypass_actors` tylko podmiotowi z
+prawem zapisu rulesetu: brak tego pola oznacza brak dowodu, nie pustą listę.
+Nie należy z tego powodu nadawać działającemu kontrolerowi `Administration:
+write`. Pełna weryfikacja wyjątków wymaga osobnego audytu właściciela;
+obserwacja reguł, audyt i próby uprawnień nie chronią przed późniejszą zmianą
+polityki przez administratora ani wyścigiem między odczytem a zapisem.
+Źródło: https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset.
+Samo zarezerwowanie nazwy nie dowodzi, że istniejąca gałąź nie jest
 używana przez produkt; onboarding musi to wcześniej ustalić i nie może jej
 nadpisać. Testy tego adaptera używają fikcyjnych odpowiedzi.
 Prototyp `src/flow-checkpoint-registered-snapshot.mjs` łączy tę obserwację z

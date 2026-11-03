@@ -1,8 +1,10 @@
-import { replaceFlowMarker, removeFlowMarker } from './flow-marker.mjs';
-import { planBootstrap } from './flow-bootstrap.mjs';
+// Historical test fixture for the superseded issue-body and Project checkpoint model.
+// Never connect this fixture to live GitHub transports.
+import { replaceFlowMarker, removeFlowMarker } from '../src/flow-marker.mjs';
+import { planBootstrap } from '../src/flow-bootstrap.mjs';
 import { isDeepStrictEqual } from 'node:util';
-import { planTransitionSnapshot, transitionProjectValue } from './flow-transition-runner.mjs';
-import { planReentry } from './flow-reentry.mjs';
+import { planTransitionSnapshot, transitionProjectValue } from '../src/flow-transition-runner.mjs';
+import { planReentry } from '../src/flow-reentry.mjs';
 
 export const PROJECT_WRITE = `mutation FlowProjectWrite($project: ID!, $item: ID!, $field: ID!, $value: ProjectV2FieldValue!) {
   updateProjectV2ItemFieldValue(input: { projectId: $project, itemId: $item, fieldId: $field, value: $value }) { projectV2Item { id } }

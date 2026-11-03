@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { runReentryStep } from './flow-reentry-runner.mjs';
-import { PROJECT_WRITE, ISSUE_WRITE, writeReentryGitHubStep } from './flow-github-write.mjs';
+import { PROJECT_WRITE, ISSUE_WRITE, writeReentryGitHubStep } from '../test-support/legacy-flow-github-write.mjs';
 import { replaceFlowMarker, readFlowMarker } from './flow-marker.mjs';
 
 const body = '[FLOW]\nRola: Smoker\nStan docelowy: smoke\nWykonano: Praca\nNastępny krok: Smoke';

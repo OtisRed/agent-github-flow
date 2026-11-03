@@ -5,7 +5,7 @@ import { SPLIT_PROJECT_QUERY, SPLIT_ISSUE_QUERY } from './flow-github-split-proj
 import { HANDOFF_QUERY } from './flow-handoff-reader.mjs';
 import { EPOCH_QUERY } from './flow-epoch-reader.mjs';
 import { NATIVE_EPOCH_QUERY } from './flow-native-epoch-reader.mjs';
-import { PROJECT_WRITE, ISSUE_WRITE } from './flow-github-write.mjs';
+import { PROJECT_WRITE, ISSUE_WRITE } from '../test-support/legacy-flow-github-write.mjs';
 
 const response = (value, link = null) => ({ status: 200, text: async () => JSON.stringify(value), headers: { get: name => name === 'link' ? link : null } });
 const fixture = () => {

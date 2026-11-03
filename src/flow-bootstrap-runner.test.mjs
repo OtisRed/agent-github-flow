@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { runBootstrapStep } from './flow-bootstrap-runner.mjs';
-import { PROJECT_WRITE, ISSUE_WRITE, writeBootstrapGitHubStep, createSplitWriteTransport } from './flow-github-write.mjs';
+import { PROJECT_WRITE, ISSUE_WRITE, writeBootstrapGitHubStep, createSplitWriteTransport } from '../test-support/legacy-flow-github-write.mjs';
 import { readFlowMarker } from './flow-marker.mjs';
 import { planBootstrap } from './flow-bootstrap.mjs';
 

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { runTransitionStep, planTransitionSnapshot } from './flow-transition-runner.mjs';
-import { PROJECT_WRITE, ISSUE_WRITE, writeTransitionGitHubStep } from './flow-github-write.mjs';
+import { PROJECT_WRITE, ISSUE_WRITE, writeTransitionGitHubStep } from '../test-support/legacy-flow-github-write.mjs';
 import { replaceFlowMarker, readFlowMarker } from './flow-marker.mjs';
 
 const text = status => `[FLOW]\nRola: Coder\nStan docelowy: ${status}\nWykonano: Zmiana\nNastępny krok: Przegląd`;
