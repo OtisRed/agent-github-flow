@@ -153,6 +153,16 @@ odczyt i wymaga ograniczonego transportu. Jest odczytowy i nie blokuje karty;
 integracja z dalszym odczytem Projectu musi ponowić weryfikację. Wielokrotne
 pełne przeglądanie dużej tablicy wymaga pomiaru wydajności przed wdrożeniem.
 
+`src/flow-first-handoff-collector.mjs` łączy te odczyty z checkpointem,
+ostatnim przekazaniem i pełną historią epoki; weryfikuje zachowany komentarz
+również po jego ID i hashu. Całą obserwację wykonuje dwukrotnie. To nie jest
+atomowy snapshot ani pozwolenie na zapis. Przy `N` stronach kart pojedyncza
+obserwacja może wykonać `8N` odczytów stron, a pełny szczęśliwy cykl z jednym
+zapisem statusu w obecnej naiwnej kompozycji nawet `96N`, bez pozostałych API.
+Przed wdrożeniem potrzebny jest jawny budżet czasu i limitów, pomiar oraz
+ograniczenie kosztu bez utraty kontroli duplikatów i świeżości; kod nie jest
+podłączony do produkcyjnego workflow.
+
 ## Rejestracja i utrata danych
 
 Rejestracja projektu jest odrębnym, jawnym krokiem administracyjnym, nie
