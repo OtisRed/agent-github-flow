@@ -1,0 +1,26 @@
+import { CHECKPOINT_BRANCH_REF } from './flow-checkpoint-registration.mjs';
+
+export const CHECKPOINT_ANCHOR_REF = 'refs/heads/agent-github-flow/checkpoint-anchor';
+const blocked = reason => ({ kind: 'blocked', reason });
+const oid = value => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value) && value !== '0'.repeat(40);
+const refAt = (value, name, expected) => value && value.ref === name && value.object?.type === 'commit' && value.object.sha === expected;
+
+// Pure proposal for GraphQL updateRefs, not an executor or write authorization.
+// The caller must authenticate the repo and refs, validate the prepared tree
+// and commit, protect both refs, and repeat checks immediately before writing.
+export function planCheckpointRefPairAdvance(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.repositoryId !== 'string'
+      || !input.repositoryId || input.repositoryId.length > 256 || input.repositoryId.trim() !== input.repositoryId
+      || !oid(input.expectedHeadOid) || !oid(input.expectedTreeOid)) return blocked('invalid-input');
+  const { repositoryId, expectedHeadOid, expectedTreeOid, checkpointRef, anchorRef, commit } = input;
+  if (!refAt(checkpointRef, CHECKPOINT_BRANCH_REF, expectedHeadOid)
+      || !refAt(anchorRef, CHECKPOINT_ANCHOR_REF, expectedHeadOid)) return blocked('ref-pair-mismatch');
+  if (!commit || !oid(commit.sha) || commit.sha === expectedHeadOid || commit.tree?.sha !== expectedTreeOid
+      || !Array.isArray(commit.parents) || commit.parents.length !== 1 || commit.parents[0]?.sha !== expectedHeadOid) {
+    return blocked('invalid-prepared-commit');
+  }
+  return { kind: 'atomic-ref-pair-plan', repositoryId, refUpdates: [
+    { name: CHECKPOINT_BRANCH_REF, beforeOid: expectedHeadOid, afterOid: commit.sha, force: false },
+    { name: CHECKPOINT_ANCHOR_REF, beforeOid: expectedHeadOid, afterOid: commit.sha, force: false },
+  ] };
+}

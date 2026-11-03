@@ -141,6 +141,10 @@ Potrzebne są reguły ochrony obu refów, kontrola uprawnień i próby ich dzia�
 automatyczne podpisy GitHuba dla `createCommitOnBranch` nie dowodzą podpisu
 commitu utworzonego przez Git Database REST. Atomowość refów nie obejmuje
 Projectu ani zamknięcia issue. To kandydat do projektu, nie wdrożony zapis.
+Prototyp `src/flow-checkpoint-ref-pair.mjs` przygotowuje wyłącznie plan dwóch
+aktualizacji z tym samym starym i nowym OID oraz `force: false`; weryfikuje
+obie nazwy refów, rodzica i drzewo przygotowanego commitu. Plan sam nie
+uwierzytelnia źródła ani nie uruchamia mutacji i nie obsługuje bootstrapu.
 
 Ograniczona próba w rzeczywistym prywatnym repozytorium przez CLI użytkownika
 potwierdziła utworzenie, przesunięcie i warunkowe usunięcie dwóch tymczasowych
