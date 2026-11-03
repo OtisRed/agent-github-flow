@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { resolveProjectPolicy, ISSUE_IDENTITY_QUERY } from './flow-project-policy-resolver.mjs';
 import { CHECKPOINT_BRANCH_REF } from './flow-checkpoint-registration.mjs';
 import { isHandoffSubject } from './flow-handoff-binding.mjs';
+import { createFlowReadTransports } from './flow-read-transports.mjs';
 
 function fixture(){const registration={version:1,source:'a'.repeat(32),repository:'owner/private-project',repositoryId:'repo-id',
   projectOwner:'owner',projectNumber:4,projectId:'project-id',statusFieldId:'field-id',statusFieldName:'Status',appId:12,
@@ -24,4 +25,15 @@ test('blocks mismatched routes and unstable, missing or wrong-repository issue i
   assert.equal((await resolveProjectPolicy({...f,source:f.registration.source})).kind,'blocked');
   f=fixture();f.graphql=async()=>({data:{repository:{id:'other',nameWithOwner:f.registration.repository,issue:{id:'issue-node',number:7}}}});
   assert.equal((await resolveProjectPolicy({...f,source:f.registration.source})).kind,'blocked');
+});
+
+test('resolves the issue through the bounded App read transport',async()=>{
+  const f=fixture(),calls=[];
+  const transports=createFlowReadTransports({projectToken:'synthetic-project-token',issueToken:'synthetic-app-token',
+    request:async(url,options)=>{calls.push({url,authorization:options.headers.Authorization});
+      return {status:200,text:async()=>JSON.stringify({data:{repository:{id:'repo-id',nameWithOwner:f.registration.repository,
+        issue:{id:'issue-node',number:7}}}}),headers:{get:()=>null}};}});
+  const result=await resolveProjectPolicy({registration:f.registration,candidate:f.candidate,source:f.registration.source,graphql:transports.issueGraphql});
+  assert.equal(result.kind,'project-policy-resolved');assert.equal(calls.length,2);
+  assert.ok(calls.every(call=>call.url==='https://api.github.com/graphql'&&call.authorization==='Bearer synthetic-app-token'));
 });

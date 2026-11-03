@@ -4,9 +4,10 @@ import { HANDOFF_QUERY } from './flow-handoff-reader.mjs';
 import { EPOCH_QUERY } from './flow-epoch-reader.mjs';
 import { NATIVE_EPOCH_QUERY } from './flow-native-epoch-reader.mjs';
 import { createCheckpointGitReader } from './flow-checkpoint-git-reader.mjs';
+import { ISSUE_IDENTITY_QUERY } from './flow-project-policy-resolver.mjs';
 
 const GRAPHQL_URL = 'https://api.github.com/graphql';
-const issueQueries = new Set([SPLIT_ISSUE_QUERY, BRANCH_ISSUE_QUERY, HANDOFF_QUERY, EPOCH_QUERY, NATIVE_EPOCH_QUERY]);
+const issueQueries = new Set([SPLIT_ISSUE_QUERY, BRANCH_ISSUE_QUERY, HANDOFF_QUERY, EPOCH_QUERY, NATIVE_EPOCH_QUERY, ISSUE_IDENTITY_QUERY]);
 const validToken = value => typeof value === 'string' && value.length > 0 && !/[\s\x00-\x1f\x7f]/.test(value);
 const limit = 8_000_000;
 

@@ -5,6 +5,7 @@ import { SPLIT_PROJECT_QUERY, BRANCH_PROJECT_QUERY, SPLIT_ISSUE_QUERY, BRANCH_IS
 import { HANDOFF_QUERY } from './flow-handoff-reader.mjs';
 import { EPOCH_QUERY } from './flow-epoch-reader.mjs';
 import { NATIVE_EPOCH_QUERY } from './flow-native-epoch-reader.mjs';
+import { ISSUE_IDENTITY_QUERY } from './flow-project-policy-resolver.mjs';
 import { PROJECT_WRITE, ISSUE_WRITE } from '../test-support/legacy-flow-github-write.mjs';
 
 const response = (value, link = null) => ({ status: 200, text: async () => JSON.stringify(value), headers: { get: name => name === 'link' ? link : null } });
@@ -57,6 +58,12 @@ test('routes the branch-checkpoint Project query to the Project token only', asy
   await transports.issueGraphql(BRANCH_ISSUE_QUERY, {});
   assert.equal(calls[1].options.headers.Authorization, 'Bearer issue-token');
   assert.throws(() => transports.projectGraphql(BRANCH_ISSUE_QUERY, {}), /unsupported-read/);
+});
+
+test('routes the issue identity query exclusively through the App token',async()=>{
+  const {calls,transports}=fixture();await transports.issueGraphql(ISSUE_IDENTITY_QUERY,{owner:'owner',repo:'project',number:1});
+  assert.equal(calls[0].options.headers.Authorization,'Bearer issue-token');
+  assert.throws(()=>transports.projectGraphql(ISSUE_IDENTITY_QUERY,{}),/unsupported-read/);
 });
 
 test('rejects invalid credentials and sanitizes transport or response failures', async () => {
