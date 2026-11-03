@@ -70,6 +70,12 @@ posłużyć do decyzji kontrolera. Wynik nie zwraca niezinterpretowanego payload
 suma rozmiarów rekordów ponad 16 MiB blokuje próbę przed ich odczytaniem.
 Jest to wstępny limit wymagający pomiaru. Brak rejestru lub cofnięcie historii
 pozostają osobnymi problemami. Testy używają fikcyjnych odpowiedzi.
+Odrębny kandydat `src/flow-checkpoint-record.mjs` opisuje kanoniczną zawartość
+rekordu, w tym handoff i epokę reopen. Zachowuje dowód komentarza sprzed
+ostatniego reentry również po zatwierdzeniu nowego handoffu; blokuje m.in.
+historyczny komentarz initial w chwili cutover lub wcześniej. Walidacja jednego
+rekordu nie sprawdza, czy przejście ze starszego commitu było dozwolone ani czy
+poprzednie reentry zostało zakończone. Ten warunek należy egzekwować osobno.
 
 ## Rejestracja i utrata danych
 
