@@ -223,6 +223,25 @@ repozytorium i cutover. Sprawdza też ancestry, parę refów i ten sam marker na
 HEAD. Nie dowodzi uprawnionych autorów historii, braku rollbacku ani ochrony;
 nie tworzy jeszcze genesis i nie zastępuje odczytu bieżącego inwentarza v2.
 
+### Serializacja centralnego runnera
+
+Kandydat pierwszego uruchomienia to jedna grupa concurrency w centralnym
+repozytorium dla wszystkich zapisujących przebiegów, zarówno zdarzeniowych,
+nocnych, jak i ręcznych. Każdy taki job musi używać dokładnie tej samej grupy;
+repozytoria wyłącznie wysyłające sygnał nie muszą jej zajmować. Nie opieramy
+blokady wyłącznie na numerze issue: checkpointy
+wielu issue z jednego repozytorium współdzielą parę refów. Wspólna grupa
+upraszcza również współdzielenie tablicy przez więcej niż jedno repozytorium.
+Ma ona używać `cancel-in-progress: false` oraz `queue: max`. GitHub dopuszcza
+do 100 oczekujących zadań w grupie; po przekroczeniu limitu nowe zadanie jest
+anulowane, dlatego nocne przeglądanie mismatch pozostaje potrzebne, choć sam
+przebieg nocny także może nie wejść do pełnej kolejki. Potrzebne są monitoring
+anulowanych i długo czekających zadań oraz pomiar czasu, ponieważ oczekiwanie
+120 sekund wstrzymuje również inne projekty. Szczegóły:
+[dokumentacja concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+Grupa nie blokuje ręcznych ani zewnętrznych zapisów i nie rozwiązuje
+niepewnego wyniku Git CAS. To projekt, nie wdrożona konfiguracja.
+
 `src/flow-project-item-resolver.mjs` wyszukuje aktywną kartę issue przez pełną
 paginację osobistego Projectu, odrzuca brak, duplikaty lub niespójny drugi
 odczyt i wymaga ograniczonego transportu. Jest odczytowy i nie blokuje karty;

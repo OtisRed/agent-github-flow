@@ -3,6 +3,7 @@ import { isCheckpointRegistration } from './flow-checkpoint-registration.mjs';
 import { readCheckpointRegistration } from './flow-checkpoint-registration-reader.mjs';
 import { readCheckpointTreePlan } from './flow-checkpoint-tree-reader.mjs';
 import { decodeCheckpointGitBlob } from './flow-checkpoint-git-blob.mjs';
+import { planV2Genesis } from './flow-v2-genesis-plan.mjs';
 
 const blocked=reason=>({kind:'blocked',reason});
 const oid=value=>typeof value==='string'&&/^[0-9a-f]{40}$/.test(value)&&value!=='0'.repeat(40);
@@ -39,7 +40,9 @@ export async function verifyV2Bootstrap(input={}) {
     const markerBlob=structuredClone(await readBlob(marker.sha));
     if(markerBlob?.size!==marker.size)return blocked('invalid-marker');
     const decoded=decodeCheckpointGitBlob({expectedOid:marker.sha,blob:markerBlob});
-    const expected=JSON.stringify({version:2,repositoryId:registration.repositoryId,cutoverAt:registration.cutoverAt});
+    const plan=planV2Genesis({repositoryId:registration.repositoryId,cutoverAt:registration.cutoverAt});
+    if(plan.kind!=='v2-genesis-plan')return blocked('invalid-registration');
+    const expected=Buffer.from(plan.files[0].contents,'base64').toString('utf8');
     if(decoded.kind!=='decoded-blob'||decoded.content!==expected)return blocked('invalid-marker');
     const headCommit=structuredClone(await readCommit(first.headOid));
     if(headCommit?.sha!==first.headOid||!oid(headCommit.tree?.sha))return blocked('invalid-head');
