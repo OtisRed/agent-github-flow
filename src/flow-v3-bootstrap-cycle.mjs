@@ -31,6 +31,7 @@ export async function runV3BootstrapCycle({policy,verifyEnrollment,verifyProtect
   try{
     if(!await checks())return blocked('bootstrap-preflight-unverified');
     prepared=structuredClone(await prepare(structuredClone(setupIntent)));
+    if(prepared?.kind==='genesis-preparation-uncertain')return uncertain();
     if(prepared?.kind!=='v3-genesis-objects-prepared'||!oid(prepared.genesisOid)||!oid(prepared.treeOid))return blocked('genesis-not-prepared');
     if(!await checks())return blocked('bootstrap-preflight-changed');
   }catch{return blocked('bootstrap-preflight-unavailable');}

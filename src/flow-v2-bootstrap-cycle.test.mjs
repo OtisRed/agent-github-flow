@@ -79,4 +79,6 @@ test('v3 bootstrap never infers enrollment from missing refs or retries uncertai
   assert.equal((await runV3BootstrapCycle(f.input)).kind,'bootstrap-uncertain');assert.equal(f.state.calls.filter(x=>x==='publish').length,1);
   f=fixtureV3();f.input.verifyApp=async()=>({kind:'app-identity-verified',repositoryId:'repo',appId:13});
   assert.equal((await runV3BootstrapCycle(f.input)).kind,'blocked');assert.equal(f.state.calls.includes('publish'),false);
+  f=fixtureV3();f.input.prepare=async()=>({kind:'genesis-preparation-uncertain',retryAllowed:false});
+  assert.equal((await runV3BootstrapCycle(f.input)).kind,'bootstrap-uncertain');assert.equal(f.state.calls.includes('publish'),false);
 });
