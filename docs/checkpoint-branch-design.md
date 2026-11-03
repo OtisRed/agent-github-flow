@@ -229,6 +229,14 @@ produkcyjnego bootstrapu ani nie ustanowiono rejestracji i ochrony.
 Osobny czysty planner potrafi zaproponować jednoczesne utworzenie obu stałych
 refów z warunkiem ich nieistnienia (`beforeOid` zerowy). Sam nie potwierdza
 świeżego braku refów, wcześniejszej rejestracji ani aktywnej ochrony.
+Przygotowany transport podejmuje jedną próbę i odmawia jej powtórzenia. Osobny
+odczyt sprawdza repozytorium i oba refy oraz root commit. Po odpowiedzi
+potwierdzonej lub niepewnej oba refy wskazujące dokładny genesis stanowią tylko
+kandydata do pełnej kontroli markera i ochrony; stan częściowy lub nieznany
+blokuje. Brak obu refów po niepewnej odpowiedzi również nie daje zgody na
+ponowienie. Rejestracji nie wolno aktywować bez tych kontroli. Integracja musi
+dodatkowo przypiąć token do tej samej GitHub App, której ID dopuszczono do
+omijania reguły; sam dostęp tokenu do jednego repo nie dowodzi tożsamości App.
 
 ### Serializacja centralnego runnera
 
