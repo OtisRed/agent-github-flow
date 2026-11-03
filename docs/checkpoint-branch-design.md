@@ -259,6 +259,26 @@ refach również przeszła po przemapowaniu wyłącznie nazw w pamięci; powtór
 odczyty, a tymczasowe reguły usunięto i potwierdzono ich brak. Ta próba nie
 potwierdza produkcyjnego transportu, rzeczywistej ochrony docelowych refów,
 działania App ani uprawniań do wykonania mutacji.
+
+W osobnej [próbie Actions](https://github.com/OtisRed/agent-github-flow/actions/runs/41665239129)
+ograniczony do jednego prywatnego repozytorium token App z `Contents: read`
+odczytał szczegóły obu tymczasowych rulesetów, ich zakres, reguły, `updated_at`
+oraz skuteczne reguły dla obu nieistniejących refów. Pole `bypass_actors` nie
+było dostępne. Wniosek dotyczy tylko obserwowanej konfiguracji: brak pola nie
+oznacza braku wyjątków. Tymczasowe reguły i dopuszczenie gałęzi do środowiska
+usunięto, a reguła `main` pozostała. Kontroler nadal wymaga osobnego audytu
+właściciela oraz zaufanej rejestracji jego wyniku; porównanie widocznego profilu
+i `updated_at` może wykrywać zmiany, ale nie jest dowodem pełnej historii ani
+gwarancją niezmienności niewidocznych wyjątków.
+
+Model `src/flow-checkpoint-protection-receipt.mjs` tworzy prywatny zapis dopiero
+po pełnym audycie i porównuje go z dwiema zgodnymi obserwacjami widocznego
+profilu App. Wywołujący musi zapewnić zaufane wejścia, zegar i maksymalną
+ważność audytu; przekroczenie limitu blokuje porównanie. Jest to wyłącznie
+model bez podłączonego magazynu, collectora App ani prawa do wykonania zapisu.
+Przed integracją trzeba ustalić i wyegzekwować odpowiedni limit oraz sposób
+odnawiania audytu; brak widocznego dryfu nie potwierdza aktualnych bypassów.
+
 Samo zarezerwowanie nazwy nie dowodzi, że istniejąca gałąź nie jest
 używana przez produkt; onboarding musi to wcześniej ustalić i nie może jej
 nadpisać. Testy tego adaptera używają fikcyjnych odpowiedzi.
