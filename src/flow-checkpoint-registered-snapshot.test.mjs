@@ -18,9 +18,9 @@ const fixture = () => {
   const recordBlob = blob(encodeCheckpointRecord(record).content);
   const indexBlob = blob('{"version":1,"repositoryId":"repo","issues":[{"number":1,"issueId":"issue"}]}');
   const blobs = new Map([[recordBlob.sha, recordBlob], [indexBlob.sha, indexBlob]]);
-  const ref = () => ({ ref: registration.ref, object: { type: 'commit', sha: headOid } });
+  const ref = name => ({ ref: name, object: { type: 'commit', sha: headOid } });
   return { registration, record, blobs, args: { registration, selection: { number: 1, issueId: 'issue' },
-    readRepository: async () => ({ node_id: 'repo', full_name: 'owner/project', default_branch: 'main' }), readRef: async () => ref(),
+    readRepository: async () => ({ node_id: 'repo', full_name: 'owner/project', default_branch: 'main' }), readRef: async name => ref(name),
     compare: async () => ({ status: 'ahead', ahead_by: 1, behind_by: 0, base_commit: { sha: genesisOid },
       merge_base_commit: { sha: genesisOid }, commits: [{ sha: headOid }] }),
     readCommit: async () => ({ sha: headOid, tree: { sha: treeOid } }),
@@ -44,7 +44,7 @@ test('returns only a selected record after stable registration and complete stru
 
 test('blocks a changed head, cutover or incomplete record without returning data', async () => {
   let f = fixture(); let refReads = 0; const originalRef = f.args.readRef;
-  f.args.readRef = async () => { const ref = await originalRef(); if (++refReads > 2) ref.object.sha = 'f'.repeat(40); return ref; };
+  f.args.readRef = async name => { const ref = await originalRef(name); if (++refReads > 4) ref.object.sha = 'f'.repeat(40); return ref; };
   assert.equal((await readRegisteredCheckpointSnapshot(f.args)).kind, 'blocked');
   f = fixture(); f.registration.cutoverAt = '2026-01-01T09:59:00Z';
   assert.equal((await readRegisteredCheckpointSnapshot(f.args)).reason, 'cutover-mismatch');

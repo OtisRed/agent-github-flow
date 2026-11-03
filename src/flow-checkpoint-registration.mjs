@@ -9,6 +9,7 @@ const branchRef = value => typeof value === 'string' && /^refs\/heads\/[A-Za-z0-
   && value.split('/').every(part => part && !part.startsWith('.') && !part.endsWith('.') && !part.endsWith('.lock'));
 export const isCheckpointBranchRef = branchRef;
 export const CHECKPOINT_BRANCH_REF = 'refs/heads/agent-github-flow/checkpoints';
+export const CHECKPOINT_ANCHOR_REF = 'refs/heads/agent-github-flow/checkpoint-anchor';
 export const isCheckpointRegistration = registration => object(registration) && id(registration.repositoryId)
   && registration.ref === CHECKPOINT_BRANCH_REF && oid(registration.genesisOid) && parseFlowTimestamp(registration.cutoverAt) !== null;
 

@@ -21,6 +21,7 @@ export async function readRegisteredCheckpointSnapshot(input) {
   const registrationInput = { registration, readRepository, readRef, compare };
   const first = await readCheckpointRegistration(registrationInput);
   if (first.kind !== 'genesis-ancestry-observed') return first;
+  if (first.pairedRefs !== true) return blocked('anchor-unverified');
   const inventory = await readCheckpointInventory({ repositoryId: registration.repositoryId, commitOid: first.headOid,
     selection, readCommit, readTree, readBlob });
   if (inventory.kind !== 'inventory-records-structurally-valid') return inventory;
@@ -28,6 +29,7 @@ export async function readRegisteredCheckpointSnapshot(input) {
   if (inventory.selectedRecord && inventory.selectedRecord.cutoverAt !== registration.cutoverAt) return blocked('cutover-mismatch');
   const last = await readCheckpointRegistration(registrationInput);
   if (last.kind !== 'genesis-ancestry-observed') return last;
+  if (last.pairedRefs !== true) return blocked('anchor-unverified');
   if (last.headOid !== first.headOid || last.repositoryFullName !== first.repositoryFullName) return blocked('checkpoint-head-changed');
   return { kind: 'checkpoint-snapshot-observed', headOid: first.headOid, rollbackProtected: false,
     repositoryId: registration.repositoryId, repositoryFullName: first.repositoryFullName, cutoverAt: registration.cutoverAt, selection,

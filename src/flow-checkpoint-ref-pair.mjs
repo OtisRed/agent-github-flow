@@ -1,6 +1,5 @@
-import { CHECKPOINT_BRANCH_REF } from './flow-checkpoint-registration.mjs';
-
-export const CHECKPOINT_ANCHOR_REF = 'refs/heads/agent-github-flow/checkpoint-anchor';
+import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
+export { CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
 const blocked = reason => ({ kind: 'blocked', reason });
 const oid = value => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value) && value !== '0'.repeat(40);
 const refAt = (value, name, expected) => value && value.ref === name && value.object?.type === 'commit' && value.object.sha === expected;

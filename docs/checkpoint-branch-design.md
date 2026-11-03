@@ -159,8 +159,10 @@ Jego wynik wprost nie deklaruje ochrony przed takim cofnięciem; caller musi
 jeszcze uwierzytelnić rejestr, pobrać właściwe porównanie i odczytać ref ponownie.
 Kandydat rezerwuje wspólny ref `refs/heads/agent-github-flow/checkpoints`.
 Odczytowy adapter porównuje repozytorium, ten ref i historię, ponawia odczyt
-refu oraz gałęzi domyślnej i blokuje przypadek, gdy ref techniczny jest
-domyślny. Samo zarezerwowanie nazwy nie dowodzi, że istniejąca gałąź nie jest
+obu refów oraz gałęzi domyślnej i blokuje brak lub nierówność pary oraz
+przypadek, gdy którykolwiek z technicznych refów jest domyślny. Nie sprawdza
+rulesetów ani uprawnionych writerów; przed podłączeniem zapisu potrzebny jest
+osobny fail-closed preflight ochrony obu refów. Samo zarezerwowanie nazwy nie dowodzi, że istniejąca gałąź nie jest
 używana przez produkt; onboarding musi to wcześniej ustalić i nie może jej
 nadpisać. Testy tego adaptera używają fikcyjnych odpowiedzi.
 Prototyp `src/flow-checkpoint-registered-snapshot.mjs` łączy tę obserwację z
