@@ -188,7 +188,8 @@ za bezpieczne v2 przez zmianę numeru wersji.
 Czytnik pełnego inwentarza wybiera format zgodny z rejestracją i zwraca go w
 snapshotcie; wymaga jednakowego v2 i granicy cutover we wszystkich rekordach.
 Nie oznacza to automatycznej migracji, zaufanego bootstrapu ani obsługi v2 przez
-preparer i Actions.
+Actions. Preparer potrafi zaplanować i przygotować obiekty Git v2 po ponownym
+odczycie inwentarza; sam nie przesuwa refów ani nie autoryzuje publikacji.
 
 `src/flow-project-item-resolver.mjs` wyszukuje aktywną kartę issue przez pełną
 paginację osobistego Projectu, odrzuca brak, duplikaty lub niespójny drugi

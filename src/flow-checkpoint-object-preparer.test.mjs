@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createCheckpointObjectPreparer } from './flow-checkpoint-object-preparer.mjs';
-import { planCheckpointCommit } from './flow-checkpoint-commit-plan.mjs';
+import { planCheckpointCommit, planCheckpointV2Commit } from './flow-checkpoint-commit-plan.mjs';
+import { encodeCheckpointV2 } from './flow-checkpoint-v2.mjs';
 import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
 
 const hash = bytes => createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
 const oid = char => char.repeat(40);
 const reply = (value, status = 200) => ({ status, text: async () => JSON.stringify(value) });
-function fixture() {
+function fixture(version = 1, existing = false) {
   const epoch = { kind: 'initial', anchor: 'issue' };
   const after = { version: 1, repositoryId: 'repo-id', number: 1, issueId: 'issue', cutoverAt: '2026-01-01T10:00:00Z',
     epoch, reentry: null, current: { phase: 'pending', commentId: '4', digest: 'a'.repeat(64), fromStatus: 'needs-design',
@@ -16,11 +17,21 @@ function fixture() {
   const snapshot = { kind: 'checkpoint-snapshot-observed', headOid: oid('b'), repositoryId: 'repo-id',
     repositoryFullName: 'owner/project', cutoverAt: after.cutoverAt, selection: { number: 1, issueId: 'issue' },
     index: { version: 1, repositoryId: 'repo-id', issues: [] }, selectedRecord: null };
-  const plan = planCheckpointCommit({ snapshot, after });
+  const registration = { repositoryId: 'repo-id', ref: CHECKPOINT_BRANCH_REF, genesisOid: oid('a'), cutoverAt: after.cutoverAt, checkpointSchemaVersion: 2 };
+  if (version === 2) { snapshot.schemaVersion = 2; after.version = 2; after.reservation = null; }
+  if (existing) {
+    snapshot.selectedRecord = structuredClone(after); snapshot.index.issues = [{ number: 1, issueId: 'issue' }];
+    after.reservation = { reservedAt: '2026-01-01T10:02:00Z', fromOptionId: 'source', targetOptionId: 'target' };
+  }
+  const plan = version === 2 ? planCheckpointV2Commit({ registration, snapshot, after }) : planCheckpointCommit({ snapshot, after });
   const oldBytes = Buffer.from(JSON.stringify(snapshot.index)); const oldIndex = hash(oldBytes);
   const additionHash = index => hash(Buffer.from(plan.additions[index].contents, 'base64'));
   const oldTree = { sha: oid('c'), truncated: false, tree: [{ path: 'index.json', mode: '100644', type: 'blob', sha: oldIndex, size: oldBytes.length },
     { path: 'keep', mode: '100644', type: 'blob', sha: oid('f'), size: 5 }] };
+  const recordBytes = existing ? Buffer.from(encodeCheckpointV2(snapshot.selectedRecord).content) : null;
+  const recordOid = recordBytes ? hash(recordBytes) : null;
+  if (existing) oldTree.tree.push({ path: 'issues', mode: '040000', type: 'tree', sha: oid('e') },
+    { path: 'issues/1.json', mode: '100644', type: 'blob', sha: recordOid, size: recordBytes.length });
   const newTree = { sha: oid('d'), truncated: false, tree: [
     { path: 'index.json', mode: '100644', type: 'blob', sha: additionHash(0) },
     { path: 'issues', mode: '040000', type: 'tree', sha: oid('e') },
@@ -38,6 +49,7 @@ function fixture() {
     if (url.endsWith(`/git/commits/${snapshot.headOid}`)) return reply({ sha: snapshot.headOid, tree: { sha: oldTree.sha } });
     if (url.endsWith(`/git/trees/${oldTree.sha}?recursive=1`)) return reply(state.oldTree);
     if (url.endsWith(`/git/blobs/${oldIndex}`)) return reply({ sha: oldIndex, size: oldBytes.length, encoding: 'base64', content: oldBytes.toString('base64') });
+    if (existing && url.endsWith(`/git/blobs/${recordOid}`)) return reply({ sha: recordOid, size: recordBytes.length, encoding: 'base64', content: recordBytes.toString('base64') });
     if (url.endsWith(`/git/trees/${newTree.sha}?recursive=1`)) return reply(state.newTree);
     if (url.endsWith('/git/trees') && options.method === 'POST') return reply({ sha: newTree.sha }, 201);
     if (url.endsWith('/git/commits') && options.method === 'POST') {
@@ -47,7 +59,7 @@ function fixture() {
     if (url.endsWith(`/git/commits/${oid('a')}`)) return reply({ sha: oid('a'), tree: { sha: newTree.sha }, parents: [{ sha: snapshot.headOid }] });
     throw Error('unexpected-url');
   };
-  const build = () => createCheckpointObjectPreparer({ owner: 'owner', repo: 'project', snapshot, after,
+  const build = () => createCheckpointObjectPreparer({ owner: 'owner', repo: 'project', snapshot, after, ...(version === 2 ? { registration } : {}),
     appToken: 'synthetic-app-token', request });
   return { build, state, snapshot, after, plan };
 }
@@ -62,6 +74,22 @@ test('prepares and reads back only a private repository tree and commit, without
   assert.deepEqual(tree.tree.map(entry => entry.path), ['index.json', 'issues/1.json']);
   assert.deepEqual(JSON.parse(writes[1].body).parents, [f.snapshot.headOid]);
   assert.deepEqual(await preparer.prepare(), { kind: 'blocked', reason: 'preparer-already-used' });
+});
+
+test('prepares a v2 record only with v2 registration and a v2 snapshot', async () => {
+  const f = fixture(2); const result = await f.build().prepare();
+  assert.equal(result.kind, 'checkpoint-objects-prepared');
+  const entries = JSON.parse(f.state.calls.find(call => call.url.endsWith('/git/trees') && call.method === 'POST').body).tree;
+  assert.equal(JSON.parse(entries.find(entry => entry.path === 'issues/1.json').content).version, 2);
+  assert.throws(() => createCheckpointObjectPreparer({ owner: 'owner', repo: 'project', snapshot: f.snapshot, after: f.after,
+    appToken: 'synthetic-app-token' }), /invalid-object-plan/);
+});
+
+test('rechecks the existing v2 record before preparing its reservation', async () => {
+  const f = fixture(2, true); const result = await f.build().prepare();
+  assert.equal(result.kind, 'checkpoint-objects-prepared');
+  const entries = JSON.parse(f.state.calls.find(call => call.url.endsWith('/git/trees') && call.method === 'POST').body).tree;
+  assert.deepEqual(JSON.parse(entries.find(entry => entry.path === 'issues/1.json').content).reservation, f.after.reservation);
 });
 
 test('rejects a public or wrongly scoped repository before any object creation', async () => {

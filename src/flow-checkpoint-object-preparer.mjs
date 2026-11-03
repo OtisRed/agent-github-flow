@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { TextDecoder } from 'node:util';
-import { planCheckpointCommit } from './flow-checkpoint-commit-plan.mjs';
+import { planCheckpointCommit, planCheckpointV2Commit } from './flow-checkpoint-commit-plan.mjs';
 import { readCheckpointInventory } from './flow-checkpoint-inventory-reader.mjs';
 import { verifyPreparedCheckpointTree } from './flow-checkpoint-tree-diff.mjs';
 import { CHECKPOINT_BRANCH_REF, CHECKPOINT_ANCHOR_REF } from './flow-checkpoint-registration.mjs';
@@ -15,11 +15,12 @@ const uncertain = () => ({ kind: 'object-preparation-uncertain', retryAllowed: f
 // to a token scoped to exactly one PRIVATE repo. Caller must authenticate the
 // checkpoint snapshot, its registration, authors and ref policy; this module
 // does not authorize publication or prove protection. Never log inputs/results.
-export function createCheckpointObjectPreparer({ owner, repo, snapshot, after, appToken, request = fetch } = {}) {
+export function createCheckpointObjectPreparer({ owner, repo, snapshot, after, registration, appToken, request = fetch } = {}) {
   if (!/^[A-Za-z0-9-]{1,39}$/.test(owner ?? '') || !/^[A-Za-z0-9_.-]{1,100}$/.test(repo ?? '')
       || ['.', '..'].includes(repo) || !token(appToken) || typeof request !== 'function'
       || snapshot?.repositoryFullName !== `${owner}/${repo}` || !oid(snapshot?.headOid)) throw Error('invalid-object-preparer');
-  const plan = planCheckpointCommit({ snapshot, after });
+  const plan = snapshot?.schemaVersion === 2 ? planCheckpointV2Commit({ snapshot, after, registration })
+    : planCheckpointCommit({ snapshot, after });
   if (plan.kind !== 'checkpoint-commit-plan') throw Error('invalid-object-plan');
   const expected = structuredClone(snapshot); const additions = structuredClone(plan.additions);
   const api = `https://api.github.com/repos/${owner}/${repo}`;
@@ -55,7 +56,8 @@ export function createCheckpointObjectPreparer({ owner, repo, snapshot, after, a
     try {
       if (!await scope() || !stableRefs(await refs())) return blocked('scope-or-ref-mismatch');
       const inventory = await readCheckpointInventory({ repositoryId: expected.repositoryId, commitOid: expected.headOid,
-        selection: expected.selection, readCommit, readTree, readBlob });
+        selection: expected.selection, readCommit, readTree, readBlob,
+        schemaVersion: expected.schemaVersion ?? 1, expectedCutoverAt: expected.cutoverAt });
       if (inventory.kind !== 'inventory-records-structurally-valid' || !isDeepStrictEqual(inventory.index, expected.index)
           || !isDeepStrictEqual(inventory.selectedRecord, expected.selectedRecord)) return blocked('snapshot-mismatch');
       oldTree = await readTree(inventory.treeOid);
