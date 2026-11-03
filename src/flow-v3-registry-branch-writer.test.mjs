@@ -130,7 +130,9 @@ test('branch writer requires a fresh real reader and ruleset audit before and af
   const [owner,repo]=f.repository.split('/');
   const readProtection=()=>readV3RegistryProtectionAudit({role,owner,repo,repositoryId,appId,updateRulesetId:1,historyRulesetId:2,
     expectedPrivate:true,request:transport});
-  const verifyProtection=createV3RegistryWriteGuard({role,repositoryId,appId,updateRulesetId:1,historyRulesetId:2,readBranch,readProtection});
+  const genesisOid=oid('e'),verifyLineage=async({expectedHeadOid})=>({kind:'v3-registry-lineage-observed',role,repositoryId,
+    ref:V3_REGISTRY_REF,genesisOid,headOid:expectedHeadOid,rollbackProtected:false});
+  const verifyProtection=createV3RegistryWriteGuard({role,repositoryId,appId,registryGenesisOid:genesisOid,updateRulesetId:1,historyRulesetId:2,readBranch,readProtection,verifyLineage});
   const writer=createV3RegistryBranchWriter({role,repository:f.repository,repositoryId,appId,appToken:'synthetic-app',
     keyring:f.keyring,verifyProtection,request:f.request});
   assert.equal((await writer.write({expectedHead:oid('a'),content:f.newContent,anchor:f.newAnchor})).kind,'registry-private-advanced');
