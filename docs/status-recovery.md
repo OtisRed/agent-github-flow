@@ -1,5 +1,12 @@
 # Projekt odzyskiwania przekazań FLOW
 
+> **Zmiana decyzji właściciela, 3.11.2026:** checkpoint ma trafić do osobnej
+> technicznej gałęzi każdego repozytorium. Opisany niżej zapis znacznika do
+> treści issue jest historycznym modelem: `updateIssue` może nadpisać
+> równoczesną edycję kontraktu. Nie uruchamiać tego writera. Nowy wariant
+> wymaga jeszcze zaprojektowania i sprawdzenia, w tym warunkowego zapisu,
+> ochrony gałęzi, odtwarzania oraz wyścigów statusu Projectu.
+
 To projekt i izolowany model decyzji, a nie działający kontroler. Stosują go docelowo zarówno reakcja na komentarz (#5), jak i nocna kontrola (#6). Jeden kontroler odpowiada za zapis danej karty; migracja nie uruchamia równoległego właściciela VSone.
 
 ## Znacznik i dowody
