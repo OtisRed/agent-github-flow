@@ -25,6 +25,8 @@ jobs:
         run: node --test src/*.test.mjs
       - name: Verify webhook spike tests
         run: python3 -m unittest discover -s spikes/mikrus-webhook -p 'test_*.py' -v
+      - name: Verify detached webhook intake tests
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
       - name: Download and verify actionlint
         shell: bash
         run: |
