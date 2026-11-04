@@ -108,6 +108,8 @@ def decide(snapshot, checkpoint, *, enrolled_at, trusted_authors):
             return blocked("reopen-history-missing")
         if snapshot["state"] == "CLOSED":
             return {"kind": "target", "status": "done"}
+        if created == boundary:
+            return blocked("ambiguous-issue-boundary")
         if reopen_time is not None and reopen_time > boundary:
             if reopen_id != old_reopen:
                 return {"kind": "target", "status": "needs-design", "reopen_id": reopen_id, "recheck": True}

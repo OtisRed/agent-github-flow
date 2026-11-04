@@ -28,6 +28,7 @@ class FakeTransport:
         if path.startswith("/repos/Owner/Project/issues?"):
             return [{"number": 8, "created_at": "2026-11-02T00:00:00Z"},
                     {"number": 9, "created_at": "2026-10-02T00:00:00Z"},
+                    {"number": 11, "created_at": "2026-11-01T00:00:00Z"},
                     {"number": 10, "created_at": "2026-11-02T00:00:00Z", "pull_request": {}}], None
         if "/issues/7/comments?" in path or "/issues/7/events?" in path:
             return [], None
@@ -119,7 +120,7 @@ class GitHubTests(unittest.TestCase):
         self.assertEqual([c["id"] for c in self.github.read(20, 7)["comments"]], [1, 2])
 
     def test_reconciliation_includes_existing_cards_and_new_issues_only(self):
-        self.assertEqual(self.github.reconciliation_candidates("2026-11-01T00:00:00Z"), [7, 8])
+        self.assertEqual(self.github.reconciliation_candidates("2026-11-01T00:00:00Z"), [7, 8, 11])
 
 
 if __name__ == "__main__":

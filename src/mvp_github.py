@@ -184,7 +184,7 @@ class GitHub:
                 continue
             if type(issue.get("number")) is not int or issue["number"] <= 0:
                 raise ValueError("Invalid issue listing")
-            if _date(issue.get("created_at")) > boundary:
+            if _date(issue.get("created_at")) >= boundary:
                 candidates.add(issue["number"])
         return sorted(candidates)
 

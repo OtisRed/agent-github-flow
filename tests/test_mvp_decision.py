@@ -88,6 +88,7 @@ class DecisionTests(unittest.TestCase):
     def test_ambiguous_boundary_and_missing_reopen_history_block(self):
         self.assertEqual(run(snapshot(comments=[comment(1, when=BOUNDARY)]))["reason"], "ambiguous-comment-boundary")
         self.assertEqual(run(snapshot(), {"reopen_id": 55})["reason"], "reopen-history-missing")
+        self.assertEqual(run(snapshot(created_at=BOUNDARY))["reason"], "ambiguous-issue-boundary")
 
 
 if __name__ == "__main__":
