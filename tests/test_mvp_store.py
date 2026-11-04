@@ -101,6 +101,14 @@ class StoreTests(unittest.TestCase):
         self.store.block(1, 1, 1, "checkpoint-changed")
         self.assertEqual(self.store.next_pending()["generation"], 2)
 
+    def test_stale_completion_cannot_erase_newer_error(self):
+        self.store.enqueue(1, 1)
+        self.store.enqueue(1, 1)
+        self.store.block(1, 1, 2, "checkpoint-changed")
+        with self.assertRaises(ValueError):
+            self.store.complete(1, 1, 1)
+        self.assertEqual(self.store.errors()[0]["error_code"], "checkpoint-changed")
+
     def test_parallel_receivers_do_not_lose_wakeups(self):
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             list(pool.map(lambda _: self.store.enqueue(1, 2), range(20)))

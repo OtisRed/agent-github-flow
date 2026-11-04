@@ -168,7 +168,7 @@ class Store:
                 comment_id=COALESCE(?, comment_id), comment_digest=COALESCE(?, comment_digest),
                 error_code=NULL
                 WHERE repository_id=? AND issue_number=? AND completed_generation < ?
-                  AND generation >= ? AND uncertain_since IS NULL""",
-                (generation, comment_id, comment_digest, *key, generation, generation))
+                  AND generation >= ? AND blocked_generation < ? AND uncertain_since IS NULL""",
+                (generation, comment_id, comment_digest, *key, generation, generation, generation))
             if result.rowcount != 1:
                 raise ValueError("Invalid generation or uncertain write")
