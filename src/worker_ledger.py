@@ -328,6 +328,26 @@ class Ledger:
                               (delivery_id,)).fetchone()
         return None if row is None else row[0]
 
+    def matches_recovery_status(self, delivery_id, commitment):
+        """Compare a candidate under lock without authorizing any mutation."""
+        if type(commitment) is dict:
+            commitment = commitment.copy()
+        if not ingress.canonical_delivery(delivery_id) or not valid_status_commitment(commitment):
+            raise ValueError("Invalid recovery commitment")
+        self._check()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            self._check()
+            row = self.db.execute("""SELECT status_key_id,status_mac FROM pending_deliveries
+                                     WHERE delivery_id=? AND state='recovering' AND ref_intent=0
+                                       AND status_intent=1 AND ref_transition IS NULL""", (delivery_id,)).fetchone()
+            matches = row is not None and row[0] == commitment['keyId'] and hmac.compare_digest(row[1], commitment['mac'])
+            self.db.commit()
+            return matches
+        except BaseException:
+            self.db.rollback()
+            raise
+
     def begin_status_recovery(self, delivery_id, commitment):
         """Reserve inspection only; this grants no write or retry permission.
 

@@ -1,12 +1,14 @@
 // Detached composition for the first v3 recovery reservation only. The
 // supplied cycle, readers, journal, clocks and Git transports must be trusted.
-// This deliberately blocks the subsequent Project status step and commit.
+// Optional status continuation is detached and intended for a synthetic
+// transport only. Final checkpoint commit is always blocked.
 import {isDeepStrictEqual} from 'node:util';
 import {observeIngressDelivery} from './ingress-observation.mjs';
 
 export async function runGuardedReservation(input={}){
   try{
-    const {routes,graphql,keyring,resolvePolicy,runCycle,cycleInput,signer,createPublicationStep,publicationInputs,deriveBinding,journal}=input;
+    const {routes,graphql,keyring,resolvePolicy,runCycle,cycleInput,signer,createPublicationStep,publicationInputs,deriveBinding,journal,
+      createStatusStep,statusInputs}=input;
     const state=structuredClone(input.state),delivery=structuredClone(input.delivery),stable=structuredClone(input.metadata);
     const commitment=structuredClone(input.commitment);
     if(!state||state.kind!=='recovering'||state.refIntent!==0||state.statusIntent!==1
@@ -27,11 +29,13 @@ export async function runGuardedReservation(input={}){
       const target=options.filter(x=>x?.name===stable.binding.targetStatus);
       return source.length===1&&target.length===1&&source[0].id===stable.fromOptionId&&target[0].id===stable.targetOptionId;
     };
+    let statusSent=false,statusAcknowledged=false;
     const guardedCollect=async()=>{
       const context=structuredClone(await rawCollect()),project=context?.observation?.project;
+      const source=project?.currentStatus===stable.binding.fromStatus&&project?.statusOptionId===stable.fromOptionId;
+      const target=project?.currentStatus===stable.binding.targetStatus&&project?.statusOptionId===stable.targetOptionId;
       if(!project||project.kind!=='branch-project-observed'||project.issueState!=='OPEN'
-          ||project.itemId!==stable.itemId||project.currentStatus!==stable.binding.fromStatus
-          ||project.statusOptionId!==stable.fromOptionId||!mappingMatches(project,project.statusOptions)
+          ||project.itemId!==stable.itemId||(!source&&!(statusAcknowledged&&target))||!mappingMatches(project,project.statusOptions)
           ||!mappingMatches(project,cycle.projectRegistration.statusOptions))throw Error('project-binding-mismatch');
       return context;
     };
@@ -65,7 +69,7 @@ export async function runGuardedReservation(input={}){
     if(route.kind!=='observed'||!isDeepStrictEqual(resolved?.policy,cycle.policy)
         ||!isDeepStrictEqual(registration,cycle.projectRegistration)
         ||!isDeepStrictEqual(commitmentUsed,cycle.registrationCommitment))return {kind:'blocked'};
-    let waited=false,attempted=false,recorded=null,confirmed=false,statusCalls=0;
+    let waited=false,attempted=false,recorded=null,confirmed=false,statusCalls=0,statusObserved=false,approvedBinding=null;
     const makePublicationStep=()=>async args=>{
       if(attempted||!waited||args?.operation!=='reservation'||!isDeepStrictEqual(args.expectedBinding,stable.binding))return {kind:'blocked'};
       attempted=true;let proposed=null,expectedBinding=null,publishStarted=false,authorId=null;
@@ -105,12 +109,54 @@ export async function runGuardedReservation(input={}){
           ||!isDeepStrictEqual(finalContext,await verifiedCollect(expectedBinding)))return {kind:'blocked'};
       if((await confirm(delivery.deliveryId,structuredClone(proposed.transition)))?.kind!=='confirmed')return {kind:'blocked'};
       confirmed=true;
+      approvedBinding=structuredClone(expectedBinding);
+      return result;
+    };
+    const makeStatusStep=()=>async args=>{
+      statusCalls++;
+      const statusTransport=statusInputs?.transport,statusWrite=statusTransport?.setStatus;
+      if(statusCalls!==1||!confirmed||!recorded||!isDeepStrictEqual(args?.expectedBinding,approvedBinding)
+          ||typeof createStatusStep!=='function'||!statusInputs||typeof statusWrite!=='function'||typeof journal.matchesStatus!=='function'
+          ||statusInputs.collectContext!==cycleInput.collectContext||statusInputs.verifyProtection!==publicationInputs.verifyProtection
+          ||statusTransport.projectId!==cycle.policy.projectId||statusTransport.statusFieldId!==cycle.policy.statusFieldId)
+        return {kind:'blocked'};
+      const metadata=structuredClone(stable);metadata.binding=approvedBinding;
+      const nextCommitment={kind:'worker-status-commitment',keyId:recorded.keyId,mac:recorded.nextMac};
+      if(!signer.verify(metadata,nextCommitment)||(await journal.matchesStatus(delivery.deliveryId,structuredClone(nextCommitment)))?.kind!=='matched')return {kind:'blocked'};
+      const context=await verifiedCollect(approvedBinding);
+      if(!await protectionVerified()||!isDeepStrictEqual(context,await verifiedCollect(approvedBinding)))return {kind:'blocked'};
+      const transport={projectId:cycle.policy.projectId,statusFieldId:cycle.policy.statusFieldId,setStatus:async values=>{
+        const safeValues=structuredClone(values);
+        if(statusSent||safeValues?.itemId!==stable.itemId||safeValues?.targetOptionId!==stable.targetOptionId)return {kind:'blocked'};
+        if((await journal.matchesStatus(delivery.deliveryId,structuredClone(nextCommitment)))?.kind!=='matched'
+            ||!isDeepStrictEqual(context,await verifiedCollect(approvedBinding))||!await protectionVerified()
+            ||!isDeepStrictEqual(context,await verifiedCollect(approvedBinding)))return {kind:'blocked'};
+        statusSent=true;
+        const result=await statusWrite.call(statusTransport,safeValues);
+        statusAcknowledged=result?.kind==='status-write-acknowledged';
+        return result;
+      }};
+      const step=createStatusStep({...statusInputs,policy:cycle.policy,projectRegistration:cycle.projectRegistration,
+        registrationCommitment:cycle.registrationCommitment,keyring,collectContext:guardedCollect,transport});
+      const result=await step(args);
+      if(!statusSent||!statusAcknowledged||result?.kind!=='status-target-observed'
+          ||!isDeepStrictEqual(result.binding,approvedBinding))return {kind:'blocked'};
+      const after=await verifiedCollect(approvedBinding),normalized=structuredClone(after);
+      if(after.observation.project.currentStatus!==stable.binding.targetStatus
+          ||after.observation.project.statusOptionId!==stable.targetOptionId)return {kind:'blocked'};
+      normalized.observation.project.currentStatus=stable.binding.fromStatus;
+      normalized.observation.project.statusOptionId=stable.fromOptionId;
+      if(!isDeepStrictEqual(context,normalized)||!await protectionVerified()
+          ||!isDeepStrictEqual(after,await verifiedCollect(approvedBinding)))return {kind:'blocked'};
+      statusObserved=true;
       return result;
     };
     const result=await runCycle({...cycle,
       wait:async ms=>{if(ms!==120000)throw Error('unexpected-wait');await cycle.wait(ms);waited=true;},
-      makePublicationStep,makeStatusStep:()=>async()=>{statusCalls++;return {kind:'blocked'};}});
-    return result?.kind==='v3-cycle-stopped'&&result.phase==='status'&&confirmed&&recorded&&statusCalls===1
+      makePublicationStep,makeStatusStep});
+    if(result?.kind==='v3-cycle-stopped'&&result.phase==='commit'&&confirmed&&recorded&&statusObserved&&statusCalls===1)
+      return {kind:'status-observed-commit-blocked'};
+    return typeof createStatusStep!=='function'&&result?.kind==='v3-cycle-stopped'&&result.phase==='status'&&confirmed&&recorded&&statusCalls===1
       ?{kind:'reservation-observed-status-blocked'}:{kind:'blocked'};
   }catch{return {kind:'blocked'};}
 }

@@ -455,13 +455,19 @@ os._exit(73)
             work.record_intent(self.first, "status", TEST_COMMITMENT)
         plan = synthetic_transition(self.first)
         with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            self.assertFalse(work.matches_recovery_status(self.first, TEST_COMMITMENT))
             work.begin_status_recovery(self.first, TEST_COMMITMENT)
+            self.assertTrue(work.matches_recovery_status(self.first, TEST_COMMITMENT))
+            self.assertFalse(work.matches_recovery_status(self.first, {**TEST_COMMITMENT, 'mac':'0'*64}))
             work.record_recovery_ref_intent(self.first, plan)
+            self.assertFalse(work.matches_recovery_status(self.first, TEST_COMMITMENT))
             for wrong in ({**plan, "treeOid":"1"*40}, {**plan, "nextMac":"1"*64}, {**plan, "mac":"1"*64}):
                 with self.assertRaises(ValueError):
                     work._record_verified_recovery_ref(self.first, wrong)
                 self.assertEqual(work.blocking_preview(), [(self.first, "recovering", 1, 1)])
             work._record_verified_recovery_ref(self.first, plan)
+            self.assertFalse(work.matches_recovery_status(self.first, TEST_COMMITMENT))
+            self.assertTrue(work.matches_recovery_status(self.first, {**TEST_COMMITMENT, 'mac':plan['nextMac']}))
             self.assertEqual(work.blocking_preview(), [(self.first, "recovering", 0, 1)])
             self.assertIsNone(work.recovery_ref_transition(self.first))
             with self.assertRaises(ValueError):
@@ -539,7 +545,7 @@ os._exit(73)
 
     @unittest.skipUnless(os.environ.get("AGF_CONTROLLER_ROOT") and os.environ.get("AGF_NODE"),
                          "Actual controller checkout and Node not supplied")
-    def test_status_recovery_observes_real_v3_cycle_without_mutation(self):
+    def test_status_recovery_observes_real_v3_cycle_without_github_mutation(self):
         queue = Path(self.directory.name) / "ingress.sqlite"
         key = b"synthetic-fingerprint-key-for-the-tests-only"
         secret = b"synthetic-webhook-secret-for-the-tests-only"
@@ -598,7 +604,7 @@ os._exit(73)
             actions = []
             transition = None
             try:
-                child.stdin.write(json.dumps({"mode":"guarded-ipc", "state":state, "delivery":delivery,
+                child.stdin.write(json.dumps({"mode":"guarded-status-ipc", "state":state, "delivery":delivery,
                                               "commitment":commitment}).encode())
                 child.stdin.close()
                 child.stdin = None
@@ -628,14 +634,16 @@ os._exit(73)
                         elif request["operation"] == "confirm":
                             work._record_verified_recovery_ref(self.first, request["transition"])
                             response = {"kind":"confirmed"}
+                        elif request["operation"] == "match-status":
+                            response = {"kind":"matched" if work.matches_recovery_status(self.first, request["transition"]) else "blocked"}
                         else:
                             self.fail("unexpected synthetic journal request")
                         os.write(reply_write, (json.dumps(response) + "\n").encode())
                 self.assertFalse(pending)
                 stdout, stderr = child.communicate(timeout=5)
                 self.assertEqual(child.returncode, 0, stderr.decode())
-                self.assertEqual(stdout.decode().strip(), "synthetic guarded cycle and ledger passed")
-                self.assertEqual(actions, ["record", "read", "read", "confirm"])
+                self.assertEqual(stdout.decode().strip(), "synthetic guarded status and ledger passed")
+                self.assertEqual(actions, ["record", "read", "read", "confirm", "match-status", "match-status"])
                 self.assertEqual(work.blocking_preview(), [(self.first, "recovering", 0, 1)])
                 self.assertIsNone(work.recovery_ref_transition(self.first))
             finally:

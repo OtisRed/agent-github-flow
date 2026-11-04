@@ -19,6 +19,7 @@ const {FLOW_STATUSES}=await load('flow.mjs');
 const {resolveV3ProjectPolicy}=await load('flow-project-policy-resolver.mjs');
 const {v3HandoffBinding}=await load('flow-v3-handoff-binding.mjs');
 const {createV3PublicationStep}=await load('flow-v3-publication-step.mjs');
+const {createV3ProjectStatusStep}=await load('flow-v3-project-status-step.mjs');
 const chunks=[];for await(const chunk of process.stdin)chunks.push(chunk);
 const request=JSON.parse(Buffer.concat(chunks).toString('utf8'));
 const {state,delivery}=request;
@@ -108,9 +109,10 @@ const changed=structuredClone(prepared.metadata);changed.binding.reservation.res
 assert.equal(prepared.signer.verify(changed,request.commitment),false);
 
 function guardedFixture({recordFailure=false,publishFailure=false,observeFailure=false,confirmFailure=false,
-  mutateAfterRecord=false,mutateRecordPlan=false,journalOverride=null}={}){
+  mutateAfterRecord=false,mutateRecordPlan=false,journalOverride=null,runStatus=false,statusFailure=false,
+  statusFailureAfterWrite=false,statusNoObservation=false,statusMismatch=false}={}){
   const v=fixture(),{signer,metadata,commitment}=statusCommitment(v);
-  let recorded=null,records=0,confirms=0,refWrites=0;
+  let recorded=null,records=0,confirms=0,refWrites=0,statusWrites=0,statusTargets=[];
   const verifyProtection=async()=>({kind:'checkpoint-protection-observed',repositoryId:'repo-id',appId:12,updateRulesetId:1,historyRulesetId:2});
   const prepare=async({snapshot})=>({kind:'checkpoint-objects-prepared',expectedHeadOid:snapshot.headOid,
     expectedTreeOid:'e'.repeat(40),commit:{sha:'d'.repeat(40),tree:{sha:'e'.repeat(40)},parents:[{sha:snapshot.headOid}]}});
@@ -121,17 +123,30 @@ function guardedFixture({recordFailure=false,publishFailure=false,observeFailure
       if(mutateRecordPlan)plan.newOid='f'.repeat(40);recorded=structuredClone(plan);
       if(mutateAfterRecord)v.project.itemId='changed-card';return {kind:'recorded'};},
     read:async()=>structuredClone(recorded),
-    confirm:async(_id,plan)=>{confirms++;return confirmFailure||!isDeepEqual(plan,recorded)?{kind:'blocked'}:{kind:'confirmed'};}};
+    confirm:async(_id,plan)=>{confirms++;return confirmFailure||!isDeepEqual(plan,recorded)?{kind:'blocked'}:{kind:'confirmed'};},
+    matchesStatus:async(_id,value)=>!statusMismatch&&confirms===1&&value.keyId===recorded?.keyId&&value.mac===recorded?.nextMac
+      ?{kind:'matched'}:{kind:'blocked'}};
   const publicationInputs={policy:v.input.policy,projectRegistration:v.input.projectRegistration,
     registrationCommitment:v.input.registrationCommitment,keyring:v.keyring,collectContext:v.input.collectContext,
     verifyProtection,prepare,publish,observe};
   const args={state,delivery,routes:v.routes,graphql:v.graphql,keyring:v.keyring,resolvePolicy:resolveV3ProjectPolicy,
     runCycle:runFirstV3Cycle,cycleInput:v.input,signer,commitment,metadata,createPublicationStep:createV3PublicationStep,
     publicationInputs,deriveBinding:v3HandoffBinding,journal};
-  return {args,project:v.project,checkpoint:v.checkpoint,handoff:v.handoff,
-    counts:()=>({records,confirms,refWrites,waited:v.counts().waited,statusWrites:v.counts().writes})};
+  if(runStatus){
+    const transport={projectId:'project',statusFieldId:'status',setStatus:async values=>{statusWrites++;
+      statusTargets.push(structuredClone(values));
+      assert.deepEqual(values,{itemId:'item',targetOptionId:'ready'});
+      if(statusFailure)throw Error('synthetic status failure');
+      if(!statusNoObservation){v.project.currentStatus='agent-ready';v.project.statusOptionId='ready';}
+      if(statusFailureAfterWrite)throw Error('synthetic response lost after status change');
+      return {kind:'status-write-acknowledged'};}};
+    args.createStatusStep=createV3ProjectStatusStep;
+    args.statusInputs={collectContext:v.input.collectContext,verifyProtection,transport};
+  }
+  return {args,project:v.project,checkpoint:v.checkpoint,handoff:v.handoff,statusTargets,
+    counts:()=>({records,confirms,refWrites,waited:v.counts().waited,statusWrites:statusWrites+v.counts().writes})};
 }
-if(request.mode==='guarded-ipc'){
+if(request.mode==='guarded-status-ipc'){
   const requestFd=Number(process.env.AGF_TEST_REQUEST_FD),replyFd=Number(process.env.AGF_TEST_REPLY_FD);
   assert.ok(Number.isInteger(requestFd)&&requestFd>=3&&Number.isInteger(replyFd)&&replyFd>=3&&requestFd!==replyFd);
   const call=(operation,id,transition)=>{
@@ -141,16 +156,54 @@ if(request.mode==='guarded-ipc'){
       if(one[0]===10)return JSON.parse(Buffer.from(bytes).toString('utf8'));bytes.push(one[0]);}
     throw Error('journal reply too long');
   };
-  const journal={record:async(id,plan)=>call('record',id,plan),read:async id=>call('read',id),confirm:async(id,plan)=>call('confirm',id,plan)};
-  const g=guardedFixture({journalOverride:journal});
-  assert.deepEqual(await runGuardedReservation(g.args),{kind:'reservation-observed-status-blocked'});
-  assert.equal(g.counts().refWrites,1);assert.equal(g.counts().statusWrites,0);assert.equal(g.counts().waited,120000);
-  await new Promise(resolve=>process.stdout.write('synthetic guarded cycle and ledger passed\n',resolve));
+  const journal={record:async(id,plan)=>call('record',id,plan),read:async id=>call('read',id),
+    confirm:async(id,plan)=>call('confirm',id,plan),matchesStatus:async(id,value)=>call('match-status',id,value)};
+  const g=guardedFixture({journalOverride:journal,runStatus:true});
+  assert.deepEqual(await runGuardedReservation(g.args),{kind:'status-observed-commit-blocked'});
+  assert.equal(g.counts().refWrites,1);assert.equal(g.counts().statusWrites,1);assert.equal(g.counts().waited,120000);
+  await new Promise(resolve=>process.stdout.write('synthetic guarded status and ledger passed\n',resolve));
   process.exit(0);
 }
 let guarded=guardedFixture();
 assert.deepEqual(await runGuardedReservation(guarded.args),{kind:'reservation-observed-status-blocked'});
 assert.deepEqual(guarded.counts(),{records:1,confirms:1,refWrites:1,waited:120000,statusWrites:0});
+guarded=guardedFixture({runStatus:true});
+assert.deepEqual(await runGuardedReservation(guarded.args),{kind:'status-observed-commit-blocked'});
+assert.deepEqual(guarded.counts(),{records:1,confirms:1,refWrites:1,waited:120000,statusWrites:1});
+for(const settings of [{statusFailure:true},{statusFailureAfterWrite:true},{statusNoObservation:true},{statusMismatch:true}]){
+  guarded=guardedFixture({runStatus:true,...settings});
+  assert.deepEqual(await runGuardedReservation(guarded.args),{kind:'blocked'});
+  assert.equal(guarded.counts().statusWrites,settings.statusMismatch?0:1);
+  assert.equal(guarded.counts().confirms,1);
+}
+guarded=guardedFixture({runStatus:true});
+guarded.args.createStatusStep=()=>async args=>({kind:'status-target-observed',binding:args.expectedBinding});
+assert.deepEqual(await runGuardedReservation(guarded.args),{kind:'blocked'});
+assert.equal(guarded.counts().statusWrites,0);
+for(const change of [g=>{g.checkpoint.headOid='f'.repeat(40);},g=>{g.project.itemId='changed-card';}]){
+  guarded=guardedFixture({runStatus:true});let checks=0;const original=guarded.args.journal.matchesStatus;
+  guarded.args.journal.matchesStatus=async(...args)=>{const result=await original(...args);
+    if(++checks===2)change(guarded);return result;};
+  assert.deepEqual(await runGuardedReservation(guarded.args),{kind:'blocked'});
+  assert.equal(guarded.counts().statusWrites,0);
+}
+guarded=guardedFixture({runStatus:true});
+let transportChecks=0,foreignWrites=0;const originalMatches=guarded.args.journal.matchesStatus;
+guarded.args.journal.matchesStatus=async(...args)=>{const result=await originalMatches(...args);
+  if(++transportChecks===2)guarded.args.statusInputs.transport={projectId:'foreign',statusFieldId:'foreign',
+    setStatus:async()=>{foreignWrites++;return {kind:'status-write-acknowledged'};}};return result;};
+assert.deepEqual(await runGuardedReservation(guarded.args),{kind:'status-observed-commit-blocked'});
+assert.equal(foreignWrites,0);assert.equal(guarded.counts().statusWrites,1);
+guarded=guardedFixture({runStatus:true});
+guarded.args.createStatusStep=options=>async()=>{
+  const values={itemId:'item',targetOptionId:'ready'};
+  const pending=options.transport.setStatus(values);
+  values.itemId='foreign';values.targetOptionId='foreign';
+  await pending;return {kind:'blocked'};
+};
+assert.deepEqual(await runGuardedReservation(guarded.args),{kind:'blocked'});
+assert.equal(guarded.counts().statusWrites,1);
+assert.deepEqual(guarded.statusTargets,[{itemId:'item',targetOptionId:'ready'}]);
 guarded=guardedFixture({recordFailure:true});
 assert.deepEqual(await runGuardedReservation(guarded.args),{kind:'blocked'});
 assert.deepEqual(guarded.counts(),{records:1,confirms:0,refWrites:0,waited:120000,statusWrites:0});
