@@ -1,5 +1,7 @@
 # Roboczy import sygnałów dla workera
 
+> Historia: właściciel wybrał uproszczone MVP z jedną prywatną bazą SQLite. Opisany niżej eksperyment z oddzielnym magazynem, importem i refami nie jest wymogiem docelowego rozwiązania ani dowodem wdrożenia.
+
 Niekompletny zakres issue #81: stronicowany odczyt identyfikatorów z kolejki przyjęć i idempotentny import do osobnego prywatnego magazynu. Import używa istniejącego ID dostawy i nie usuwa źródła. Marker strony jest wyłącznie chwilowy: po wyczerpaniu budżetu stron lub czasu przyszły scheduler musi kontynuować bieżący przebieg, zamiast stale wracać do pierwszych stron. Po dojściu do końca rozpoczyna kolejny pełny przebieg, aby odnaleźć nowe ID przed markerem; także po pustym wyniku musi kiedyś wznowić skan. Po restarcie może zacząć od początku, ale trzeba zaprojektować i przetestować zapewnienie postępu i sprawiedliwości także przy ciągłym napływie zdarzeń. Tego schedulera jeszcze tu nie ma.
 
 Magazyn importu jest odrębny od bazy #77 i od checkpointu FLOW. Import strony kończy się sukcesem tylko po zatwierdzeniu transakcji; ponowienie jest idempotentne. Utrzymanie jednej zaufanej ścieżki kolejki i jednej ścieżki magazynu jest obowiązkiem przyszłej konfiguracji. Zmienienie źródła lub cofnięcie bazy wymaga osobnej obsługi; to nie jest automatycznie wykrywane.
