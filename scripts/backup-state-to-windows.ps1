@@ -50,7 +50,7 @@ try {
   if ((Get-FileHash -Algorithm SHA256 -LiteralPath $temporary).Hash.ToLowerInvariant() -ne $expected) { throw $reason }
 
   $reason = 'integrity-check-failed'
-  $pythonCode = 'import pathlib, sqlite3, sys; p=pathlib.Path(sys.argv[1]); c=sqlite3.connect(p.resolve().as_uri()+"?mode=ro",uri=True); ok=(c.execute("PRAGMA integrity_check").fetchone()[0]=="ok" and c.execute("PRAGMA application_id").fetchone()[0]==0x4147464D and c.execute("PRAGMA user_version").fetchone()[0]==1); c.close(); sys.exit(0 if ok else 1)'
+  $pythonCode = 'import pathlib, sqlite3, sys; p=pathlib.Path(sys.argv[1]); c=sqlite3.connect(p.resolve().as_uri()+"?mode=ro",uri=True); ok=(c.execute("PRAGMA integrity_check").fetchone()[0]=="ok" and c.execute("PRAGMA application_id").fetchone()[0]==0x4147464D and c.execute("PRAGMA user_version").fetchone()[0] in (1,2)); c.close(); sys.exit(0 if ok else 1)'
   $pythonCode | & $python - $temporary 2>$null
   if ($LASTEXITCODE -ne 0) { throw $reason }
   [System.IO.File]::Move($temporary, $final)
