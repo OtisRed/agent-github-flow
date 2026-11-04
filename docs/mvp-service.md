@@ -16,4 +16,6 @@ W każdym Projectcie włączamy wbudowane GitHub `Auto-add to project` dla issue
 
 Przy starcie oraz raz na dobę w nocy usługa zbiera karty na tablicy i issue powstałe po dacie podłączenia. Niepowodzenie odczytu jest ponawiane, a oczekujące sygnały pozostają w SQLite. GitHub nie gwarantuje automatycznego ponawiania nieudanych webhooków; wymagane jest także wdrożenie monitoringu i sprawdzenie sposobu odzyskania po awarii. Nie można obiecać wykrycia komentarza, który powstał i zniknął, zanim system go zobaczył.
 
+Po zebraniu kandydatów usługa zapisuje w dzienniku systemowym `FLOW scan: startup candidates queued` albo `FLOW scan: nightly candidates queued`. Ten wpis potwierdza wyłącznie zakończenie skanowania i dodanie kandydatów do kolejki, nie wykonanie wszystkich zmian: trzeba osobno sprawdzić kolejkę i błędy. Wpisy `FLOW attention` sygnalizują problemy bez ujawniania treści issue ani poświadczeń.
+
 Obecny algorytm porównuje tekst komentarza i jego czas aktualizacji. Jeśli treść zostanie zmieniona i przywrócona w granicach rozdzielczości czasu zwracanego przez API, bez zaobserwowania zmiany, historia takiej edycji może być niewidoczna. Rzeczywistą rozdzielczość i tę granicę trzeba uwzględnić w operacyjnej ocenie ryzyka.

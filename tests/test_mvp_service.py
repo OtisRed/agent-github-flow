@@ -4,6 +4,7 @@ import http.client
 import importlib.util
 import json
 import os
+import select
 import signal
 import socket
 import subprocess
@@ -70,6 +71,8 @@ class ServiceTests(unittest.TestCase):
                     except OSError:
                         time.sleep(0.1)
                 self.assertTrue(connected, "service did not start")
+                self.assertTrue(select.select([process.stdout], [], [], 10)[0], "startup reconciliation not logged")
+                self.assertEqual(process.stdout.readline().strip(), b"FLOW scan: startup candidates queued")
                 duplicate = subprocess.run(command, capture_output=True, timeout=10)
                 self.assertNotEqual(duplicate.returncode, 0)
             finally:

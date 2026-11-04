@@ -120,6 +120,7 @@ def run(config):
         today = datetime.now(zone)
         last_night = today.date() if today.hour >= 2 else today.date() - timedelta(days=1)
         pending_scans = set(clients)  # startup reconciliation
+        scan_reason = "startup"
         backup_pending = True
         next_scan = time.monotonic()
         while not stop.is_set():
@@ -128,6 +129,7 @@ def run(config):
             now = datetime.now(zone)
             if now.hour >= 2 and now.date() != last_night:
                 pending_scans.update(clients)
+                scan_reason = "nightly"
                 backup_pending = True
                 next_scan = time.monotonic()
                 last_night = now.date()
@@ -138,6 +140,7 @@ def run(config):
                         backup_pending = False
                     except Exception:
                         print("FLOW attention: backup-failed", file=sys.stderr, flush=True)
+                had_pending_scans = bool(pending_scans)
                 for repository_id in list(pending_scans):
                     client, enrolled_at, _authors = clients[repository_id]
                     try:
@@ -146,6 +149,8 @@ def run(config):
                         pending_scans.remove(repository_id)
                     except Exception:
                         print("FLOW attention: reconciliation-failed", file=sys.stderr, flush=True)
+                if had_pending_scans and not pending_scans:
+                    print("FLOW scan: " + scan_reason + " candidates queued", flush=True)
                 next_scan = time.monotonic() + 60
             row = store.next_pending()
             if row is None:
