@@ -1,0 +1,9 @@
+# Prywatny magazyn MVP
+
+`src/mvp_store.py` i `src/mvp_intake.py` są przygotowywanymi elementami kontrolera #81. Nie uruchamiają serwera, nie czytają GitHuba, nie zmieniają statusów i nie są wdrożone na Mikrusie.
+
+Jedna baza SQLite przechowuje numer wersji pracy dla każdego repozytorium i issue, ostatnią ukończoną wersję, ID i skrót ostatniego zaakceptowanego komentarza oraz czas i cel niepewnego zapisu statusu. Odbiornik sprawdza podpis i dozwoloną instalację oraz repozytorium, a następnie zapisuje wyłącznie sygnał; odpowiedź `accepted` powstaje po zatwierdzeniu transakcji. Wiele sygnałów można połączyć w jeden odczyt. Kolejna wersja, która powstanie podczas pracy, pozostaje do ponownego sprawdzenia również po restarcie. Powtórny webhook może wywołać dodatkowy odczyt i nie jest traktowany jako dowód zmiany GitHuba.
+
+Przed żądaniem zmiany statusu wykonawca zapisuje jego cel i czas. Jeśli wynik jest niepewny, może uznać operację za potwierdzoną po świeżym odczycie celu. W innym przypadku magazyn wymaga co najmniej 120 sekund przed rozliczeniem niepewności, a wykonawca musi ponownie odczytać GitHub i ocenić, czy ponowienie jest właściwe. To nie usuwa zaakceptowanego ryzyka wyjątkowo późnej realizacji starego żądania. Sam magazyn nie sprawdza prawdziwości odczytu, autora komentarza, jego skrótu ani porządku reopen — zrobi to kontroler przed ukończeniem pracy.
+
+Bazę tworzy się wyłącznie podczas jawnej inicjalizacji. Zwykłe otwarcie nigdy nie tworzy brakującego pliku; obca lub niedokończona baza jest odrzucana. Katalog i plik należy zabezpieczyć jako prywatne. Nadal trzeba przygotować i sprawdzić kopię oraz kontrolowane odzyskanie: samo przywrócenie starszego pliku nie dowodzi kompletności checkpointów. Jeden zaufany worker jest założeniem, które przyszła usługa musi wymusić. Inicjalizacja, dostęp do pliku, kopie, monitoring, odczyt danych, rzeczywiste HTTP i integracja z workerem pozostają do wykonania przed wdrożeniem.
