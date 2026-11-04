@@ -12,7 +12,7 @@ const mac=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 const oid=value=>typeof value==='string'&&/^[a-f0-9]{40}$/.test(value)&&value!=='0'.repeat(40);
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
 const timestamp=value=>{
-  if(typeof value!=='string'||!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(value))return null;
+  if(typeof value!=='string'||value.startsWith('0000-')||!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(value))return null;
   const time=Date.parse(value);
   return Number.isFinite(time)&&new Date(time).toISOString()===value.replace('Z','.000Z')?time:null;
 };
@@ -45,8 +45,10 @@ function canonical(metadata,keyId){
 }
 
 export function createWorkerStatusSigner(input={}){
-  if(!input||!Buffer.isBuffer(input.key)||input.key.length!==32||!positive(input.keyId))throw Error('invalid-worker-status-key');
-  const secret=Buffer.from(input.key),keyId=input.keyId;
+  if(!input)throw Error('invalid-worker-status-key');
+  const key=input.key,keyId=input.keyId;
+  if(!Buffer.isBuffer(key)||key.length!==32||!positive(keyId))throw Error('invalid-worker-status-key');
+  const secret=Buffer.from(key);
   const sign=metadata=>{
     try{
       const payload=canonical(structuredClone(metadata),keyId);
@@ -56,11 +58,42 @@ export function createWorkerStatusSigner(input={}){
   };
   const verify=(metadata,expected)=>{
     try{
+      expected=structuredClone(expected);
       if(!exact(expected,['kind','keyId','mac'])||expected.kind!=='worker-status-commitment'||!mac(expected.mac))return false;
       const actual=sign(metadata);
       return actual.kind==='worker-status-commitment'&&actual.keyId===expected.keyId
         &&timingSafeEqual(Buffer.from(actual.mac,'hex'),Buffer.from(expected.mac,'hex'));
     }catch{return false;}
   };
-  return Object.freeze({keyId,sign,verify});
+  const transition=input=>{
+    try{
+      input=structuredClone(input);
+      if(!exact(input,['metadata','oldOid','newOid','treeOid','reservedAt'])
+          ||![input.oldOid,input.newOid,input.treeOid].every(oid)||input.oldOid===input.newOid
+          ||timestamp(input.reservedAt)===null)return {kind:'blocked'};
+      const previous=structuredClone(input.metadata),old=sign(previous);
+      if(old.kind!=='worker-status-commitment'||previous.binding.checkpointOid!==input.oldOid
+          ||timestamp(input.reservedAt)<=timestamp(previous.binding.reservation.reservedAt))return {kind:'blocked'};
+      const next=structuredClone(previous);
+      next.binding.checkpointOid=input.newOid;next.binding.reservation.reservedAt=input.reservedAt;
+      const expected=sign(next);
+      if(expected.kind!=='worker-status-commitment')return {kind:'blocked'};
+      const payload=JSON.stringify(['agent-github-flow/worker-ref-transition/v1','reservation',keyId,previous.deliveryId,
+        old.mac,expected.mac,input.oldOid,input.newOid,input.treeOid,input.reservedAt]);
+      return {kind:'worker-ref-transition',operation:'reservation',deliveryId:previous.deliveryId,keyId,oldMac:old.mac,nextMac:expected.mac,oldOid:input.oldOid,
+        newOid:input.newOid,treeOid:input.treeOid,reservedAt:input.reservedAt,
+        mac:createHmac('sha256',secret).update(payload,'utf8').digest('hex')};
+    }catch{return {kind:'blocked'};}
+  };
+  const verifyTransition=(input,expected)=>{
+    try{
+      expected=structuredClone(expected);
+      const keys=['kind','operation','deliveryId','keyId','oldMac','nextMac','oldOid','newOid','treeOid','reservedAt','mac'];
+      if(!exact(expected,keys)||!mac(expected.mac))return false;
+      const actual=transition(input);
+      return actual.kind==='worker-ref-transition'&&keys.every(k=>k==='mac'||actual[k]===expected[k])
+        &&timingSafeEqual(Buffer.from(actual.mac,'hex'),Buffer.from(expected.mac,'hex'));
+    }catch{return false;}
+  };
+  return Object.freeze({keyId,sign,verify,transition,verifyTransition});
 }

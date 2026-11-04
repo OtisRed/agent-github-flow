@@ -18,6 +18,12 @@ import webhook_ingress as ingress
 TEST_COMMITMENT = {"kind":"worker-status-commitment", "keyId":1, "mac":"a" * 64}
 
 
+def synthetic_transition(delivery_id):
+    return {"kind":"worker-ref-transition", "operation":"reservation", "deliveryId":delivery_id, "keyId":1,
+            "oldMac":"a"*64, "nextMac":"b"*64, "oldOid":"c"*40, "newOid":"d"*40,
+            "treeOid":"e"*40, "reservedAt":"2026-01-01T10:03:00Z", "mac":"f"*64}
+
+
 @unittest.skipUnless(os.name == "posix", "Worker lock requires POSIX")
 class WorkerLedgerTests(unittest.TestCase):
     def setUp(self):
@@ -293,16 +299,37 @@ class WorkerLedgerTests(unittest.TestCase):
             self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", 0, 1)])
             self.assertEqual(work.claim_next(), {"kind": "blocked"})
 
+    def test_recovery_ref_intent_requires_matching_old_commitment_and_plan(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.import_ids([self.first])
+            work.claim_next()
+            work.record_intent(self.first, "status", TEST_COMMITMENT)
+        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            work.begin_status_recovery(self.first, TEST_COMMITMENT)
+            plan = synthetic_transition(self.first)
+            for changed in ({**plan, "oldMac":"1"*64}, {**plan, "keyId":2},
+                            {**plan, "deliveryId":self.second}, {**plan, "newOid":plan["oldOid"]},
+                            {**plan, "reservedAt":"2026-99-99T99:99:99Z"}, {**plan, "reservedAt":"0000-01-01T00:00:00Z"},
+                            {**plan, "operation":"commit"}):
+                with self.assertRaises(ValueError):
+                    work.record_recovery_ref_intent(self.first, changed)
+                self.assertEqual(work.blocking_preview(), [(self.first, "recovering", 0, 1)])
+            work.record_recovery_ref_intent(self.first, plan)
+            self.assertEqual(work.recovery_ref_transition(self.first), plan)
+            self.assertEqual(work.blocking_preview(), [(self.first, "recovering", 1, 1)])
+
     def test_interrupted_recovery_ref_preserves_both_uncertainties(self):
         with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
             work.import_ids([self.first])
             work.claim_next()
             work.record_intent(self.first, "status", TEST_COMMITMENT)
         src = str(Path(__file__).resolve().parents[1] / "src")
-        script = ("import os,sys; sys.path.insert(0,sys.argv[1]); import worker_ledger; "
+        script = ("import json,os,sys; sys.path.insert(0,sys.argv[1]); import worker_ledger; "
                   "w=worker_ledger.Ledger(sys.argv[2],sys.argv[3]); w.__enter__(); "
-                  "c={'kind':'worker-status-commitment','keyId':1,'mac':'a'*64}; w.begin_status_recovery(sys.argv[4],c); w.record_recovery_ref_intent(sys.argv[4]); os._exit(73)")
-        process = subprocess.run([sys.executable, "-c", script, src, str(self.path), str(self.lock_path), self.first],
+                  "c={'kind':'worker-status-commitment','keyId':1,'mac':'a'*64}; w.begin_status_recovery(sys.argv[4],c); "
+                  "w.record_recovery_ref_intent(sys.argv[4],json.loads(sys.argv[5])); os._exit(73)")
+        process = subprocess.run([sys.executable, "-c", script, src, str(self.path), str(self.lock_path), self.first,
+                                  json.dumps(synthetic_transition(self.first))],
                                  capture_output=True, text=True)
         self.assertEqual(process.returncode, 73, process.stderr)
         with worker_ledger.Ledger(self.path, self.lock_path) as work:
@@ -311,6 +338,7 @@ class WorkerLedgerTests(unittest.TestCase):
             with sqlite3.connect(self.path) as db:
                 stored = db.execute("SELECT status_mac FROM pending_deliveries WHERE delivery_id=?", (self.first,)).fetchone()
             self.assertEqual(stored[0], TEST_COMMITMENT["mac"])
+            self.assertEqual(work.recovery_ref_transition(self.first), synthetic_transition(self.first))
             with self.assertRaises(ValueError):
                 work.begin_status_recovery(self.first, TEST_COMMITMENT)
             self.assertEqual(work.claim_next(), {"kind": "blocked"})
@@ -364,8 +392,16 @@ class WorkerLedgerTests(unittest.TestCase):
             self.assertEqual(process.returncode, 0, process.stderr)
             self.assertEqual(process.stdout.strip(), "synthetic real-v3 recovery observation passed")
             self.assertEqual(work.blocking_preview(), [(self.first, "recovering", 0, 1)])
+            planned = subprocess.run([os.environ["AGF_NODE"], str(script)], input=json.dumps({"mode":"transition","delivery":delivery}),
+                                     text=True, capture_output=True, timeout=30,
+                                     env={"AGF_CONTROLLER_ROOT": os.environ["AGF_CONTROLLER_ROOT"]})
+            self.assertEqual(planned.returncode, 0, planned.stderr)
+            transition = json.loads(planned.stdout)
+            work.record_recovery_ref_intent(self.first, transition)
+            self.assertEqual(work.recovery_ref_transition(self.first), transition)
         with worker_ledger.Ledger(self.path, self.lock_path) as work:
-            self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", 0, 1)])
+            self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", 1, 1)])
+            self.assertEqual(work.recovery_ref_transition(self.first), transition)
 
     def test_killed_lock_owner_releases_lock_without_requeuing_claim(self):
         src = str(Path(__file__).resolve().parents[1] / "src")

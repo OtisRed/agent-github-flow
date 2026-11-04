@@ -7,17 +7,19 @@ does not execute a controller, authorize retries or complete work.
 """
 import fcntl
 import hmac
+import json
 import os
 import re
 import sqlite3
 import stat
 import tempfile
 from pathlib import Path
+from datetime import datetime
 
 import webhook_ingress as ingress
 
 APP_ID = 0x41474632
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 TABLE_SQL = """CREATE TABLE pending_deliveries (
             delivery_id TEXT PRIMARY KEY,
             state TEXT NOT NULL CHECK (state IN ('pending','running','recovering','uncertain')),
@@ -25,10 +27,13 @@ TABLE_SQL = """CREATE TABLE pending_deliveries (
             status_intent INTEGER NOT NULL CHECK (status_intent IN (0,1)),
             status_key_id INTEGER,
             status_mac TEXT,
+            ref_transition TEXT,
             CHECK (state != 'pending' OR (ref_intent = 0 AND status_intent = 0)),
             CHECK ((status_intent = 0 AND status_key_id IS NULL AND status_mac IS NULL) OR
                    (status_intent = 1 AND typeof(status_key_id) = 'integer' AND status_key_id BETWEEN 1 AND 9007199254740991 AND
-                    typeof(status_mac) = 'text' AND length(status_mac) = 64 AND status_mac NOT GLOB '*[^0-9a-f]*'))
+                    typeof(status_mac) = 'text' AND length(status_mac) = 64 AND status_mac NOT GLOB '*[^0-9a-f]*')),
+            CHECK (ref_transition IS NULL OR (ref_intent = 1 AND status_intent = 1 AND
+                   typeof(ref_transition) = 'text' AND length(ref_transition) <= 4096))
         )"""
 ONE_ACTIVE_SQL = """CREATE UNIQUE INDEX ledger_one_active ON pending_deliveries ((1))
                     WHERE state != 'pending'"""
@@ -43,6 +48,27 @@ def valid_status_commitment(value):
             and value['kind'] == 'worker-status-commitment'
             and type(value['keyId']) is int and 0 < value['keyId'] <= 2**53 - 1
             and isinstance(value['mac'], str) and re.fullmatch(r'[0-9a-f]{64}', value['mac']) is not None)
+
+
+def valid_ref_transition(value, delivery_id):
+    keys = {'kind', 'operation', 'deliveryId', 'keyId', 'oldMac', 'nextMac',
+            'oldOid', 'newOid', 'treeOid', 'reservedAt', 'mac'}
+    if (type(value) is not dict or set(value) != keys or value['kind'] != 'worker-ref-transition'
+            or value['operation'] != 'reservation' or value['deliveryId'] != delivery_id
+            or type(value['keyId']) is not int or not 0 < value['keyId'] <= 2**53 - 1
+            or any(not isinstance(value[k], str) or re.fullmatch(r'[0-9a-f]{64}', value[k]) is None
+                   for k in ('oldMac', 'nextMac', 'mac'))
+            or any(not isinstance(value[k], str) or re.fullmatch(r'[0-9a-f]{40}', value[k]) is None
+                   or value[k] == '0' * 40 for k in ('oldOid', 'newOid', 'treeOid'))
+            or value['oldOid'] == value['newOid'] or not isinstance(value['reservedAt'], str)):
+        return False
+    try:
+        parsed = datetime.strptime(value['reservedAt'], '%Y-%m-%dT%H:%M:%SZ')
+        canonical = (f"{parsed.year:04d}-{parsed.month:02d}-{parsed.day:02d}T"
+                     f"{parsed.hour:02d}:{parsed.minute:02d}:{parsed.second:02d}Z")
+        return canonical == value['reservedAt']
+    except ValueError:
+        return False
 
 
 class Ledger:
@@ -160,7 +186,7 @@ class Ledger:
         self.db.execute("BEGIN IMMEDIATE")
         try:
             self._check()
-            self.db.executemany("INSERT OR IGNORE INTO pending_deliveries VALUES (?, 'pending', 0, 0, NULL, NULL)", ((x,) for x in delivery_ids))
+            self.db.executemany("INSERT OR IGNORE INTO pending_deliveries VALUES (?, 'pending', 0, 0, NULL, NULL, NULL)", ((x,) for x in delivery_ids))
             self.db.commit()
         except BaseException:
             self.db.rollback()
@@ -217,6 +243,8 @@ class Ledger:
 
     def record_intent(self, delivery_id, operation, commitment=None):
         """Record intent and its trusted status binding; perform no mutation."""
+        if type(commitment) is dict:
+            commitment = commitment.copy()
         if (not ingress.canonical_delivery(delivery_id) or operation not in ('ref', 'status')
                 or (operation == 'status' and not valid_status_commitment(commitment))
                 or (operation == 'ref' and commitment is not None)):
@@ -255,6 +283,8 @@ class Ledger:
         path. A fresh full wait and GitHub/checkpoint reads remain mandatory in
         the future controller adapter; this storage method performs none.
         """
+        if type(commitment) is dict:
+            commitment = commitment.copy()
         if not ingress.canonical_delivery(delivery_id) or not valid_status_commitment(commitment):
             raise ValueError("Invalid recovery ID")
         self._check()
@@ -276,26 +306,53 @@ class Ledger:
             self.db.rollback()
             raise
 
-    def record_recovery_ref_intent(self, delivery_id):
-        """Preserve both risks; the caller must separately authorize the write.
+    def record_recovery_ref_intent(self, delivery_id, transition):
+        """Persist the supplied planned transition before any attempted write.
 
-        No waiting, snapshot verification or GitHub operation occurs here.
+        This only checks its shape and old commitment. The trusted caller must
+        verify the HMAC, plan, protection and GitHub evidence independently.
         """
-        if not ingress.canonical_delivery(delivery_id):
+        if type(transition) is dict:
+            transition = transition.copy()
+        if not ingress.canonical_delivery(delivery_id) or not valid_ref_transition(transition, delivery_id):
             raise ValueError("Invalid recovery ID")
         self._check()
         self.db.execute("BEGIN IMMEDIATE")
         try:
             self._check()
-            updated = self.db.execute("""UPDATE pending_deliveries SET ref_intent=1
+            row = self.db.execute("""SELECT status_key_id,status_mac FROM pending_deliveries
+                                     WHERE delivery_id=? AND state='recovering' AND ref_intent=0 AND status_intent=1""",
+                                  (delivery_id,)).fetchone()
+            if row is None or row[0] != transition['keyId'] or not hmac.compare_digest(row[1], transition['oldMac']):
+                raise ValueError("Ref transition does not match status binding")
+            encoded = json.dumps(transition, sort_keys=True, separators=(',', ':'))
+            updated = self.db.execute("""UPDATE pending_deliveries SET ref_intent=1,ref_transition=?
                                          WHERE delivery_id=? AND state='recovering'
-                                           AND ref_intent=0 AND status_intent=1""", (delivery_id,))
+                                           AND ref_intent=0 AND status_intent=1""", (encoded, delivery_id))
             if updated.rowcount != 1:
                 raise ValueError("Ref intent not applicable")
             self.db.commit()
         except BaseException:
             self.db.rollback()
             raise
+
+    def recovery_ref_transition(self, delivery_id):
+        """Read private transition metadata for independent verification."""
+        if not ingress.canonical_delivery(delivery_id):
+            raise ValueError("Invalid recovery ID")
+        self._check()
+        row = self.db.execute("""SELECT status_key_id,status_mac,ref_transition FROM pending_deliveries
+                                 WHERE delivery_id=? AND ref_intent=1 AND status_intent=1""", (delivery_id,)).fetchone()
+        if row is None or row[2] is None:
+            return None
+        try:
+            value = json.loads(row[2])
+        except (ValueError, TypeError):
+            raise ValueError("Invalid ref transition") from None
+        if (not valid_ref_transition(value, delivery_id) or value['keyId'] != row[0]
+                or not hmac.compare_digest(value['oldMac'], row[1])):
+            raise ValueError("Invalid ref transition")
+        return value
 
     def import_page(self, ingress_path, fingerprint_key, after=None, limit=100):
         """Import one current page; caller restarts the next pass at None."""

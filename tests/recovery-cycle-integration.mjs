@@ -77,6 +77,14 @@ if(request.mode==='commitment'){
   await new Promise(resolve=>process.stdout.write(JSON.stringify(commitment)+'\n',resolve));
   process.exit(0);
 }
+if(request.mode==='transition'){
+  const {signer,metadata}=statusCommitment(f);
+  const transition=signer.transition({metadata,oldOid:f.checkpoint.headOid,newOid:'d'.repeat(40),
+    treeOid:'e'.repeat(40),reservedAt:'2026-01-01T10:03:00Z'});
+  assert.equal(transition.kind,'worker-ref-transition');
+  await new Promise(resolve=>process.stdout.write(JSON.stringify(transition)+'\n',resolve));
+  process.exit(0);
+}
 const prepared=statusCommitment(f);
 assert.equal(prepared.signer.verify(prepared.metadata,request.commitment),true);
 const observe=(v,overrides={})=>observeStatusRecovery({state,delivery,routes:v.routes,graphql:v.graphql,keyring:v.keyring,

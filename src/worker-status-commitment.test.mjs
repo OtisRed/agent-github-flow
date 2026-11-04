@@ -27,6 +27,10 @@ test('commits to canonical private identity without exposing any binding fields'
   assert.deepEqual(makeWorkerStatusCommitment(reversed),result);
   assert.equal(verifyWorkerStatusCommitment({...f,key:Buffer.alloc(32,8)},result),false);
   assert.equal(verifyWorkerStatusCommitment({...f,keyId:2},result),false);
+  let reads=0;const initial=Buffer.alloc(32,7);
+  const signer=createWorkerStatusSigner({get key(){reads++;return initial;},keyId:1});
+  initial.fill(9);
+  assert.equal(reads,1);assert.deepEqual(signer.sign(f.metadata),result);
 });
 test('rejects altered issue, handoff, options, reservation, checkpoint and delivery',()=>{
   const original=fixture(),result=makeWorkerStatusCommitment(original);
@@ -48,8 +52,33 @@ test('fails closed for missing historical key and malformed or extra data',()=>{
   for(const change of [m=>{m.binding.reservation=null;},m=>{m.binding.epoch.anchor='foreign';},
     m=>{m.binding.targetStatus='done';},m=>{m.binding.body='must-not-store';},
     m=>{m.binding.createdAt='2026-99-99T99:99:99Z';},m=>{m.binding.createdAt='2026-01-01T10:01:00.000Z';},
+    m=>{m.binding.createdAt='0000-01-01T00:00:00Z';},
     m=>{m.binding.reservation.reservedAt='2026-01-01T10:00:59Z';},
     m=>{m.binding.targetStatus=m.binding.fromStatus;},m=>{m.targetOptionId=m.fromOptionId;}]){
     const value=fixture();change(value.metadata);assert.deepEqual(makeWorkerStatusCommitment(value),{kind:'blocked'});
   }
+});
+test('binds only the planned reservation transition while preserving original status intent',()=>{
+  const f=fixture(),signer=createWorkerStatusSigner({key:f.key,keyId:f.keyId});
+  const input={metadata:f.metadata,oldOid:'c'.repeat(40),newOid:'d'.repeat(40),treeOid:'e'.repeat(40),
+    reservedAt:'2026-01-01T10:03:00Z'};
+  const prior=signer.sign(f.metadata),transition=signer.transition(input);
+  assert.equal(transition.kind,'worker-ref-transition');assert.equal(transition.operation,'reservation');assert.equal(transition.oldMac,prior.mac);
+  const next=structuredClone(f.metadata);next.binding.checkpointOid=input.newOid;next.binding.reservation.reservedAt=input.reservedAt;
+  assert.equal(transition.nextMac,signer.sign(next).mac);
+  assert.equal(signer.verifyTransition(input,transition),true);
+  for(const change of [p=>p.oldOid='f'.repeat(40),p=>p.newOid='f'.repeat(40),p=>p.treeOid='f'.repeat(40),
+    p=>p.reservedAt='2026-01-01T10:04:00Z',p=>p.metadata.binding.commentId='43']){
+    const modified=structuredClone(input);change(modified);assert.equal(signer.verifyTransition(modified,transition),false);
+  }
+  assert.equal(signer.verifyTransition({...input,reservedAt:'2026-01-01T10:02:00Z'},transition),false);
+  assert.equal(signer.verifyTransition(input,{...transition,nextMac:'f'.repeat(64)}),false);
+  assert.equal(signer.verifyTransition(input,{...transition,operation:'commit'}),false);
+  assert.equal(createWorkerStatusSigner({key:Buffer.alloc(32,8),keyId:2}).verifyTransition(input,transition),false);
+  let reads=0;const unstable={...input,get newOid(){reads++;return reads===1?'d'.repeat(40):'f'.repeat(40);}};
+  const snapshotted=signer.transition(unstable);
+  const snapshotNext=structuredClone(f.metadata);snapshotNext.binding.checkpointOid=snapshotted.newOid;
+  snapshotNext.binding.reservation.reservedAt=input.reservedAt;
+  assert.equal(reads,1);assert.equal(snapshotted.kind,'worker-ref-transition');
+  assert.equal(snapshotted.nextMac,signer.sign(snapshotNext).mac);
 });
