@@ -79,6 +79,15 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(checkpoint_status(77, digest, None), "missing")
         self.assertEqual(checkpoint_status(77, digest, {"id": 76, "body": "[FLOW]\noriginal"}), "invalid-read")
 
+    def test_reopen_marker_and_recheck_are_committed_together(self):
+        self.store.enqueue(1, 2)
+        self.store.complete(1, 2, 1, reopen_id=55, recheck=True)
+        after_restart = Store(self.path).next_pending()
+        self.assertEqual((after_restart["reopen_id"], after_restart["generation"],
+                          after_restart["completed_generation"]), (55, 2, 1))
+        self.store.complete(1, 2, 2)
+        self.assertIsNone(self.store.next_pending())
+
     def test_crash_before_completion_leaves_work_pending(self):
         self.store.enqueue(1, 1)
         self.assertEqual(Store(self.path).next_pending()["generation"], 1)
@@ -97,6 +106,22 @@ class StoreTests(unittest.TestCase):
         incomplete.touch()
         with self.assertRaises(ValueError):
             Store(incomplete).next_pending()
+
+    def test_project_boundary_cannot_be_silently_moved(self):
+        self.store.register_boundary(20, "2026-11-01T00:00:00Z")
+        self.store.register_boundary(20, "2026-11-01T00:00:00Z")
+        with self.assertRaises(ValueError):
+            self.store.register_boundary(20, "2026-11-02T00:00:00Z")
+
+    def test_consistent_backup_survives_further_live_writes(self):
+        self.store.register_boundary(1, "2026-11-01T00:00:00Z")
+        self.store.enqueue(1, 2)
+        self.store.backup()
+        backup = Store(self.path.with_name(self.path.name + ".backup"))
+        self.store.enqueue(1, 2)
+        self.assertEqual(backup.next_pending()["generation"], 1)
+        self.assertEqual(self.store.next_pending()["generation"], 2)
+        backup.register_boundary(1, "2026-11-01T00:00:00Z")
 
     def test_failed_checkpoint_does_not_acknowledge_work(self):
         self.store.enqueue(1, 2)
@@ -120,6 +145,14 @@ class StoreTests(unittest.TestCase):
         self.store.enqueue(1, 1)
         self.store.block(1, 1, 1, "checkpoint-changed")
         self.assertEqual(self.store.next_pending()["generation"], 2)
+
+    def test_temporary_failure_waits_without_starving_others(self):
+        self.store.enqueue(1, 1)
+        self.store.enqueue(1, 2)
+        self.store.defer(1, 1)
+        self.assertEqual(self.store.next_pending()["issue_number"], 2)
+        self.now += 60
+        self.assertEqual(self.store.next_pending()["issue_number"], 1)
 
     def test_stale_completion_cannot_erase_newer_error(self):
         self.store.enqueue(1, 1)
