@@ -9,3 +9,16 @@ The standalone proxy provides per-spike shared rate and concurrency limits; thes
 A repeated delivery ID with matching metadata and body signature is acknowledged without inserting again. Since GitHub signs the body but not the delivery ID, a previously recorded signature presented with a new ID is rejected. Two legitimate byte-identical bodies can have the same signature, so this conservative rule may also reject valid deliveries. Live dispatches must include a unique nonsecret nonce. This is not a production deduplication design: replay before the first receipt or after loss/rollback of the database remains possible. A production worker must verify current GitHub state independently and have an explicit recovery strategy. Monitor and investigate non-2xx responses; GitHub webhook delivery retries and recovery must be designed separately.
 
 Local verification: `python3 -m unittest discover -s spikes/mikrus-webhook -p 'test_*.py' -v`. This cannot establish a genuine GitHub delivery, proxy resilience, or production readiness.
+
+## Stopping the experiment
+
+Disable the App webhook at GitHub first, then stop the specific temporary tunnel, proxy and receiver units. The receiver and proxy units are not enabled for automatic startup. Check the existing service independently; stopping the spike does not prove the rest of the server is healthy. The temporary tunnel URL changes when a new tunnel is created and is not a production endpoint.
+
+```sh
+systemctl stop agf-webhook-tunnel-71.service
+systemctl stop agf-webhook-proxy-71.service
+systemctl stop agf-webhook-spike-71.service
+systemctl is-active nginx
+```
+
+Stopping preserves the restricted webhook-secret file and the SQLite state for controlled review. Decide retention and deletion separately. If used again, verify configuration and provision a new test endpoint and secret as appropriate. SQLite WAL must be included in any consistent backup; a raw copy of only the main database while it is active is insufficient. No backup or unattended recovery has been demonstrated by this spike.
