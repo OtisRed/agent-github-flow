@@ -7,6 +7,7 @@ $result = 'failed'
 $reason = 'not-started'
 $checkedDir = $false
 $temporary = $null
+$sourceTimestamp = $null
 $remotePath = '/var/lib/agent-github-flow-mvp/state.sqlite.backup'
 $python = Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
 $ssh = Join-Path $env:SystemRoot 'System32\OpenSSH\ssh.exe'
@@ -35,6 +36,7 @@ try {
   if ($LASTEXITCODE -ne 0 -or $sourceTime -notmatch '^\d+$') { throw $reason }
   $ageSeconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$sourceTime
   if ($ageSeconds -lt -300 -or $ageSeconds -gt 172800) { throw $reason }
+  $sourceTimestamp = [DateTimeOffset]::FromUnixTimeSeconds([long]$sourceTime).UtcDateTime.ToString('o')
   $id = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N')
   $temporary = Join-Path $dir.FullName ('.state-' + $id + '.partial')
   $final = Join-Path $dir.FullName ('state-' + $id + '.sqlite')
@@ -66,7 +68,7 @@ try {
         Remove-Item -LiteralPath $full -Force
       }
     }
-    $status = @{ result = $result; reason = $reason; checked_at_utc = [DateTime]::UtcNow.ToString('o') }
+    $status = @{ result = $result; reason = $reason; checked_at_utc = [DateTime]::UtcNow.ToString('o'); source_snapshot_utc = $sourceTimestamp }
     [System.IO.File]::WriteAllText((Join-Path $dir.FullName 'last-run.json'), ($status | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
   }
 }
