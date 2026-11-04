@@ -207,6 +207,68 @@ class WorkerLedgerTests(unittest.TestCase):
                     self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", 1, 1)])
                     self.assertEqual(work.claim_next(), {"kind": "blocked"})
 
+    def test_status_recovery_reserves_inspection_but_not_generic_intent(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.import_ids([self.first])
+            work.claim_next()
+            work.record_intent(self.first, "status")
+        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            work.begin_status_recovery(self.first)
+            self.assertEqual(work.blocking_preview(), [(self.first, "recovering", 0, 1)])
+            self.assertEqual(work.claim_next(), {"kind": "blocked"})
+            with self.assertRaises(ValueError):
+                work.record_intent(self.first, "ref")
+        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", 0, 1)])
+
+    def test_status_recovery_rejects_uncertain_ref_or_missing_status_intent(self):
+        for flags in ((), ("ref",), ("ref", "status")):
+            with self.subTest(flags=flags):
+                path = Path(self.directory.name) / ("refusal-" + "-".join(flags) + ".sqlite")
+                with worker_ledger.Ledger(path, self.lock_path, allow_create=True) as work:
+                    work.import_ids([self.first])
+                    work.claim_next()
+                    for operation in flags:
+                        work.record_intent(self.first, operation)
+                with worker_ledger.Ledger(path, self.lock_path) as work:
+                    with self.assertRaises(ValueError):
+                        work.begin_status_recovery(self.first)
+                    self.assertEqual(work.claim_next(), {"kind": "blocked"})
+
+    def test_process_death_during_recovery_keeps_status_uncertain(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.import_ids([self.first])
+            work.claim_next()
+            work.record_intent(self.first, "status")
+        src = str(Path(__file__).resolve().parents[1] / "src")
+        script = ("import os,sys; sys.path.insert(0,sys.argv[1]); import worker_ledger; "
+                  "w=worker_ledger.Ledger(sys.argv[2],sys.argv[3]); w.__enter__(); "
+                  "w.begin_status_recovery(sys.argv[4]); os._exit(73)")
+        process = subprocess.run([sys.executable, "-c", script, src, str(self.path), str(self.lock_path), self.first],
+                                 capture_output=True, text=True)
+        self.assertEqual(process.returncode, 73, process.stderr)
+        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", 0, 1)])
+            self.assertEqual(work.claim_next(), {"kind": "blocked"})
+
+    def test_interrupted_recovery_ref_preserves_both_uncertainties(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.import_ids([self.first])
+            work.claim_next()
+            work.record_intent(self.first, "status")
+        src = str(Path(__file__).resolve().parents[1] / "src")
+        script = ("import os,sys; sys.path.insert(0,sys.argv[1]); import worker_ledger; "
+                  "w=worker_ledger.Ledger(sys.argv[2],sys.argv[3]); w.__enter__(); "
+                  "w.begin_status_recovery(sys.argv[4]); w.record_recovery_ref_intent(sys.argv[4]); os._exit(73)")
+        process = subprocess.run([sys.executable, "-c", script, src, str(self.path), str(self.lock_path), self.first],
+                                 capture_output=True, text=True)
+        self.assertEqual(process.returncode, 73, process.stderr)
+        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", 1, 1)])
+            with self.assertRaises(ValueError):
+                work.begin_status_recovery(self.first)
+            self.assertEqual(work.claim_next(), {"kind": "blocked"})
+
     def test_killed_lock_owner_releases_lock_without_requeuing_claim(self):
         src = str(Path(__file__).resolve().parents[1] / "src")
         script = ("import sys,time; sys.path.insert(0,sys.argv[1]); import worker_ledger; "

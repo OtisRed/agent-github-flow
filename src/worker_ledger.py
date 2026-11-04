@@ -15,10 +15,10 @@ from pathlib import Path
 import webhook_ingress as ingress
 
 APP_ID = 0x41474632
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 TABLE_SQL = """CREATE TABLE pending_deliveries (
             delivery_id TEXT PRIMARY KEY,
-            state TEXT NOT NULL CHECK (state IN ('pending','running','uncertain')),
+            state TEXT NOT NULL CHECK (state IN ('pending','running','recovering','uncertain')),
             ref_intent INTEGER NOT NULL CHECK (ref_intent IN (0,1)),
             status_intent INTEGER NOT NULL CHECK (status_intent IN (0,1)),
             CHECK (state != 'pending' OR (ref_intent = 0 AND status_intent = 0))
@@ -75,7 +75,7 @@ class Ledger:
             # external action before it died; never silently requeue a claim.
             self.db.execute("BEGIN IMMEDIATE")
             self._check()
-            self.db.execute("UPDATE pending_deliveries SET state='uncertain' WHERE state='running'")
+            self.db.execute("UPDATE pending_deliveries SET state='uncertain' WHERE state IN ('running','recovering')")
             self.db.commit()
             return self
         except BaseException:
@@ -210,6 +210,50 @@ class Ledger:
                                           WHERE delivery_id=? AND state='running' AND {column}=0""", (delivery_id,))
             if updated.rowcount != 1:
                 raise ValueError("No running claim")
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+
+    def begin_status_recovery(self, delivery_id):
+        """Reserve inspection only; this grants no write or retry permission.
+
+        An uncertain ref or missing status intent requires a different recovery
+        path. A fresh full wait and GitHub/checkpoint reads remain mandatory in
+        the future controller adapter; this storage method performs none.
+        """
+        if not ingress.canonical_delivery(delivery_id):
+            raise ValueError("Invalid recovery ID")
+        self._check()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            self._check()
+            updated = self.db.execute("""UPDATE pending_deliveries SET state='recovering'
+                                         WHERE delivery_id=? AND state='uncertain'
+                                           AND ref_intent=0 AND status_intent=1""", (delivery_id,))
+            if updated.rowcount != 1:
+                raise ValueError("Status recovery not applicable")
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+
+    def record_recovery_ref_intent(self, delivery_id):
+        """Preserve both risks; the caller must separately authorize the write.
+
+        No waiting, snapshot verification or GitHub operation occurs here.
+        """
+        if not ingress.canonical_delivery(delivery_id):
+            raise ValueError("Invalid recovery ID")
+        self._check()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            self._check()
+            updated = self.db.execute("""UPDATE pending_deliveries SET ref_intent=1
+                                         WHERE delivery_id=? AND state='recovering'
+                                           AND ref_intent=0 AND status_intent=1""", (delivery_id,))
+            if updated.rowcount != 1:
+                raise ValueError("Ref intent not applicable")
             self.db.commit()
         except BaseException:
             self.db.rollback()
