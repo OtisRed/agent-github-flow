@@ -19,7 +19,7 @@ try {
     $payload = @{ private_key_b64 = [Convert]::ToBase64String($keyBytes); project_token = $token } | ConvertTo-Json -Compress
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.FileName = (Get-Command ssh.exe -CommandType Application).Source
-    $info.Arguments = '-o BatchMode=yes -o ConnectTimeout=8 mikrus python3 /opt/agent-github-flow-mvp/install_owner_credentials.py'
+    $info.Arguments = '-o BatchMode=yes -o ConnectTimeout=8 mikrus python3 /opt/agent-github-flow-mvp/scripts/install_owner_credentials.py'
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
     $info.RedirectStandardInput = $true
