@@ -318,6 +318,70 @@ class WorkerLedgerTests(unittest.TestCase):
             self.assertEqual(work.recovery_ref_transition(self.first), plan)
             self.assertEqual(work.blocking_preview(), [(self.first, "recovering", 1, 1)])
 
+    def test_internal_ref_plan_update_retains_status_uncertainty(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.import_ids([self.first])
+            work.claim_next()
+            work.record_intent(self.first, "status", TEST_COMMITMENT)
+        plan = synthetic_transition(self.first)
+        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            work.begin_status_recovery(self.first, TEST_COMMITMENT)
+            work.record_recovery_ref_intent(self.first, plan)
+            for wrong in ({**plan, "treeOid":"1"*40}, {**plan, "nextMac":"1"*64}, {**plan, "mac":"1"*64}):
+                with self.assertRaises(ValueError):
+                    work._record_verified_recovery_ref(self.first, wrong)
+                self.assertEqual(work.blocking_preview(), [(self.first, "recovering", 1, 1)])
+            work._record_verified_recovery_ref(self.first, plan)
+            self.assertEqual(work.blocking_preview(), [(self.first, "recovering", 0, 1)])
+            self.assertIsNone(work.recovery_ref_transition(self.first))
+            with self.assertRaises(ValueError):
+                work._record_verified_recovery_ref(self.first, plan)
+        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", 0, 1)])
+            with self.assertRaises(ValueError):
+                work.begin_status_recovery(self.first, TEST_COMMITMENT)
+            next_commitment = {**TEST_COMMITMENT, "mac":plan["nextMac"]}
+            work.begin_status_recovery(self.first, next_commitment)
+
+    def test_process_death_before_and_after_ref_update_commit(self):
+        src = str(Path(__file__).resolve().parents[1] / "src")
+        script = """import json,os,sys
+sys.path.insert(0,sys.argv[1])
+import worker_ledger
+p,lock,delivery,plan,mode=sys.argv[2],sys.argv[3],sys.argv[4],json.loads(sys.argv[5]),sys.argv[6]
+c={'kind':'worker-status-commitment','keyId':1,'mac':'a'*64}
+with worker_ledger.Ledger(p,lock,allow_create=True) as w:
+    w.import_ids([delivery]); w.claim_next(); w.record_intent(delivery,'status',c)
+w=worker_ledger.Ledger(p,lock); w.__enter__()
+w.begin_status_recovery(delivery,c); w.record_recovery_ref_intent(delivery,plan)
+if mode=='before':
+    class KillAfterUpdate:
+        def __init__(self, db): self.db=db
+        def execute(self, sql, *args):
+            result=self.db.execute(sql,*args)
+            if sql.strip().startswith('UPDATE pending_deliveries SET status_mac='): os._exit(73)
+            return result
+        def __getattr__(self, name): return getattr(self.db,name)
+    w.db=KillAfterUpdate(w.db)
+w._record_verified_recovery_ref(delivery,plan)
+os._exit(73)
+"""
+        for mode in ("before", "after"):
+            with self.subTest(mode=mode):
+                path = Path(self.directory.name) / (mode + "-update.sqlite")
+                plan = synthetic_transition(self.first)
+                process = subprocess.run([sys.executable, "-c", script, src, str(path), str(self.lock_path),
+                                          self.first, json.dumps(plan), mode], capture_output=True, text=True, timeout=30)
+                self.assertEqual(process.returncode, 73, process.stderr)
+                with worker_ledger.Ledger(path, self.lock_path) as work:
+                    expected_ref = 1 if mode == "before" else 0
+                    self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", expected_ref, 1)])
+                    if mode == "before":
+                        self.assertEqual(work.recovery_ref_transition(self.first), plan)
+                    else:
+                        self.assertIsNone(work.recovery_ref_transition(self.first))
+                        work.begin_status_recovery(self.first, {**TEST_COMMITMENT, "mac":plan["nextMac"]})
+
     def test_interrupted_recovery_ref_preserves_both_uncertainties(self):
         with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
             work.import_ids([self.first])

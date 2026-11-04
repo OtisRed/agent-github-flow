@@ -354,6 +354,38 @@ class Ledger:
             raise ValueError("Invalid ref transition")
         return value
 
+    def _record_verified_recovery_ref(self, delivery_id, transition):
+        """Persist a trusted supervisor's fully verified ref observation.
+
+        This method compares a plan; it does NOT verify HMAC, ACK, GitHub,
+        tree, parent, protection or fresh snapshots. It must not be exposed to
+        an untrusted caller or used until a verified adapter provides those.
+        """
+        if type(transition) is dict:
+            transition = transition.copy()
+        if not ingress.canonical_delivery(delivery_id) or not valid_ref_transition(transition, delivery_id):
+            raise ValueError("Invalid ref transition")
+        self._check()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            self._check()
+            row = self.db.execute("""SELECT status_key_id,status_mac,ref_transition FROM pending_deliveries
+                                     WHERE delivery_id=? AND state='recovering' AND ref_intent=1 AND status_intent=1""",
+                                  (delivery_id,)).fetchone()
+            encoded = json.dumps(transition, sort_keys=True, separators=(',', ':'))
+            if (row is None or row[0] != transition['keyId'] or not hmac.compare_digest(row[1], transition['oldMac'])
+                    or not isinstance(row[2], str) or not row[2].isascii() or not hmac.compare_digest(row[2], encoded)):
+                raise ValueError("Ref transition mismatch")
+            updated = self.db.execute("""UPDATE pending_deliveries SET status_mac=?,ref_intent=0,ref_transition=NULL
+                                         WHERE delivery_id=? AND state='recovering' AND ref_intent=1 AND status_intent=1""",
+                                      (transition['nextMac'], delivery_id))
+            if updated.rowcount != 1:
+                raise ValueError("Ref observation not applicable")
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+
     def import_page(self, ingress_path, fingerprint_key, after=None, limit=100):
         """Import one current page; caller restarts the next pass at None."""
         self._check()
