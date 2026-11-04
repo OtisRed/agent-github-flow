@@ -8,6 +8,8 @@ import os
 import re
 import sqlite3
 import time
+import hashlib
+import hmac
 from contextlib import closing
 from pathlib import Path
 
@@ -20,6 +22,44 @@ def _positive(value):
     if type(value) is not int or not 0 < value < 2**63:
         raise ValueError("Expected a positive integer identifier")
     return value
+
+
+def _checkpoint(comment_id, comment_digest):
+    if (comment_id is None) != (comment_digest is None):
+        raise ValueError("Incomplete checkpoint")
+    if comment_id is not None:
+        _positive(comment_id)
+        if (not isinstance(comment_digest, str) or len(comment_digest) != 64
+                or any(c not in '0123456789abcdef' for c in comment_digest)):
+            raise ValueError("Invalid checkpoint digest")
+
+
+def comment_digest(body):
+    """Hash the exact API text; do not persist private comment contents."""
+    if not isinstance(body, str):
+        raise ValueError("Invalid comment body")
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def checkpoint_status(expected_id, expected_digest, comment):
+    """Check the tracked comment after a complete authenticated API read.
+
+    `comment` is None when the tracked ID is absent from that complete read.
+    A caller must not treat a failed or incomplete read as an absent comment.
+    """
+    _checkpoint(expected_id, expected_digest)
+    if expected_id is None:
+        return "not-initialized"
+    if comment is None:
+        return "missing"
+    if (not isinstance(comment, dict) or type(comment.get("id")) is not int or comment.get("id") != expected_id
+            or not isinstance(comment.get("body"), str)):
+        return "invalid-read"
+    try:
+        actual = comment_digest(comment["body"])
+    except UnicodeError:
+        return "invalid-read"
+    return "unchanged" if hmac.compare_digest(expected_digest, actual) else "changed"
 
 
 class Store:
@@ -51,11 +91,17 @@ class Store:
                 comment_digest TEXT,
                 uncertain_since REAL,
                 uncertain_target TEXT,
+                uncertain_generation INTEGER,
+                uncertain_comment_id INTEGER,
+                uncertain_comment_digest TEXT,
                 PRIMARY KEY (repository_id, issue_number),
                 CHECK (generation >= completed_generation),
                 CHECK (generation >= blocked_generation),
                 CHECK ((comment_id IS NULL) = (comment_digest IS NULL)),
-                CHECK ((uncertain_since IS NULL) = (uncertain_target IS NULL))
+                CHECK ((uncertain_since IS NULL) = (uncertain_target IS NULL)),
+                CHECK ((uncertain_since IS NULL) = (uncertain_generation IS NULL)),
+                CHECK ((uncertain_comment_id IS NULL) = (uncertain_comment_digest IS NULL)),
+                CHECK (uncertain_since IS NOT NULL OR uncertain_comment_id IS NULL)
             )""")
 
     def _connect(self):
@@ -109,15 +155,20 @@ class Store:
             return [dict(row) for row in db.execute("""SELECT repository_id, issue_number, error_code
                 FROM issues WHERE error_code IS NOT NULL ORDER BY repository_id, issue_number""")]
 
-    def begin_status_write(self, repository_id, issue_number, target):
+    def begin_status_write(self, repository_id, issue_number, generation, target, *, comment_id=None, comment_digest=None):
         """Persist uncertainty before the caller sends a status mutation."""
         key = (_positive(repository_id), _positive(issue_number))
+        _positive(generation)
+        _checkpoint(comment_id, comment_digest)
         if not isinstance(target, str) or not target or len(target) > 128:
             raise ValueError("Invalid target")
         with closing(self._connect()) as db, db:
-            result = db.execute("""UPDATE issues SET uncertain_since=?, uncertain_target=?
+            result = db.execute("""UPDATE issues SET uncertain_since=?, uncertain_target=?,
+                uncertain_generation=?, uncertain_comment_id=?, uncertain_comment_digest=?
                 WHERE repository_id=? AND issue_number=? AND uncertain_since IS NULL
-                  AND generation > completed_generation""", (self.clock(), target, *key))
+                  AND completed_generation < ? AND generation >= ? AND blocked_generation < ?""",
+                (self.clock(), target, generation, comment_id, comment_digest, *key,
+                 generation, generation, generation))
             if result.rowcount != 1:
                 raise ValueError("No pending issue or existing uncertain write")
 
@@ -147,8 +198,13 @@ class Store:
                 raise ValueError("No uncertain write")
             if not target_observed and self.clock() - row[0] < UNCERTAIN_WAIT_SECONDS:
                 raise ValueError("Uncertain write is still within the waiting interval")
-            result = db.execute("""UPDATE issues SET uncertain_since=NULL, uncertain_target=NULL
-                WHERE repository_id=? AND issue_number=? AND uncertain_since IS NOT NULL""", key)
+            result = db.execute("""UPDATE issues SET
+                comment_id=CASE WHEN ? THEN COALESCE(uncertain_comment_id, comment_id) ELSE comment_id END,
+                comment_digest=CASE WHEN ? THEN COALESCE(uncertain_comment_digest, comment_digest) ELSE comment_digest END,
+                uncertain_since=NULL, uncertain_target=NULL, uncertain_generation=NULL,
+                uncertain_comment_id=NULL, uncertain_comment_digest=NULL
+                WHERE repository_id=? AND issue_number=? AND uncertain_since IS NOT NULL""",
+                (target_observed, target_observed, *key))
             if result.rowcount != 1:
                 raise ValueError("No uncertain write")
 
@@ -156,13 +212,7 @@ class Store:
         """Commit checked work and checkpoint, leaving newer wakeups pending."""
         key = (_positive(repository_id), _positive(issue_number))
         _positive(generation)
-        if (comment_id is None) != (comment_digest is None):
-            raise ValueError("Incomplete checkpoint")
-        if comment_id is not None:
-            _positive(comment_id)
-            if (not isinstance(comment_digest, str) or len(comment_digest) != 64
-                    or any(c not in '0123456789abcdef' for c in comment_digest)):
-                raise ValueError("Invalid checkpoint digest")
+        _checkpoint(comment_id, comment_digest)
         with closing(self._connect()) as db, db:
             result = db.execute("""UPDATE issues SET completed_generation=?,
                 comment_id=COALESCE(?, comment_id), comment_digest=COALESCE(?, comment_digest),

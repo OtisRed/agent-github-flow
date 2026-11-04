@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from mvp_store import Store
+from mvp_store import Store, checkpoint_status, comment_digest
 
 
 class StoreTests(unittest.TestCase):
@@ -35,7 +35,7 @@ class StoreTests(unittest.TestCase):
 
     def test_uncertain_write_survives_restart_and_waits(self):
         self.store.enqueue(1, 2)
-        self.store.begin_status_write(1, 2, "agent-ready")
+        self.store.begin_status_write(1, 2, 1, "agent-ready", comment_id=77, comment_digest="a" * 64)
         with self.assertRaises(ValueError):
             self.store.complete(1, 2, 1)
         restarted = Store(self.path, clock=lambda: self.now)
@@ -54,10 +54,30 @@ class StoreTests(unittest.TestCase):
 
     def test_confirmed_target_does_not_wait(self):
         self.store.enqueue(1, 2)
-        self.store.begin_status_write(1, 2, "agent-ready")
+        self.store.begin_status_write(1, 2, 1, "agent-ready", comment_id=77, comment_digest="a" * 64)
         self.store.resolve_status_write(1, 2, target_observed=True)
+        after_restart = Store(self.path).next_pending()
+        self.assertEqual(after_restart["comment_id"], 77)
+        self.assertEqual(after_restart["comment_digest"], "a" * 64)
         self.store.complete(1, 2, 1)
         self.assertIsNone(self.store.next_pending())
+
+    def test_unconfirmed_attempt_keeps_original_comment_across_restart(self):
+        self.store.enqueue(1, 2)
+        self.store.begin_status_write(1, 2, 1, "agent-ready", comment_id=77, comment_digest="a" * 64)
+        self.store.enqueue(1, 2)
+        after_restart = Store(self.path).next_pending()
+        self.assertEqual(after_restart["uncertain_comment_id"], 77)
+        self.assertEqual(after_restart["uncertain_comment_digest"], "a" * 64)
+        self.assertEqual(after_restart["uncertain_generation"], 1)
+        self.assertEqual(after_restart["generation"], 2)
+
+    def test_tracked_comment_edit_and_deletion_are_not_mistaken_for_handoff(self):
+        digest = comment_digest("[FLOW]\noriginal")
+        self.assertEqual(checkpoint_status(77, digest, {"id": 77, "body": "[FLOW]\noriginal"}), "unchanged")
+        self.assertEqual(checkpoint_status(77, digest, {"id": 77, "body": "[FLOW]\nedited"}), "changed")
+        self.assertEqual(checkpoint_status(77, digest, None), "missing")
+        self.assertEqual(checkpoint_status(77, digest, {"id": 76, "body": "[FLOW]\noriginal"}), "invalid-read")
 
     def test_crash_before_completion_leaves_work_pending(self):
         self.store.enqueue(1, 1)
