@@ -40,8 +40,12 @@ def receive(store, secret, registry, event, signature, body):
     repository_id, installation_id = repo.get("id"), installation.get("id")
     if not positive_id(repository_id) or not positive_id(installation_id):
         return "invalid"
-    if (installation_id, repository_id) not in registry:
+    if not any(registered_installation == installation_id for registered_installation, _ in registry):
         return "unknown_project"
+    if (installation_id, repository_id) not in registry:
+        # An installation can cover repositories that are not enrolled yet.
+        # Acknowledge their signed events without queuing or processing them.
+        return "ignored"
     action = payload.get("action")
     if event == "issues" and isinstance(action, str) and action in IGNORED_ISSUE_ACTIONS:
         return "ignored"

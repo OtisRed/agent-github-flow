@@ -31,9 +31,9 @@ class HttpTests(unittest.TestCase):
         self.thread.join()
         self.server.server_close()
 
-    def request(self, *, valid=True, path=PATH):
-        body = json.dumps({"action": "created", "repository": {"id": 20},
-                           "installation": {"id": 10}, "issue": {"number": 7},
+    def request(self, *, valid=True, path=PATH, repository_id=20, installation_id=10):
+        body = json.dumps({"action": "created", "repository": {"id": repository_id},
+                           "installation": {"id": installation_id}, "issue": {"number": 7},
                            "comment": {"id": 42}}).encode()
         signature = "sha256=" + hmac.new(self.secret, body, hashlib.sha256).hexdigest() if valid else "sha256=" + "0" * 64
         connection = http.client.HTTPConnection(*self.server.server_address, timeout=5)
@@ -57,6 +57,12 @@ class HttpTests(unittest.TestCase):
         self.store.path.unlink()
         self.assertEqual(self.request(), 503)
         self.assertFalse(self.store.path.exists())
+
+    def test_signed_event_for_unconfigured_repository_is_ignored(self):
+        self.assertEqual(self.request(repository_id=21, valid=False), 401)
+        self.assertEqual(self.request(repository_id=21), 204)
+        self.assertEqual(self.request(repository_id=21, installation_id=11), 403)
+        self.assertIsNone(self.store.next_pending())
 
 
 if __name__ == "__main__":
