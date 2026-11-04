@@ -41,6 +41,8 @@ class IntakeTests(unittest.TestCase):
         self.assertEqual(self.send(self.payload(), signature="sha256=" + "0" * 64), "bad_signature")
         other = self.payload()
         other["repository"]["id"] = 21
+        self.assertEqual(self.send(other), "ignored")
+        other["installation"]["id"] = 11
         self.assertEqual(self.send(other), "unknown_project")
         self.assertIsNone(self.store.next_pending())
 
