@@ -5,6 +5,7 @@ pending generation is acknowledged only after processing, so a crash or an
 event arriving during work cannot silently acknowledge the newer event.
 """
 import os
+import re
 import sqlite3
 import time
 from contextlib import closing
@@ -44,12 +45,15 @@ class Store:
                 issue_number INTEGER NOT NULL,
                 generation INTEGER NOT NULL DEFAULT 0,
                 completed_generation INTEGER NOT NULL DEFAULT 0,
+                blocked_generation INTEGER NOT NULL DEFAULT 0,
+                error_code TEXT,
                 comment_id INTEGER,
                 comment_digest TEXT,
                 uncertain_since REAL,
                 uncertain_target TEXT,
                 PRIMARY KEY (repository_id, issue_number),
                 CHECK (generation >= completed_generation),
+                CHECK (generation >= blocked_generation),
                 CHECK ((comment_id IS NULL) = (comment_digest IS NULL)),
                 CHECK ((uncertain_since IS NULL) = (uncertain_target IS NULL))
             )""")
@@ -81,9 +85,29 @@ class Store:
         """Return a generation to inspect; only one worker may call this."""
         with closing(self._connect()) as db, db:
             row = db.execute("""SELECT * FROM issues
-                WHERE generation > completed_generation
+                WHERE generation > completed_generation AND generation > blocked_generation
                 ORDER BY repository_id, issue_number LIMIT 1""").fetchone()
             return dict(row) if row else None
+
+    def block(self, repository_id, issue_number, generation, error_code):
+        """Record a problem without starving other issues or hiding new events."""
+        key = (_positive(repository_id), _positive(issue_number))
+        _positive(generation)
+        if not isinstance(error_code, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", error_code):
+            raise ValueError("Invalid error code")
+        with closing(self._connect()) as db, db:
+            result = db.execute("""UPDATE issues SET blocked_generation=?, error_code=?
+                WHERE repository_id=? AND issue_number=? AND completed_generation < ?
+                  AND blocked_generation < ? AND generation >= ?""",
+                (generation, error_code, *key, generation, generation, generation))
+            if result.rowcount != 1:
+                raise ValueError("Invalid blocked generation")
+
+    def errors(self):
+        """Return private identifiers and sanitized codes for operator visibility."""
+        with closing(self._connect()) as db, db:
+            return [dict(row) for row in db.execute("""SELECT repository_id, issue_number, error_code
+                FROM issues WHERE error_code IS NOT NULL ORDER BY repository_id, issue_number""")]
 
     def begin_status_write(self, repository_id, issue_number, target):
         """Persist uncertainty before the caller sends a status mutation."""
@@ -141,7 +165,8 @@ class Store:
                 raise ValueError("Invalid checkpoint digest")
         with closing(self._connect()) as db, db:
             result = db.execute("""UPDATE issues SET completed_generation=?,
-                comment_id=COALESCE(?, comment_id), comment_digest=COALESCE(?, comment_digest)
+                comment_id=COALESCE(?, comment_id), comment_digest=COALESCE(?, comment_digest),
+                error_code=NULL
                 WHERE repository_id=? AND issue_number=? AND completed_generation < ?
                   AND generation >= ? AND uncertain_since IS NULL""",
                 (generation, comment_id, comment_digest, *key, generation, generation))

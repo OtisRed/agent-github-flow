@@ -84,6 +84,23 @@ class StoreTests(unittest.TestCase):
             self.store.complete(1, 2, 1, comment_id=55, comment_digest="invalid")
         self.assertEqual(self.store.next_pending()["completed_generation"], 0)
 
+    def test_blocked_issue_does_not_starve_others_and_new_event_wakes_it(self):
+        self.store.enqueue(1, 1)
+        self.store.enqueue(1, 2)
+        self.store.block(1, 1, 1, "checkpoint-missing")
+        self.assertEqual(self.store.next_pending()["issue_number"], 2)
+        self.assertEqual(self.store.errors()[0]["error_code"], "checkpoint-missing")
+        self.store.enqueue(1, 1)
+        self.assertEqual(self.store.next_pending()["issue_number"], 1)
+        self.store.complete(1, 1, 2)
+        self.assertEqual(self.store.errors(), [])
+
+    def test_block_of_old_generation_keeps_later_event_ready(self):
+        self.store.enqueue(1, 1)
+        self.store.enqueue(1, 1)
+        self.store.block(1, 1, 1, "checkpoint-changed")
+        self.assertEqual(self.store.next_pending()["generation"], 2)
+
     def test_parallel_receivers_do_not_lose_wakeups(self):
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             list(pool.map(lambda _: self.store.enqueue(1, 2), range(20)))
