@@ -253,3 +253,39 @@ def receive(path, secret, fingerprint_key, registry, delivery_id, event, signatu
     finally:
         if db is not None:
             db.close()
+
+
+def read_delivery(path, fingerprint_key, delivery_id):
+    """Observe one stored delivery; this never claims or acknowledges work.
+
+    IDs are decimal strings across the Python/JavaScript boundary. This is a
+    bounded read by the existing delivery ID, not a durable work cursor.
+    """
+    if (not isinstance(fingerprint_key, bytes) or len(fingerprint_key) < 32
+            or not canonical_delivery(delivery_id)):
+        return {"kind": "invalid"}
+    db = None
+    try:
+        db = connect_existing(path)
+        db.execute("BEGIN")
+        validate_schema(db, fingerprint_key)
+        row = db.execute("""SELECT installation_id,repository_id,event,action,issue_number,comment_id
+                            FROM ingress_deliveries WHERE delivery_id=?""", (delivery_id,)).fetchone()
+        db.commit()
+        if row is None:
+            return {"kind": "missing"}
+        installation, repository, event, action, issue, comment = row
+        if (not positive_id(installation) or not positive_id(repository) or not positive_id(issue)
+                or event not in ACTIONS or action not in ACTIONS[event]
+                or (event == "issue_comment" and not positive_id(comment))
+                or (event == "issues" and comment is not None)):
+            return {"kind": "invalid"}
+        return {"kind": "delivery", "deliveryId": delivery_id,
+                "installationId": str(installation), "repositoryId": str(repository),
+                "event": event, "action": action, "issueNumber": str(issue),
+                "commentId": str(comment) if comment is not None else None}
+    except (sqlite3.Error, OSError, ValueError):
+        return {"kind": "storage_unavailable"}
+    finally:
+        if db is not None:
+            db.close()

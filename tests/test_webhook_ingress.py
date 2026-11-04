@@ -56,6 +56,37 @@ class WebhookIngressTests(unittest.TestCase):
         self.assertEqual(self.send(self.payload(203, 102), third), "accepted")
         self.assertEqual([x[:3] for x in self.rows()], [(first, 101, 201), (second, 101, 202), (third, 102, 203)])
 
+    def test_observe_delivery_keeps_ids_exact_and_does_not_acknowledge(self):
+        delivery = str(uuid.uuid4())
+        registry = ingress.validate_registry([(9007199254740993, 9007199254740995)])
+        payload = self.payload(9007199254740995, 9007199254740993)
+        payload["comment"]["id"] = 9007199254740997
+        self.assertEqual(self.send(payload, delivery, registry=registry), "accepted")
+        expected = {"kind": "delivery", "deliveryId": delivery, "installationId": "9007199254740993",
+                    "repositoryId": "9007199254740995", "event": "issue_comment", "action": "created",
+                    "issueNumber": "8", "commentId": "9007199254740997"}
+        self.assertEqual(ingress.read_delivery(self.path, FINGERPRINT_KEY, delivery), expected)
+        self.assertEqual(ingress.read_delivery(self.path, FINGERPRINT_KEY, delivery), expected)
+        self.assertEqual(len(self.rows()), 1)
+        self.assertEqual(ingress.read_delivery(self.path, b"wrong-key-" * 4, delivery), {"kind": "storage_unavailable"})
+        self.assertEqual(ingress.read_delivery(self.path, FINGERPRINT_KEY, str(uuid.uuid4())), {"kind": "missing"})
+        self.assertEqual(ingress.read_delivery(self.path, FINGERPRINT_KEY, "bad"), {"kind": "invalid"})
+
+    @unittest.skipUnless(os.environ.get("AGF_CONTROLLER_ROOT") and os.environ.get("AGF_NODE"),
+                         "Actual controller checkout and Node not supplied")
+    def test_real_controller_resolver_on_two_synthetic_queue_entries(self):
+        delivery_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        registry = ingress.validate_registry([(101, 201), (102, 202)])
+        for delivery, installation, repository in zip(delivery_ids, (101, 102), (201, 202)):
+            self.assertEqual(self.send(self.payload(repository, installation), delivery, registry=registry), "accepted")
+        entries = [ingress.read_delivery(self.path, FINGERPRINT_KEY, value) for value in delivery_ids]
+        script = Path(__file__).with_name("ingress-resolver-integration.mjs")
+        result = subprocess.run([os.environ["AGF_NODE"], str(script)], input=json.dumps(entries), text=True,
+                                capture_output=True, check=True,
+                                env={"AGF_CONTROLLER_ROOT": os.environ["AGF_CONTROLLER_ROOT"]})
+        self.assertEqual(result.stdout.strip(), "synthetic queue-to-real-resolver passed")
+        self.assertEqual(len(self.rows()), 2)
+
     def test_same_delivery_deduplicates_and_changed_body_conflicts(self):
         delivery = str(uuid.uuid4())
         self.assertEqual(self.send(delivery=delivery), "accepted")

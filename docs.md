@@ -16,3 +16,4 @@
 - [Staging rotacji relay](docs/relay-rotation.md) — oddzielny slot i granice bezpiecznego zapisu.
 - [Warianty centralnego kontrolera](docs/controller-runtime-options.md) — porównanie Actions i Mikrusa, wybrany kierunek oraz otwarte decyzje.
 - [Model kolejki webhooków](docs/webhook-ingress.md) — odłączony odbiór, tożsamość dostawy i granice bezpieczeństwa.
+- [Odczytowe połączenie kolejki z kontrolerem](docs/ingress-controller-observation.md) — syntetyczna integracja i jej granice.
