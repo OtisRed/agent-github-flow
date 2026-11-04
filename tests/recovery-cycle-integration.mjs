@@ -8,6 +8,7 @@ import {isDeepStrictEqual as isDeepEqual} from 'node:util';
 import {observeStatusRecovery} from '../src/worker-recovery-observe.mjs';
 import {createWorkerStatusSigner} from '../src/worker-status-commitment.mjs';
 import {runGuardedReservation} from '../src/worker-reservation-guard.mjs';
+import {matchesFinalContext} from '../src/worker-final-context.mjs';
 
 const root=process.env.AGF_CONTROLLER_ROOT;
 if(!root) throw Error('AGF_CONTROLLER_ROOT required');
@@ -20,6 +21,7 @@ const {resolveV3ProjectPolicy}=await load('flow-project-policy-resolver.mjs');
 const {v3HandoffBinding}=await load('flow-v3-handoff-binding.mjs');
 const {createV3PublicationStep}=await load('flow-v3-publication-step.mjs');
 const {createV3ProjectStatusStep}=await load('flow-v3-project-status-step.mjs');
+const {encodeCheckpointV3,verifyCheckpointV3Continuity}=await load('flow-checkpoint-v3.mjs');
 const chunks=[];for await(const chunk of process.stdin)chunks.push(chunk);
 const request=JSON.parse(Buffer.concat(chunks).toString('utf8'));
 const {state,delivery}=request;
@@ -92,6 +94,34 @@ if(request.mode==='transition'){
 }
 const prepared=statusCommitment(f);
 assert.equal(prepared.signer.verify(prepared.metadata,request.commitment),true);
+{
+  const g=fixture();g.project.currentStatus='agent-ready';g.project.statusOptionId='ready';
+  const before=structuredClone(await g.input.collectContext()),after=structuredClone(before);
+  const oldOid=before.observation.checkpoint.headOid,newOid='d'.repeat(40),record=before.observation.checkpoint.selectedRecord;
+  after.observation.checkpoint.headOid=newOid;after.observation.checkpoint.selectedRecord.current.phase='committed';
+  after.observation.checkpoint.selectedRecord.reservation=null;
+  const marker=record.current,receipt={repositoryId:record.repositoryId,issueId:record.issueId,number:record.number,
+    phase:'committed',commentId:marker.commentId,commentMac:marker.commentMac,commentKeyId:marker.commentKeyId,
+    configMac:marker.configMac,configKeyId:marker.configKeyId,checkpointOid:newOid};
+  const input={before,after,receipt,oldOid,newOid,itemId:'item',targetOptionId:'ready',
+    encode:encodeCheckpointV3,verifyContinuity:verifyCheckpointV3Continuity};
+  assert.equal(matchesFinalContext(input),true);
+  for(const change of [v=>v.after.observation.checkpoint.headOid='f'.repeat(40),
+    v=>v.after.observation.checkpoint.selectedRecord.current.commentId='999',
+    v=>v.after.observation.checkpoint.index.issues=[],v=>v.after.observation.project.itemId='other',
+    v=>v.after.observation.handoffEvidence.handoff.authorId='other',v=>v.receipt.commentId='999']){
+    const altered={...input,after:structuredClone(after),receipt:structuredClone(receipt)};change(altered);
+    assert.equal(matchesFinalContext(altered),false);
+  }
+  for(const change of [c=>c.observation.project.statusOptionId='foreign',c=>c.observation.project.itemId='foreign',
+    c=>c.observation.project.issueState='CLOSED',c=>c.observation.project.issueNodeId='other',
+    c=>{c.observation.project.statusOptions.find(x=>x.name==='agent-ready').id='foreign';}]){
+    const altered={...input,before:structuredClone(before),after:structuredClone(after)};
+    change(altered.before);change(altered.after);assert.equal(matchesFinalContext(altered),false);
+  }
+  const changing={...input,encode:record=>{const result=encodeCheckpointV3(record);record.number=999;return result;}};
+  assert.equal(matchesFinalContext(changing),true);
+}
 const observe=(v,overrides={})=>observeStatusRecovery({state,delivery,routes:v.routes,graphql:v.graphql,keyring:v.keyring,
   resolvePolicy:resolveV3ProjectPolicy,runCycle:runFirstV3Cycle,cycleInput:v.input,...overrides});
 assert.deepEqual(await observe(f),{kind:'retry-path-observation'});

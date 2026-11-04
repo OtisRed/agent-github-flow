@@ -30,4 +30,6 @@ Autor jest porównywany pomiędzy odczytami pojedynczej próby, ale jego ID nie 
 
 Osobny signer i mechaniczne metody ledgeru modelują plan końcowego commitu: keyed MAC wiąże pełną podaną treść rekordu z wcześniejszą intencją i old/new/tree, a ledger zachowuje obie intencje do atomowego rozliczenia. Te metody nie weryfikują poprawności ani ciągłości rekordu, zawartości tree, podpisu planu, odpowiedzi GitHuba czy uprawnień; nie zostały połączone z guardem ani prawdziwym workerem. Wyłącznie zaufany adapter, po pełnej weryfikacji, może wywołać ich prywatny prymityw zakończenia. Testy awarii procesu sprawdzają mechanikę transakcji, nie dowodzą publikacji checkpointu.
 
+Odłączone `matchesFinalContext` porównuje cały kontekst przed i po oczekiwanej zmianie rekordu pending→committed, kontroluje ciągłość v3 i receipt oraz sprawdza otwarte issue, wskazaną kartę i docelową opcję. Oczekiwane identyfikatory karty i opcji musi dostarczyć caller z uwierzytelnionego commitmentu. Porównanie nie uwierzytelnia odczytów, nie weryfikuje całego drzewa, refów ani ochrony i samo nie uprawnia do rozliczenia dostawy.
+
 Ograniczony format commitmentu przyjmuje kanoniczne daty UTC od roku 0001; jest to celowo węższe niż obecny parser v3, który technicznie dopuszcza rok 0000. Odrzucona data zatrzymuje próbę, nie jest normalizowana.
