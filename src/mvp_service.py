@@ -157,7 +157,7 @@ def run(config):
                 continue
             client, enrolled_at, authors = project
             result = process_one(store, client, enrolled_at=enrolled_at, trusted_authors=authors)
-            if result["kind"] in ("read-failed", "blocked", "write-uncertain"):
+            if result["kind"] in ("read-failed", "blocked", "write-uncertain", "awaiting-card"):
                 # No issue IDs, response bodies, tokens or comment contents.
                 print("FLOW attention: " + result["kind"], file=sys.stderr, flush=True)
             if result["kind"] in ("rescan", "read-failed", "waiting"):

@@ -26,7 +26,6 @@ def main():
                     app_token=app, project_token=token)
     # Explicitly forbid writes even if a future adapter changes its interface.
     client.set_status = lambda *_: (_ for _ in ()).throw(RuntimeError("Writes disabled"))
-    client.add_item = lambda *_: (_ for _ in ()).throw(RuntimeError("Writes disabled"))
     first = client.read(repository_id, issue_number)
     second = client.read(repository_id, issue_number)
     candidates = client.reconciliation_candidates(project["enrolled_at"])

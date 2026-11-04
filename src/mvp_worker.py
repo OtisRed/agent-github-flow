@@ -4,7 +4,7 @@ The adapter must authenticate and fully paginate the intended issue, comments,
 reopens and Project card, and bind the card to the configured repository. It
 must not retry status writes. Only a single worker may execute this function.
 """
-from mvp_decision import decide, _date
+from mvp_decision import decide
 from mvp_store import checkpoint_status
 
 
@@ -44,26 +44,11 @@ def process_one(store, github, *, enrolled_at, trusted_authors):
         if row["uncertain_since"] is not None or row["completed_generation"] > 0:
             store.block(repo, number, generation, "existing-card-missing")
             return {"kind": "blocked", "reason": "existing-card-missing"}
-        try:
-            new_issue = (current.get("complete") is True and current.get("state") in ("OPEN", "CLOSED")
-                         and _date(current.get("created_at")) > _date(enrolled_at))
-        except (ValueError, TypeError):
-            new_issue = False
-        if not new_issue:
-            store.block(repo, number, generation, "missing-card-existing-issue")
-            return {"kind": "blocked", "reason": "missing-card-existing-issue"}
-        try:
-            fresh = github.read(repo, number)
-            latest = store.get(repo, number)
-            if fresh != current or latest is None or latest["generation"] != generation:
-                return {"kind": "rescan"}
-            github.add_item(repo, number)
-        except Exception:
-            # Adding an already present item is idempotent per GitHub. A fresh
-            # event or nightly scan will re-read before another attempt.
-            store.block(repo, number, generation, "card-add-unconfirmed")
-            return {"kind": "blocked", "reason": "card-add-unconfirmed"}
-        return {"kind": "rescan"}
+        # GitHub's Project auto-add creates cards for new or updated issues.
+        # It is asynchronous; wait and re-read rather than using broader PAT
+        # repository access or treating temporary absence as a missing issue.
+        store.defer(repo, number)
+        return {"kind": "awaiting-card"}
 
     if row["uncertain_since"] is not None:
         if not _intent_intact(row, current, trusted_authors):

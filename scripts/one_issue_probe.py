@@ -16,10 +16,13 @@ from mvp_worker import process_one
 
 
 def main():
-    if len(sys.argv) != 4:
-        raise ValueError("Expected config, repository and issue")
+    if len(sys.argv) not in (4, 5):
+        raise ValueError("Expected config, repository, issue and optional expected status")
     config = _load(sys.argv[1])
     repo, issue = int(sys.argv[2]), int(sys.argv[3])
+    expected = sys.argv[4] if len(sys.argv) == 5 else "needs-design"
+    if expected not in ("needs-design", "agent-ready"):
+        raise ValueError("Unexpected probe status")
     project = next(p for p in config["projects"] if p["repository_id"] == repo)
     key = read_private_file(config["app_key_path"])
     token = read_private_file(config["project_token_path"]).decode("utf-8").strip()
@@ -49,10 +52,10 @@ def main():
                                   "probe_state_preserved": True}))
                 return 1
             final = client.read(repo, issue)
-            if not final.get("complete") or final.get("state") != "OPEN" or final.get("status") != "needs-design":
+            if not final.get("complete") or final.get("state") != "OPEN" or final.get("status") != expected:
                 raise ValueError("Unconfirmed result")
             success = True
-            print(json.dumps({"result": "confirmed", "state": "OPEN", "status": "needs-design"}))
+            print(json.dumps({"result": "confirmed", "state": "OPEN", "status": expected}))
             return 0
         print(json.dumps({"result": "rescan-limit", "probe_state_preserved": True}))
         return 1

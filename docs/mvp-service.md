@@ -12,6 +12,8 @@ Katalog bazy musi być prywatny, a pliki poświadczeń należeć do użytkownika
 
 Klucz App służy do uzyskania krótkotrwałego tokenu odczytu issues ograniczonego do wybranego repozytorium. PAT obsługuje osobisty Project. Ich wartości są w pamięci procesu i nie trafiają do logów. Rotacja wymaga bezpiecznej podmiany pliku i restartu usługi; pełną procedurę oraz przywrócenie dostępu trzeba jeszcze sprawdzić w #48.
 
+W każdym Projectcie włączamy wbudowane GitHub `Auto-add to project` dla issue z właściwego repozytorium. GitHub dodaje karty nowych lub później aktualizowanych issue; istniejący backlog nie jest dodawany jednorazowo, choć starsze issue dołączą po kolejnych zmianach. Kontroler czeka na kartę zamiast żądać od PAT szerokiego dostępu do repozytoriów. Raz na projekt potrzebny jest ten setup; stopień jego automatyzacji pozostaje do sprawdzenia.
+
 Przy starcie oraz raz na dobę w nocy usługa zbiera karty na tablicy i issue powstałe po dacie podłączenia. Niepowodzenie odczytu jest ponawiane, a oczekujące sygnały pozostają w SQLite. GitHub nie gwarantuje automatycznego ponawiania nieudanych webhooków; wymagane jest także wdrożenie monitoringu i sprawdzenie sposobu odzyskania po awarii. Nie można obiecać wykrycia komentarza, który powstał i zniknął, zanim system go zobaczył.
 
 Obecny algorytm porównuje tekst komentarza i jego czas aktualizacji. Jeśli treść zostanie zmieniona i przywrócona w granicach rozdzielczości czasu zwracanego przez API, bez zaobserwowania zmiany, historia takiej edycji może być niewidoczna. Przed włączeniem należy sprawdzić rzeczywistą rozdzielczość i uwzględnić tę granicę w operacyjnej ocenie ryzyka.

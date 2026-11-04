@@ -110,21 +110,24 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(self.run_worker()["kind"], "completed")
         self.assertEqual(self.github.writes, ["agent-ready"])
 
-    def test_new_issue_without_card_is_added_then_put_in_needs_design(self):
+    def test_new_issue_waits_for_auto_add_then_is_put_in_needs_design(self):
         self.github.snapshot = {"complete": True, "missing_card": True, "state": "OPEN",
                                 "created_at": "2026-11-02T00:00:00Z", "updated_at": "2026-11-02T00:00:00Z",
                                 "comments": [], "latest_reopen": None}
         self.store.enqueue(20, 7)
-        self.assertEqual(self.run_worker()["kind"], "rescan")
-        self.assertEqual(self.github.added, 1)
+        self.assertEqual(self.run_worker()["kind"], "awaiting-card")
+        self.assertEqual(self.github.added, 0)
+        self.assertEqual(self.run_worker()["kind"], "idle")
+        self.now += 60
+        self.github.add_item(20, 7)  # GitHub's built-in workflow, not the controller
         self.assertEqual(self.run_worker()["kind"], "completed")
         self.assertEqual(self.github.writes, ["needs-design"])
 
-    def test_older_issue_without_card_is_not_added_automatically(self):
+    def test_older_issue_without_card_waits_for_github_auto_add(self):
         self.github.snapshot = {"complete": True, "missing_card": True, "state": "OPEN",
                                 "created_at": "2026-10-02T00:00:00Z", "updated_at": "2026-10-02T00:00:00Z"}
         self.store.enqueue(20, 7)
-        self.assertEqual(self.run_worker(), {"kind": "blocked", "reason": "missing-card-existing-issue"})
+        self.assertEqual(self.run_worker(), {"kind": "awaiting-card"})
         self.assertEqual(self.github.added, 0)
 
     def test_previously_seen_card_is_never_silently_recreated(self):

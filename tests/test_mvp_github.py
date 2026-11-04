@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mvp_decision import STATUSES
-from mvp_github import ADD_MUTATION, PROJECT_ID_QUERY, PROJECT_QUERY, STATUS_MUTATION, GitHub
+from mvp_github import PROJECT_ID_QUERY, PROJECT_QUERY, STATUS_MUTATION, GitHub
 
 
 class FakeTransport:
@@ -48,8 +48,6 @@ class FakeTransport:
                                           "project": {"id": "project1", "statusField": field}, "status": value}}}, None
             if query == STATUS_MUTATION:
                 return {"data": {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "item1"}}}}, None
-            if query == ADD_MUTATION:
-                return {"data": {"addProjectV2ItemById": {"item": {"id": "item1"}}}}, None
         raise AssertionError("unexpected fake request: " + path)
 
 
@@ -77,12 +75,9 @@ class GitHubTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.github.set_status(20, 7, "review")
 
-    def test_missing_card_is_distinguished_and_can_be_added(self):
+    def test_missing_card_is_distinguished_without_adding_it(self):
         self.transport.items = []
         self.assertTrue(self.github.read(20, 7)["missing_card"])
-        self.github.add_item(20, 7)
-        adds = [body for path, _, body in self.transport.calls if path == "/graphql" and body["query"] == ADD_MUTATION]
-        self.assertEqual(adds[0]["variables"], {"project": "project1", "content": "issue1"})
 
     def test_missing_issue_identity_or_duplicate_never_means_absent(self):
         self.transport.items = [{**self.transport.item, "content": None}]

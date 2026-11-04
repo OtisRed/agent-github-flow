@@ -25,9 +25,6 @@ PROJECT_ID_QUERY = "query($owner:String!,$number:Int!){user(login:$owner){projec
 STATUS_MUTATION = """mutation($project:ID!,$item:ID!,$field:ID!,$value:ProjectV2FieldValue!){
  updateProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field,value:$value}){projectV2Item{id}}}
 """
-ADD_MUTATION = """mutation($project:ID!,$content:ID!){
- addProjectV2ItemById(input:{projectId:$project,contentId:$content}){item{id}}}
-"""
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -241,8 +238,6 @@ class GitHub:
             project = (data.get("user") or {}).get("projectV2") or {}
             if not _node(project.get("id")):
                 raise ValueError("Unknown Project")
-            self._last = {"repo": repository_id, "number": issue_number, "project": project["id"],
-                          "content": issue["node_id"], "missing": True}
             return {"complete": True, "missing_card": True, "state": issue["state"].upper(),
                     "created_at": issue.get("created_at"), "updated_at": issue.get("updated_at")}
         item_id = matches[0].get("node_id")
@@ -286,13 +281,4 @@ class GitHub:
             "field": last["field"], "value": {"singleSelectOptionId": last["options"][status]}})
         if ((result.get("updateProjectV2ItemFieldValue") or {}).get("projectV2Item") or {}).get("id") != last["item"]:
             raise ValueError("Unconfirmed Project write")
-        self._last = None
-
-    def add_item(self, repository_id, issue_number):
-        last = self._last
-        if not last or not last.get("missing") or last["repo"] != repository_id or last["number"] != issue_number:
-            raise ValueError("Unverified Project target")
-        result = self._graphql(ADD_MUTATION, {"project": last["project"], "content": last["content"]})
-        if not _node(((result.get("addProjectV2ItemById") or {}).get("item") or {}).get("id")):
-            raise ValueError("Unconfirmed Project item")
         self._last = None
