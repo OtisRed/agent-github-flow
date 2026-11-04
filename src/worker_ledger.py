@@ -14,13 +14,17 @@ import re
 import sqlite3
 import stat
 import tempfile
+import time
 from pathlib import Path
 from datetime import datetime
 
 import webhook_ingress as ingress
 
 APP_ID = 0x41474632
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
+GENERATION_SQL = """CREATE TABLE scan_generation (
+            delivery_id TEXT PRIMARY KEY
+        )"""
 SEQUENCE_SQL = """CREATE TABLE ledger_sequence (
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
             last_seq INTEGER NOT NULL CHECK (typeof(last_seq) = 'integer' AND last_seq >= 0)
@@ -163,6 +167,7 @@ class Ledger:
                 db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
                 db.execute(SEQUENCE_SQL)
                 db.execute("INSERT INTO ledger_sequence VALUES (1, 0)")
+                db.execute(GENERATION_SQL)
                 db.execute(TABLE_SQL)
                 db.execute(ONE_ACTIVE_SQL)
                 db.execute(PENDING_ORDER_SQL)
@@ -200,8 +205,10 @@ class Ledger:
                        ("index", "ledger_pending_order", "pending_deliveries", PENDING_ORDER_SQL),
                        ("table", "ledger_sequence", "ledger_sequence", SEQUENCE_SQL),
                        ("table", "pending_deliveries", "pending_deliveries", TABLE_SQL),
+                       ("table", "scan_generation", "scan_generation", GENERATION_SQL),
                        ("index", "sqlite_autoindex_pending_deliveries_1", "pending_deliveries", None),
-                       ("index", "sqlite_autoindex_pending_deliveries_2", "pending_deliveries", None)]:
+                       ("index", "sqlite_autoindex_pending_deliveries_2", "pending_deliveries", None),
+                       ("index", "sqlite_autoindex_scan_generation_1", "scan_generation", None)]:
             raise ValueError("Unknown ledger schema")
         counters = self.db.execute("SELECT singleton,last_seq FROM ledger_sequence").fetchall()
         if len(counters) != 1 or counters[0][0] != 1 or type(counters[0][1]) is not int or counters[0][1] < 0:
@@ -219,21 +226,154 @@ class Ledger:
         self.db.execute("BEGIN IMMEDIATE")
         try:
             self._check()
-            for delivery_id in delivery_ids:
-                if self.db.execute("SELECT 1 FROM pending_deliveries WHERE delivery_id=?", (delivery_id,)).fetchone():
-                    continue
-                last_seq = self.db.execute("SELECT last_seq FROM ledger_sequence WHERE singleton=1").fetchone()[0]
-                if last_seq >= 2**63 - 1:
-                    raise ValueError("Ledger sequence exhausted")
-                next_seq = last_seq + 1
-                self.db.execute("UPDATE ledger_sequence SET last_seq=? WHERE singleton=1", (next_seq,))
-                self.db.execute("""INSERT INTO pending_deliveries
-                  (delivery_id,enqueue_seq,state,ref_intent,status_intent,status_key_id,status_mac,ref_transition)
-                  VALUES (?,?,'pending',0,0,NULL,NULL,NULL)""", (delivery_id,next_seq))
+            self._import_ids_in_transaction(delivery_ids)
             self.db.commit()
         except BaseException:
             self.db.rollback()
             raise
+
+    def _import_ids_in_transaction(self, delivery_ids):
+        """Used only within an already checked ledger transaction."""
+        for delivery_id in delivery_ids:
+            if self.db.execute("SELECT 1 FROM pending_deliveries WHERE delivery_id=?", (delivery_id,)).fetchone():
+                continue
+            last_seq = self.db.execute("SELECT last_seq FROM ledger_sequence WHERE singleton=1").fetchone()[0]
+            if last_seq >= 2**63 - 1:
+                raise ValueError("Ledger sequence exhausted")
+            next_seq = last_seq + 1
+            self.db.execute("UPDATE ledger_sequence SET last_seq=? WHERE singleton=1", (next_seq,))
+            self.db.execute("""INSERT INTO pending_deliveries
+              (delivery_id,enqueue_seq,state,ref_intent,status_intent,status_key_id,status_mac,ref_transition)
+              VALUES (?,?,'pending',0,0,NULL,NULL,NULL)""", (delivery_id,next_seq))
+
+    def _create_scan_generation_locked_probe(self, ingress_path, fingerprint_key, *, max_ids=100000):
+        """Unsafe comparison probe: freezes a snapshot while locking ingress.
+
+        The trusted caller must use the same immutable ingress identity and
+        global lock across restarts. A large source read can delay writers in
+        DELETE journal mode. Never use this probe in the production worker.
+        """
+        if (not isinstance(fingerprint_key, bytes) or len(fingerprint_key) < 32
+                or type(max_ids) is not int or not 1 <= max_ids <= 100000):
+            raise ValueError("Invalid generation configuration")
+        source = None
+        self._check()
+        try:
+            source = ingress.connect_existing(ingress_path)
+            source.execute("BEGIN")
+            ingress.validate_schema(source, fingerprint_key)
+            self.db.execute("BEGIN IMMEDIATE")
+            self._check()
+            if self.db.execute("SELECT 1 FROM scan_generation LIMIT 1").fetchone():
+                raise ValueError("Generation already active")
+            count = 0
+            rows = source.execute("SELECT delivery_id FROM ingress_deliveries ORDER BY delivery_id")
+            while True:
+                page = rows.fetchmany(100)
+                if not page:
+                    break
+                for (delivery_id,) in page:
+                    if not ingress.canonical_delivery(delivery_id):
+                        raise ValueError("Invalid source delivery")
+                    if self.db.execute("SELECT 1 FROM pending_deliveries WHERE delivery_id=?", (delivery_id,)).fetchone():
+                        continue
+                    count += 1
+                    if count > max_ids:
+                        raise ValueError("Generation size exceeded")
+                    self.db.execute("INSERT INTO scan_generation VALUES (?)", (delivery_id,))
+            source.commit()
+            self.db.commit()
+            return {"kind":"generation-created", "count":count}
+        except BaseException:
+            if self.db is not None and self.db.in_transaction:
+                self.db.rollback()
+            if source is not None and source.in_transaction:
+                source.rollback()
+            raise
+        finally:
+            if source is not None:
+                source.close()
+
+    def import_generation_batch(self, limit=100):
+        """Import and remove a bounded batch in the same ledger transaction."""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("Invalid generation batch size")
+        self._check()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            self._check()
+            ids = [row[0] for row in self.db.execute(
+                "SELECT delivery_id FROM scan_generation ORDER BY delivery_id LIMIT ?", (limit,))]
+            if not all(ingress.canonical_delivery(value) for value in ids):
+                raise ValueError("Invalid generation delivery")
+            self._import_ids_in_transaction(ids)
+            self.db.executemany("DELETE FROM scan_generation WHERE delivery_id=?", ((value,) for value in ids))
+            more = self.db.execute("SELECT 1 FROM scan_generation LIMIT 1").fetchone() is not None
+            self.db.commit()
+            return {"kind":"batch-imported", "count":len(ids), "more":more}
+        except BaseException:
+            self.db.rollback()
+            raise
+
+    def create_scan_generation_from_backup(self, ingress_path, fingerprint_key, *, max_ids=100000,
+                                           max_snapshot_bytes=64*1024*1024, timeout_seconds=10):
+        """Detached bounded online-backup experiment; not a runtime policy.
+
+        A backup may restart under concurrent writers. This method bounds its
+        size and duration; source identity and orphan cleanup remain external.
+        """
+        if (not isinstance(fingerprint_key, bytes) or len(fingerprint_key) < 32
+                or type(max_ids) is not int or not 1 <= max_ids <= 100000
+                or type(max_snapshot_bytes) is not int or not 4096 <= max_snapshot_bytes <= 64*1024*1024
+                or type(timeout_seconds) not in (int,float) or not 0 < timeout_seconds <= 60):
+            raise ValueError("Invalid backup generation configuration")
+        self._check()
+        if self.db.execute("SELECT 1 FROM scan_generation LIMIT 1").fetchone():
+            raise ValueError("Generation already active")
+        source = backup = None
+        temporary = None
+        try:
+            source = ingress.connect_existing(ingress_path)
+            page_size = source.execute("PRAGMA page_size").fetchone()[0]
+            if type(page_size) is not int or page_size <= 0 or page_size > max_snapshot_bytes:
+                raise ValueError("Invalid source page size")
+            fd, temporary = tempfile.mkstemp(prefix='.agf-scan-backup-', dir=os.path.dirname(self.path))
+            os.close(fd)
+            backup = sqlite3.connect(Path(temporary).as_uri() + '?mode=rw',uri=True,timeout=2)
+            deadline = time.monotonic() + timeout_seconds
+            def progress(_status, _remaining, total):
+                if total * page_size > max_snapshot_bytes or time.monotonic() > deadline:
+                    raise ValueError("Backup generation limit exceeded")
+            source.backup(backup,pages=1,progress=progress,sleep=0.01)
+            source.close(); source = None
+            backup.execute("BEGIN")
+            ingress.validate_schema(backup,fingerprint_key)
+            self.db.execute("BEGIN IMMEDIATE")
+            self._check()
+            if self.db.execute("SELECT 1 FROM scan_generation LIMIT 1").fetchone():
+                raise ValueError("Generation already active")
+            count=0
+            rows=backup.execute("SELECT delivery_id FROM ingress_deliveries ORDER BY delivery_id")
+            while True:
+                page=rows.fetchmany(100)
+                if not page:break
+                for (delivery_id,) in page:
+                    if not ingress.canonical_delivery(delivery_id):raise ValueError("Invalid source delivery")
+                    if self.db.execute("SELECT 1 FROM pending_deliveries WHERE delivery_id=?",(delivery_id,)).fetchone():continue
+                    count+=1
+                    if count>max_ids:raise ValueError("Generation size exceeded")
+                    self.db.execute("INSERT INTO scan_generation VALUES (?)",(delivery_id,))
+            backup.commit()
+            self.db.commit()
+            return {"kind":"generation-created","count":count}
+        except BaseException:
+            if self.db is not None and self.db.in_transaction:self.db.rollback()
+            if backup is not None and backup.in_transaction:backup.rollback()
+            raise
+        finally:
+            if backup is not None:backup.close()
+            if source is not None:source.close()
+            if temporary is not None:os.unlink(temporary)
 
     def pending_preview(self, limit=100):
         """Return at most one bounded preview, not an exhaustive work scan."""

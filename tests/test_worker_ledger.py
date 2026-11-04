@@ -202,7 +202,7 @@ os._exit(73)
     def test_old_version_is_refused_without_erasing_data(self):
         with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
             work.import_ids([self.first])
-        for version in (9,10):
+        for version in (9,10,11):
             with self.subTest(version=version):
                 with sqlite3.connect(self.path) as db:
                     db.execute(f'PRAGMA user_version={version}')
