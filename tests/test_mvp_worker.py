@@ -81,6 +81,35 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(self.run_worker()["kind"], "completed")
         self.assertEqual(self.store.next_pending()["generation"], 2)
 
+    def test_changed_issue_yields_to_already_waiting_issue(self):
+        self.github.snapshot["comments"] = [self.handoff()]
+        self.store.enqueue(20, 7)
+        self.store.enqueue(30, 8)
+        read = self.github.read
+        calls = 0
+        def read_with_wakeup(*args):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                self.store.enqueue(20, 7)
+            return read(*args)
+        self.github.read = read_with_wakeup
+        self.assertEqual(self.run_worker()["kind"], "rescan")
+        self.assertEqual(self.store.next_pending()["repository_id"], 30)
+
+    def test_worker_uses_the_issue_selected_for_its_project_client(self):
+        self.store.enqueue(20, 7)
+        selected = self.store.next_pending()
+        self.store.enqueue(10, 1)
+        seen = []
+        read = self.github.read
+        def record_repo(repo, number):
+            seen.append((repo, number))
+            return read(repo, number)
+        self.github.read = record_repo
+        process_one(self.store, self.github, enrolled_at=BOUNDARY, trusted_authors=AUTHORS, row=selected)
+        self.assertEqual(seen[0], (20, 7))
+
     def test_reopen_first_resets_then_processes_new_handoff(self):
         self.github.snapshot.update({"status": "smoke", "latest_reopen": {"id": 55, "created_at": "2026-11-02T10:00:00Z"},
                                      "comments": [self.handoff(77, "2026-11-02T11:00:00Z")]})

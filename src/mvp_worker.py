@@ -22,7 +22,7 @@ def _intent_intact(row, snapshot, trusted_authors):
             and checkpoint_status(comment_id, row["uncertain_comment_digest"], matches[0]) == "unchanged")
 
 
-def process_one(store, github, *, enrolled_at, trusted_authors):
+def process_one(store, github, *, enrolled_at, trusted_authors, row=None):
     """Inspect and process one issue, recording intent before any status write.
 
     `github.read(repo_id, issue_number)` must supply the snapshot described by
@@ -30,7 +30,8 @@ def process_one(store, github, *, enrolled_at, trusted_authors):
     attempt. Its result alone is never taken as proof: a fresh read is required.
     The adapter is trusted and not sandboxed; no credentials pass through here.
     """
-    row = store.next_pending()
+    if row is None:
+        row = store.next_pending()
     if row is None:
         return {"kind": "idle"}
     repo, number, generation = row["repository_id"], row["issue_number"], row["generation"]
@@ -77,6 +78,8 @@ def process_one(store, github, *, enrolled_at, trusted_authors):
         return {"kind": "read-failed"}
     latest = store.get(repo, number)
     if fresh != current or latest is None or latest["generation"] != generation:
+        if latest is not None:
+            store.yield_turn(repo, number)
         return {"kind": "rescan"}
     target = decision["status"]
     if current["status"] != target:

@@ -15,8 +15,15 @@ from contextlib import closing
 from pathlib import Path
 
 APPLICATION_ID = 0x4147464D
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 UNCERTAIN_WAIT_SECONDS = 120
+
+QUEUE_SQL = """CREATE TABLE work_queue (
+    position INTEGER PRIMARY KEY AUTOINCREMENT,
+    repository_id INTEGER NOT NULL,
+    issue_number INTEGER NOT NULL,
+    UNIQUE (repository_id, issue_number)
+)"""
 
 
 def _positive(value):
@@ -113,6 +120,35 @@ class Store:
                 repository_id INTEGER PRIMARY KEY,
                 enrolled_at TEXT NOT NULL
             )""")
+            db.execute(QUEUE_SQL)
+
+    def migrate_v1(self):
+        """Explicitly upgrade an existing v1 database while the service is stopped.
+
+        Previously queued work has no recorded arrival order. Give those rows a
+        deterministic starting order, preserving all issue and checkpoint data.
+        The caller owns the exclusive service lock and a verified backup.
+        """
+        db = sqlite3.connect(self.path.as_uri() + "?mode=rw", uri=True, timeout=10)
+        try:
+            db.execute("PRAGMA synchronous=FULL")
+            db.execute("BEGIN IMMEDIATE")
+            if (db.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID
+                    or db.execute("PRAGMA user_version").fetchone()[0] != 1
+                    or db.execute("PRAGMA quick_check").fetchone()[0] != "ok"):
+                raise ValueError("Expected an intact MVP v1 database")
+            db.execute(QUEUE_SQL)
+            db.execute("""INSERT INTO work_queue (repository_id, issue_number)
+                SELECT repository_id, issue_number FROM issues
+                WHERE generation > completed_generation AND generation > blocked_generation
+                ORDER BY repository_id, issue_number""")
+            db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     def _connect(self):
         # mode=rw is essential: an absent state file must never be recreated.
@@ -132,10 +168,14 @@ class Store:
         """Commit a wakeup before the caller returns a successful response."""
         key = (_positive(repository_id), _positive(issue_number))
         with closing(self._connect()) as db, db:
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""INSERT INTO issues (repository_id, issue_number, generation)
                           VALUES (?, ?, 1)
                           ON CONFLICT (repository_id, issue_number)
-                          DO UPDATE SET generation = generation + 1, retry_after=NULL""", key)
+                          DO UPDATE SET generation = generation + 1,
+                            retry_after = CASE WHEN generation > completed_generation
+                              AND generation > blocked_generation THEN retry_after ELSE NULL END""", key)
+            db.execute("INSERT OR IGNORE INTO work_queue (repository_id, issue_number) VALUES (?, ?)", key)
 
     def register_boundary(self, repository_id, enrolled_at):
         """Fix the onboarding boundary on first registration; never move it silently."""
@@ -176,12 +216,29 @@ class Store:
     def next_pending(self):
         """Return a generation to inspect; only one worker may call this."""
         with closing(self._connect()) as db, db:
-            row = db.execute("""SELECT * FROM issues
+            row = db.execute("""SELECT issues.* FROM work_queue JOIN issues
+                USING (repository_id, issue_number)
                 WHERE generation > completed_generation AND generation > blocked_generation
                   AND (uncertain_since IS NULL OR uncertain_since <= ?)
                   AND (retry_after IS NULL OR retry_after <= ?)
-                ORDER BY repository_id, issue_number LIMIT 1""", (self.clock() - UNCERTAIN_WAIT_SECONDS, self.clock())).fetchone()
+                ORDER BY work_queue.position LIMIT 1""", (self.clock() - UNCERTAIN_WAIT_SECONDS, self.clock())).fetchone()
             return dict(row) if row else None
+
+    @staticmethod
+    def _requeue(db, key):
+        """Move pending work behind currently waiting issues in one transaction."""
+        db.execute("DELETE FROM work_queue WHERE repository_id=? AND issue_number=?", key)
+        db.execute("""INSERT INTO work_queue (repository_id, issue_number)
+            SELECT repository_id, issue_number FROM issues
+            WHERE repository_id=? AND issue_number=?
+              AND generation > completed_generation AND generation > blocked_generation""", key)
+
+    def yield_turn(self, repository_id, issue_number):
+        """Rescan a changed snapshot after other issues already waiting."""
+        key = (_positive(repository_id), _positive(issue_number))
+        with closing(self._connect()) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            self._requeue(db, key)
 
     def get(self, repository_id, issue_number):
         key = (_positive(repository_id), _positive(issue_number))
@@ -207,12 +264,14 @@ class Store:
         if not isinstance(error_code, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", error_code):
             raise ValueError("Invalid error code")
         with closing(self._connect()) as db, db:
+            db.execute("BEGIN IMMEDIATE")
             result = db.execute("""UPDATE issues SET blocked_generation=?, error_code=?
                 WHERE repository_id=? AND issue_number=? AND completed_generation < ?
                   AND blocked_generation < ? AND generation >= ?""",
                 (generation, error_code, *key, generation, generation, generation))
             if result.rowcount != 1:
                 raise ValueError("Invalid blocked generation")
+            self._requeue(db, key)
 
     def errors(self):
         """Return private identifiers and sanitized codes for operator visibility."""
@@ -284,6 +343,7 @@ class Store:
         if type(recheck) is not bool or (recheck and reopen_id is None):
             raise ValueError("Invalid reopen recheck")
         with closing(self._connect()) as db, db:
+            db.execute("BEGIN IMMEDIATE")
             result = db.execute("""UPDATE issues SET completed_generation=?,
                 comment_id=COALESCE(?, comment_id), comment_digest=COALESCE(?, comment_digest),
                 reopen_id=COALESCE(?, reopen_id), generation=generation+?,
@@ -294,3 +354,4 @@ class Store:
                  generation, generation, generation))
             if result.rowcount != 1:
                 raise ValueError("Invalid generation or uncertain write")
+            self._requeue(db, key)
