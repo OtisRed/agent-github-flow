@@ -25,6 +25,12 @@ def synthetic_transition(delivery_id):
             "treeOid":"e"*40, "reservedAt":"2026-01-01T10:03:00Z", "mac":"f"*64}
 
 
+def synthetic_final_transition(delivery_id):
+    return {"kind":"worker-final-ref-transition", "operation":"commit", "deliveryId":delivery_id, "keyId":1,
+            "oldMac":"a"*64, "recordMac":"b"*64, "oldOid":"c"*40, "newOid":"d"*40,
+            "treeOid":"e"*40, "mac":"f"*64}
+
+
 @unittest.skipUnless(os.name == "posix", "Worker lock requires POSIX")
 class WorkerLedgerTests(unittest.TestCase):
     def setUp(self):
@@ -196,14 +202,16 @@ os._exit(73)
     def test_old_version_is_refused_without_erasing_data(self):
         with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
             work.import_ids([self.first])
-        with sqlite3.connect(self.path) as db:
-            db.execute('PRAGMA user_version=9')
-        with self.assertRaises(ValueError):
-            with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True):
-                self.fail('old version was silently replaced')
-        with sqlite3.connect(self.path) as db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
-            self.assertEqual(db.execute('SELECT delivery_id FROM pending_deliveries').fetchall(), [(self.first,)])
+        for version in (9,10):
+            with self.subTest(version=version):
+                with sqlite3.connect(self.path) as db:
+                    db.execute(f'PRAGMA user_version={version}')
+                with self.assertRaises(ValueError):
+                    with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True):
+                        self.fail('old version was silently replaced')
+                with sqlite3.connect(self.path) as db:
+                    self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], version)
+                    self.assertEqual(db.execute('SELECT delivery_id FROM pending_deliveries').fetchall(), [(self.first,)])
 
     def test_crash_before_initial_publish_does_not_leave_empty_target(self):
         src = str(Path(__file__).resolve().parents[1] / "src")
@@ -461,6 +469,7 @@ os._exit(73)
             self.assertFalse(work.matches_recovery_status(self.first, {**TEST_COMMITMENT, 'mac':'0'*64}))
             work.record_recovery_ref_intent(self.first, plan)
             self.assertFalse(work.matches_recovery_status(self.first, TEST_COMMITMENT))
+            with self.assertRaises(ValueError): work._record_verified_final_ref(self.first, plan)
             for wrong in ({**plan, "treeOid":"1"*40}, {**plan, "nextMac":"1"*64}, {**plan, "mac":"1"*64}):
                 with self.assertRaises(ValueError):
                     work._record_verified_recovery_ref(self.first, wrong)
@@ -478,6 +487,63 @@ os._exit(73)
                 work.begin_status_recovery(self.first, TEST_COMMITMENT)
             next_commitment = {**TEST_COMMITMENT, "mac":plan["nextMac"]}
             work.begin_status_recovery(self.first, next_commitment)
+
+    def test_final_ref_is_recorded_before_trusted_mechanical_completion(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.import_ids([self.first, self.second]); work.claim_next(); work.record_intent(self.first, 'status', TEST_COMMITMENT)
+        plan = synthetic_final_transition(self.first)
+        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            work.begin_status_recovery(self.first, TEST_COMMITMENT)
+            for bad in ({**plan, 'oldMac':'1'*64}, {**plan, 'keyId':2}, {**plan, 'recordMac':'invalid'},
+                        {**plan, 'operation':'reservation'}, {**plan, 'deliveryId':self.second}):
+                with self.assertRaises(ValueError): work.record_final_ref_intent(self.first, bad)
+            work.record_final_ref_intent(self.first, plan)
+            self.assertEqual(work.recovery_ref_transition(self.first), plan)
+            self.assertEqual(work.blocking_preview(), [(self.first, 'recovering', 1, 1)])
+            with self.assertRaises(ValueError): work._record_verified_recovery_ref(self.first, plan)
+            self.assertFalse(work.matches_recovery_status(self.first, TEST_COMMITMENT))
+            with self.assertRaises(ValueError): work._record_verified_noop(self.first)
+            with self.assertRaises(ValueError): work._record_verified_final_ref(self.first, {**plan, 'treeOid':'1'*40})
+            work._record_verified_final_ref(self.first, plan)
+            self.assertEqual(work.claim_next(), {'kind':'claimed', 'deliveryId':self.second})
+        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            work.import_ids([self.first])
+            self.assertEqual(work.states_preview(), [(self.first,'completed',0,0),(self.second,'uncertain',0,0)])
+
+    def test_final_ref_process_death_before_and_after_completion_commit(self):
+        src = str(Path(__file__).resolve().parents[1] / 'src')
+        script = """import json,os,sys
+sys.path.insert(0,sys.argv[1])
+import worker_ledger
+w=worker_ledger.Ledger(sys.argv[2],sys.argv[3]); w.__enter__()
+plan=json.loads(sys.argv[5]); c={'kind':'worker-status-commitment','keyId':1,'mac':'a'*64}
+w.begin_status_recovery(sys.argv[4],c); w.record_final_ref_intent(sys.argv[4],plan)
+if sys.argv[6]=='before':
+    class KillAfterUpdate:
+        def __init__(self,db): self.db=db
+        def execute(self,sql,*args):
+            result=self.db.execute(sql,*args)
+            if sql.strip().startswith("UPDATE pending_deliveries SET state='completed'"): os._exit(73)
+            return result
+        def __getattr__(self,name): return getattr(self.db,name)
+    w.db=KillAfterUpdate(w.db)
+w._record_verified_final_ref(sys.argv[4],plan)
+os._exit(73)
+"""
+        for mode in ('before','after'):
+            with self.subTest(mode=mode):
+                path=Path(self.directory.name)/(mode+'-final.sqlite')
+                with worker_ledger.Ledger(path,self.lock_path,allow_create=True) as work:
+                    work.import_ids([self.first]);work.claim_next();work.record_intent(self.first,'status',TEST_COMMITMENT)
+                plan=synthetic_final_transition(self.first)
+                process=subprocess.run([sys.executable,'-c',script,src,str(path),str(self.lock_path),self.first,json.dumps(plan),mode],capture_output=True,text=True)
+                self.assertEqual(process.returncode,73,process.stderr)
+                with worker_ledger.Ledger(path,self.lock_path) as work:
+                    expected=('uncertain',1,1) if mode=='before' else ('completed',0,0)
+                    self.assertEqual(work.states_preview(),[(self.first,*expected)])
+                    self.assertEqual(work.recovery_ref_transition(self.first),plan if mode=='before' else None)
+                    work.import_ids([self.first])
+                    self.assertEqual(work.claim_next(),{'kind':'blocked' if mode=='before' else 'empty'})
 
     def test_process_death_before_and_after_ref_update_commit(self):
         src = str(Path(__file__).resolve().parents[1] / "src")

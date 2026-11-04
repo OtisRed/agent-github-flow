@@ -20,7 +20,7 @@ from datetime import datetime
 import webhook_ingress as ingress
 
 APP_ID = 0x41474632
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 SEQUENCE_SQL = """CREATE TABLE ledger_sequence (
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
             last_seq INTEGER NOT NULL CHECK (typeof(last_seq) = 'integer' AND last_seq >= 0)
@@ -77,6 +77,19 @@ def valid_ref_transition(value, delivery_id):
         return canonical == value['reservedAt']
     except ValueError:
         return False
+
+
+def valid_final_ref_transition(value, delivery_id):
+    keys = {'kind', 'operation', 'deliveryId', 'keyId', 'oldMac', 'recordMac',
+            'oldOid', 'newOid', 'treeOid', 'mac'}
+    return (type(value) is dict and set(value) == keys and value['kind'] == 'worker-final-ref-transition'
+            and value['operation'] == 'commit' and value['deliveryId'] == delivery_id
+            and type(value['keyId']) is int and 0 < value['keyId'] <= 2**53 - 1
+            and all(isinstance(value[k], str) and re.fullmatch(r'[0-9a-f]{64}', value[k]) is not None
+                    for k in ('oldMac', 'recordMac', 'mac'))
+            and all(isinstance(value[k], str) and re.fullmatch(r'[0-9a-f]{40}', value[k]) is not None
+                    and value[k] != '0' * 40 for k in ('oldOid', 'newOid', 'treeOid'))
+            and value['oldOid'] != value['newOid'])
 
 
 class Ledger:
@@ -384,9 +397,16 @@ class Ledger:
         This only checks its shape and old commitment. The trusted caller must
         verify the HMAC, plan, protection and GitHub evidence independently.
         """
+        return self._record_ref_intent(delivery_id, transition, valid_ref_transition)
+
+    def record_final_ref_intent(self, delivery_id, transition):
+        """Persist an independently verified final-ref plan before publication."""
+        return self._record_ref_intent(delivery_id, transition, valid_final_ref_transition)
+
+    def _record_ref_intent(self, delivery_id, transition, validator):
         if type(transition) is dict:
             transition = transition.copy()
-        if not ingress.canonical_delivery(delivery_id) or not valid_ref_transition(transition, delivery_id):
+        if not ingress.canonical_delivery(delivery_id) or not validator(transition, delivery_id):
             raise ValueError("Invalid recovery ID")
         self._check()
         self.db.execute("BEGIN IMMEDIATE")
@@ -421,7 +441,7 @@ class Ledger:
             value = json.loads(row[2])
         except (ValueError, TypeError):
             raise ValueError("Invalid ref transition") from None
-        if (not valid_ref_transition(value, delivery_id) or value['keyId'] != row[0]
+        if (not (valid_ref_transition(value, delivery_id) or valid_final_ref_transition(value, delivery_id)) or value['keyId'] != row[0]
                 or not hmac.compare_digest(value['oldMac'], row[1])):
             raise ValueError("Invalid ref transition")
         return value
@@ -453,6 +473,38 @@ class Ledger:
                                       (transition['nextMac'], delivery_id))
             if updated.rowcount != 1:
                 raise ValueError("Ref observation not applicable")
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+
+    def _record_verified_final_ref(self, delivery_id, transition):
+        """Mechanically commit a caller-verified final observation and receipt.
+
+        This method verifies neither signatures nor GitHub evidence; a trusted
+        supervisor must independently prove the exact plan and final state.
+        """
+        if type(transition) is dict:
+            transition = transition.copy()
+        if not ingress.canonical_delivery(delivery_id) or not valid_final_ref_transition(transition, delivery_id):
+            raise ValueError("Invalid final ref transition")
+        self._check()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            self._check()
+            row = self.db.execute("""SELECT status_key_id,status_mac,ref_transition FROM pending_deliveries
+                                     WHERE delivery_id=? AND state='recovering' AND ref_intent=1 AND status_intent=1""",
+                                  (delivery_id,)).fetchone()
+            encoded = json.dumps(transition, sort_keys=True, separators=(',', ':'))
+            if (row is None or row[0] != transition['keyId'] or not hmac.compare_digest(row[1], transition['oldMac'])
+                    or not isinstance(row[2], str) or not row[2].isascii() or not hmac.compare_digest(row[2], encoded)):
+                raise ValueError("Final ref transition mismatch")
+            updated = self.db.execute("""UPDATE pending_deliveries SET state='completed',ref_intent=0,status_intent=0,
+                                         status_key_id=NULL,status_mac=NULL,ref_transition=NULL
+                                         WHERE delivery_id=? AND state='recovering' AND ref_intent=1 AND status_intent=1""",
+                                      (delivery_id,))
+            if updated.rowcount != 1:
+                raise ValueError("Final ref observation not applicable")
             self.db.commit()
         except BaseException:
             self.db.rollback()

@@ -95,5 +95,36 @@ export function createWorkerStatusSigner(input={}){
         &&timingSafeEqual(Buffer.from(actual.mac,'hex'),Buffer.from(expected.mac,'hex'));
     }catch{return false;}
   };
-  return Object.freeze({keyId,sign,verify,transition,verifyTransition});
+  // The trusted caller must separately validate canonical v3 encoding and the
+  // full pending-to-committed transition. This binds bytes; it does not prove
+  // that they are a valid or authorized checkpoint record.
+  const completion=input=>{
+    try{
+      input=structuredClone(input);
+      if(!exact(input,['metadata','oldOid','newOid','treeOid','recordContent'])
+          ||![input.oldOid,input.newOid,input.treeOid].every(oid)||input.oldOid===input.newOid
+          ||typeof input.recordContent!=='string'||!input.recordContent.length
+          ||Buffer.byteLength(input.recordContent,'utf8')>16384)return {kind:'blocked'};
+      const old=sign(input.metadata);
+      if(old.kind!=='worker-status-commitment'||input.metadata.binding.checkpointOid!==input.oldOid)return {kind:'blocked'};
+      const recordMac=createHmac('sha256',secret).update('agent-github-flow/worker-final-record/v1\0','utf8')
+        .update(input.recordContent,'utf8').digest('hex');
+      const payload=JSON.stringify(['agent-github-flow/worker-final-ref-transition/v1','commit',keyId,
+        input.metadata.deliveryId,old.mac,recordMac,input.oldOid,input.newOid,input.treeOid]);
+      return {kind:'worker-final-ref-transition',operation:'commit',deliveryId:input.metadata.deliveryId,keyId,
+        oldMac:old.mac,recordMac,oldOid:input.oldOid,newOid:input.newOid,treeOid:input.treeOid,
+        mac:createHmac('sha256',secret).update(payload,'utf8').digest('hex')};
+    }catch{return {kind:'blocked'};}
+  };
+  const verifyCompletion=(input,expected)=>{
+    try{
+      expected=structuredClone(expected);
+      const keys=['kind','operation','deliveryId','keyId','oldMac','recordMac','oldOid','newOid','treeOid','mac'];
+      if(!exact(expected,keys)||!mac(expected.mac))return false;
+      const actual=completion(input);
+      return actual.kind==='worker-final-ref-transition'&&keys.every(k=>k==='mac'||actual[k]===expected[k])
+        &&timingSafeEqual(Buffer.from(actual.mac,'hex'),Buffer.from(expected.mac,'hex'));
+    }catch{return false;}
+  };
+  return Object.freeze({keyId,sign,verify,transition,verifyTransition,completion,verifyCompletion});
 }

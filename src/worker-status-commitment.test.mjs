@@ -82,3 +82,25 @@ test('binds only the planned reservation transition while preserving original st
   assert.equal(reads,1);assert.equal(snapshotted.kind,'worker-ref-transition');
   assert.equal(snapshotted.nextMac,signer.sign(snapshotNext).mac);
 });
+test('binds a final checkpoint plan without disclosing its record',()=>{
+  const f=fixture(),signer=createWorkerStatusSigner({key:f.key,keyId:f.keyId});
+  const input={metadata:f.metadata,oldOid:'c'.repeat(40),newOid:'d'.repeat(40),treeOid:'e'.repeat(40),
+    recordContent:'{"synthetic":"committed-record"}'};
+  const result=signer.completion(input);
+  assert.equal(result.kind,'worker-final-ref-transition');assert.equal(result.operation,'commit');
+  assert.equal(result.oldMac,signer.sign(f.metadata).mac);assert.match(result.recordMac,/^[a-f0-9]{64}$/);
+  assert.equal(JSON.stringify(result).includes('committed-record'),false);
+  assert.equal(signer.verifyCompletion(input,result),true);
+  for(const change of [x=>x.oldOid='f'.repeat(40),x=>x.newOid='f'.repeat(40),x=>x.treeOid='f'.repeat(40),
+    x=>x.recordContent+=' ',x=>x.metadata.binding.commentId='43']){
+    const altered=structuredClone(input);change(altered);assert.equal(signer.verifyCompletion(altered,result),false);
+  }
+  assert.equal(signer.verifyCompletion(input,{...result,recordMac:'f'.repeat(64)}),false);
+  assert.equal(signer.verifyCompletion(input,{...result,extra:true}),false);
+  assert.equal(createWorkerStatusSigner({key:Buffer.alloc(32,8),keyId:1}).verifyCompletion(input,result),false);
+  assert.equal(createWorkerStatusSigner({key:f.key,keyId:2}).verifyCompletion(input,result),false);
+  assert.equal(signer.completion({...input,recordContent:'x'.repeat(16385)}).kind,'blocked');
+  assert.equal(signer.completion({...input,newOid:input.oldOid}).kind,'blocked');
+  let reads=0;const unstable={...input,get newOid(){reads++;return reads===1?'d'.repeat(40):'f'.repeat(40);}};
+  assert.equal(signer.verifyCompletion(input,signer.completion(unstable)),true);assert.equal(reads,1);
+});
