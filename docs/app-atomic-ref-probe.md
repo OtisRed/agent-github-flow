@@ -30,3 +30,21 @@ nią atomowy; zewnętrzne integracje oraz zmiana `main` w tej szczelinie nie są
 wykluczone. Udany wynik nie dowodzi docelowych rulesetów, odporności na
 administratora ani poprawności zapisu kontrolera. Przed zamknięciem issue
 pozostają wspólny smoke i decyzja właściciela; formalnego Approve nie używamy.
+
+## Powtórna próba stale CAS — 3.11.2026
+
+[Sonda na rzeczywistym SECosystem](https://github.com/OtisRed/agent-github-flow/actions/runs/41712977150)
+wykonała pozytywne utworzenie i przesunięcie dwóch tymczasowych refów. Po
+odrzuceniu żądania z jednym nieaktualnym `beforeOid` oba refy pozostały na
+uprzednio odczytanym stanie, a następnie warunkowe usunięcie z prawidłowymi
+OID powiodło się. Niezależny odczyt potwierdził brak obu refów; tymczasowe
+reguły, metadane i gałąź sondy usunięto po próbie. Nie pobierano logów ani
+wartości sekretów.
+
+Wynik jest zgodny z zachowaniem oczekiwanym od CAS, lecz bezpieczne flagi
+diagnostyczne nie pozwoliły ustalić przyczyny odrzucenia. Przebieg Actions
+celowo pozostał czerwony, a negatywny warunek jako przyczyna nie jest
+potwierdzony. [Dokumentacja GitHuba](https://docs.github.com/en/graphql/reference/git#updaterefs)
+opisuje warunek i atomowość `updateRefs`;
+ta sonda nie zastępuje dowodu działania docelowych reguł ochrony, zapisu do
+Projectu ani pełnego cyklu kontrolera.
