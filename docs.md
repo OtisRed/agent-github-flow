@@ -19,3 +19,5 @@
 - [Odczytowe połączenie kolejki z kontrolerem](docs/ingress-controller-observation.md) — syntetyczna integracja i jej granice.
 - [Roboczy import sygnałów dla workera](docs/worker-import-draft.md) — zakres częściowej implementacji #81 i otwarte warunki.
 - [Prywatny magazyn MVP](docs/mvp-store.md) — uproszczony kierunek SQLite, zakres przygotowanego kodu i pozostałe warunki wdrożenia.
+- [Decyzja kontrolera MVP](docs/mvp-decision.md) — reguły jednego issue i granice odłączonego modelu.
+- [Usługa MVP](docs/mvp-service.md) — konfiguracja, granice poświadczeń i warunki wdrożenia.
