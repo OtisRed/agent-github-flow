@@ -113,6 +113,16 @@ class StoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.register_boundary(20, "2026-11-02T00:00:00Z")
 
+    def test_consistent_backup_survives_further_live_writes(self):
+        self.store.register_boundary(1, "2026-11-01T00:00:00Z")
+        self.store.enqueue(1, 2)
+        self.store.backup()
+        backup = Store(self.path.with_name(self.path.name + ".backup"))
+        self.store.enqueue(1, 2)
+        self.assertEqual(backup.next_pending()["generation"], 1)
+        self.assertEqual(self.store.next_pending()["generation"], 2)
+        backup.register_boundary(1, "2026-11-01T00:00:00Z")
+
     def test_failed_checkpoint_does_not_acknowledge_work(self):
         self.store.enqueue(1, 2)
         with self.assertRaises(ValueError):

@@ -120,6 +120,7 @@ def run(config):
         today = datetime.now(zone)
         last_night = today.date() if today.hour >= 2 else today.date() - timedelta(days=1)
         pending_scans = set(clients)  # startup reconciliation
+        backup_pending = True
         next_scan = time.monotonic()
         while not stop.is_set():
             if not thread.is_alive():
@@ -127,9 +128,16 @@ def run(config):
             now = datetime.now(zone)
             if now.hour >= 2 and now.date() != last_night:
                 pending_scans.update(clients)
+                backup_pending = True
                 next_scan = time.monotonic()
                 last_night = now.date()
-            if pending_scans and time.monotonic() >= next_scan:
+            if (pending_scans or backup_pending) and time.monotonic() >= next_scan:
+                if backup_pending:
+                    try:
+                        store.backup()
+                        backup_pending = False
+                    except Exception:
+                        print("FLOW attention: backup-failed", file=sys.stderr, flush=True)
                 for repository_id in list(pending_scans):
                     client, enrolled_at, _authors = clients[repository_id]
                     try:

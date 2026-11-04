@@ -7,6 +7,7 @@ event arriving during work cannot silently acknowledge the newer event.
 import os
 import re
 import sqlite3
+import tempfile
 import time
 import hashlib
 import hmac
@@ -146,6 +147,31 @@ class Store:
             stored = db.execute("SELECT enrolled_at FROM project_boundaries WHERE repository_id=?", (repository_id,)).fetchone()
             if stored is None or stored[0] != enrolled_at:
                 raise ValueError("Onboarding boundary changed")
+
+    def backup(self):
+        """Atomically replace one private local snapshot using SQLite backup."""
+        target = self.path.with_name(self.path.name + ".backup")
+        fd, temporary = tempfile.mkstemp(prefix=".flow-backup-", dir=self.path.parent)
+        os.close(fd)
+        try:
+            with closing(self._connect()) as source, closing(sqlite3.connect(temporary)) as destination:
+                source.backup(destination)
+                if (destination.execute("PRAGMA quick_check").fetchone()[0] != "ok"
+                        or destination.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID
+                        or destination.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION):
+                    raise ValueError("Invalid backup")
+            with open(temporary, "rb+") as output:
+                os.fsync(output.fileno())
+            os.replace(temporary, target)
+            if os.name == "posix":
+                parent = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+                try:
+                    os.fsync(parent)
+                finally:
+                    os.close(parent)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
     def next_pending(self):
         """Return a generation to inspect; only one worker may call this."""
