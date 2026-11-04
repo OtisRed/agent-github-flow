@@ -23,6 +23,8 @@ jobs:
           node-version: '22'
       - name: Verify Node tests
         run: node --test src/*.test.mjs
+      - name: Verify webhook spike tests
+        run: python3 -m unittest discover -s spikes/mikrus-webhook -p 'test_*.py' -v
       - name: Download and verify actionlint
         shell: bash
         run: |

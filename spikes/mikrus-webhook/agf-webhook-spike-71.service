@@ -1,0 +1,31 @@
+[Unit]
+Description=Agent GitHub Flow bounded webhook spike
+After=network.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=agf-webhook-spike-71
+StateDirectoryMode=0700
+EnvironmentFile=/etc/agent-github-flow-spike-71/identity.env
+LoadCredential=webhook-secret:/etc/agent-github-flow-spike-71/webhook-secret
+ExecStart=/usr/bin/python3 /opt/agent-github-flow-spike-71/receiver.py --database /var/lib/agf-webhook-spike-71/queue.sqlite --secret-file %d/webhook-secret --repository-id ${AGF_REPOSITORY_ID} --installation-id ${AGF_INSTALLATION_ID} --port 19071
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+LockPersonality=yes
+MemoryMax=96M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target
