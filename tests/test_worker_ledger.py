@@ -142,9 +142,9 @@ class WorkerLedgerTests(unittest.TestCase):
                                  capture_output=True, text=True)
         self.assertEqual(process.returncode, 0, process.stderr)
         with worker_ledger.Ledger(self.path, self.lock_path) as work:
-            self.assertEqual(work.states_preview(), [(self.first, "uncertain")])
+            self.assertEqual(work.states_preview(), [(self.first, "uncertain", 0, 0)])
             work.import_ids([self.first, self.second])
-            self.assertEqual(work.states_preview(), [(self.first, "uncertain"), (self.second, "pending")])
+            self.assertEqual(work.states_preview(), [(self.first, "uncertain", 0, 0), (self.second, "pending", 0, 0)])
             self.assertEqual(work.claim_next(), {"kind": "blocked"})
 
     def test_blocking_preview_finds_uncertain_after_many_earlier_pending(self):
@@ -155,7 +155,7 @@ class WorkerLedgerTests(unittest.TestCase):
             work.import_ids(earlier)
         with worker_ledger.Ledger(self.path, self.lock_path) as work:
             self.assertEqual(len(work.states_preview()), 100)
-            self.assertEqual(work.blocking_preview(), [(self.second, "uncertain")])
+            self.assertEqual(work.blocking_preview(), [(self.second, "uncertain", 0, 0)])
             self.assertEqual(work.claim_next(), {"kind": "blocked"})
 
     def test_interrupted_ref_and_status_intents_remain_distinct_and_blocked(self):
@@ -170,9 +170,10 @@ class WorkerLedgerTests(unittest.TestCase):
                                          capture_output=True, text=True)
                 self.assertEqual(process.returncode, 73, process.stderr)
                 with worker_ledger.Ledger(path, self.lock_path) as work:
-                    self.assertEqual(work.blocking_preview(), [(self.first, "uncertain_" + operation)])
+                    flags = (1, 0) if operation == "ref" else (0, 1)
+                    self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", *flags)])
                     work.import_ids([self.first])
-                    self.assertEqual(work.blocking_preview(), [(self.first, "uncertain_" + operation)])
+                    self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", *flags)])
                     self.assertEqual(work.claim_next(), {"kind": "blocked"})
                     with self.assertRaises(ValueError):
                         work.record_intent(self.first, operation)
@@ -186,7 +187,25 @@ class WorkerLedgerTests(unittest.TestCase):
             self.assertEqual(work.claim_next(), {"kind": "claimed", "deliveryId": self.first})
             work.record_intent(self.first, "ref")
             work.import_ids([self.first])
-            self.assertEqual(work.blocking_preview(), [(self.first, "ref_intent")])
+            self.assertEqual(work.blocking_preview(), [(self.first, "running", 1, 0)])
+
+    def test_two_uncertain_intents_are_preserved_together_after_process_death(self):
+        src = str(Path(__file__).resolve().parents[1] / "src")
+        script = ("import os,sys; sys.path.insert(0,sys.argv[1]); import worker_ledger; "
+                  "w=worker_ledger.Ledger(sys.argv[2],sys.argv[3],allow_create=True); w.__enter__(); "
+                  "w.import_ids([sys.argv[4]]); w.claim_next(); w.record_intent(sys.argv[4],sys.argv[5]); "
+                  "w.record_intent(sys.argv[4],sys.argv[6]); os._exit(73)")
+        for first, second in (("ref", "status"), ("status", "ref")):
+            with self.subTest(first=first):
+                path = Path(self.directory.name) / (first + "-both.sqlite")
+                process = subprocess.run([sys.executable, "-c", script, src, str(path), str(self.lock_path),
+                                          self.first, first, second], capture_output=True, text=True)
+                self.assertEqual(process.returncode, 73, process.stderr)
+                with worker_ledger.Ledger(path, self.lock_path) as work:
+                    self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", 1, 1)])
+                    work.import_ids([self.first])
+                    self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", 1, 1)])
+                    self.assertEqual(work.claim_next(), {"kind": "blocked"})
 
     def test_killed_lock_owner_releases_lock_without_requeuing_claim(self):
         src = str(Path(__file__).resolve().parents[1] / "src")
@@ -207,7 +226,7 @@ class WorkerLedgerTests(unittest.TestCase):
                 process.kill()
             process.communicate(timeout=5)
         with worker_ledger.Ledger(self.path, self.lock_path) as work:
-            self.assertEqual(work.blocking_preview(), [(self.first, "uncertain")])
+            self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", 0, 0)])
             self.assertEqual(work.claim_next(), {"kind": "blocked"})
 
     def test_scan_import_restarts_after_uncommitted_read_and_finds_earlier_id(self):

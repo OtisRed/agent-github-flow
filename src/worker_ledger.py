@@ -15,11 +15,13 @@ from pathlib import Path
 import webhook_ingress as ingress
 
 APP_ID = 0x41474632
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 TABLE_SQL = """CREATE TABLE pending_deliveries (
             delivery_id TEXT PRIMARY KEY,
-            state TEXT NOT NULL CHECK (state IN ('pending','running','ref_intent','status_intent',
-                                                 'uncertain','uncertain_ref','uncertain_status'))
+            state TEXT NOT NULL CHECK (state IN ('pending','running','uncertain')),
+            ref_intent INTEGER NOT NULL CHECK (ref_intent IN (0,1)),
+            status_intent INTEGER NOT NULL CHECK (status_intent IN (0,1)),
+            CHECK (state != 'pending' OR (ref_intent = 0 AND status_intent = 0))
         )"""
 
 
@@ -73,11 +75,7 @@ class Ledger:
             # external action before it died; never silently requeue a claim.
             self.db.execute("BEGIN IMMEDIATE")
             self._check()
-            self.db.execute("""UPDATE pending_deliveries SET state=CASE state
-                               WHEN 'running' THEN 'uncertain'
-                               WHEN 'ref_intent' THEN 'uncertain_ref'
-                               WHEN 'status_intent' THEN 'uncertain_status' END
-                               WHERE state IN ('running','ref_intent','status_intent')""")
+            self.db.execute("UPDATE pending_deliveries SET state='uncertain' WHERE state='running'")
             self.db.commit()
             return self
         except BaseException:
@@ -144,7 +142,7 @@ class Ledger:
         self.db.execute("BEGIN IMMEDIATE")
         try:
             self._check()
-            self.db.executemany("INSERT OR IGNORE INTO pending_deliveries VALUES (?, 'pending')", ((x,) for x in delivery_ids))
+            self.db.executemany("INSERT OR IGNORE INTO pending_deliveries VALUES (?, 'pending', 0, 0)", ((x,) for x in delivery_ids))
             self.db.commit()
         except BaseException:
             self.db.rollback()
@@ -188,14 +186,14 @@ class Ledger:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("Invalid preview limit")
         self._check()
-        return self.db.execute("SELECT delivery_id,state FROM pending_deliveries ORDER BY delivery_id LIMIT ?", (limit,)).fetchall()
+        return self.db.execute("SELECT delivery_id,state,ref_intent,status_intent FROM pending_deliveries ORDER BY delivery_id LIMIT ?", (limit,)).fetchall()
 
     def blocking_preview(self, limit=100):
         """Expose bounded blocking records even behind many pending IDs."""
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("Invalid preview limit")
         self._check()
-        return self.db.execute("""SELECT delivery_id,state FROM pending_deliveries
+        return self.db.execute("""SELECT delivery_id,state,ref_intent,status_intent FROM pending_deliveries
                                   WHERE state != 'pending'
                                   ORDER BY delivery_id LIMIT ?""", (limit,)).fetchall()
 
@@ -207,9 +205,9 @@ class Ledger:
         self.db.execute("BEGIN IMMEDIATE")
         try:
             self._check()
-            state = operation + '_intent'
-            updated = self.db.execute("""UPDATE pending_deliveries SET state=?
-                                         WHERE delivery_id=? AND state='running'""", (state, delivery_id))
+            column = 'ref_intent' if operation == 'ref' else 'status_intent'
+            updated = self.db.execute(f"""UPDATE pending_deliveries SET {column}=1
+                                          WHERE delivery_id=? AND state='running' AND {column}=0""", (delivery_id,))
             if updated.rowcount != 1:
                 raise ValueError("No running claim")
             self.db.commit()
