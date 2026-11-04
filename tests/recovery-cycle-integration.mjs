@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 import {join} from 'node:path';
 import {observeStatusRecovery} from '../src/worker-recovery-observe.mjs';
+import {createWorkerStatusSigner} from '../src/worker-status-commitment.mjs';
 
 const root=process.env.AGF_CONTROLLER_ROOT;
 if(!root) throw Error('AGF_CONTROLLER_ROOT required');
@@ -13,8 +14,10 @@ const {planInitialV3Handoff}=await load('flow-v3-initial-handoff.mjs');
 const {createCheckpointKeyring}=await load('flow-checkpoint-keyring.mjs');
 const {FLOW_STATUSES}=await load('flow.mjs');
 const {resolveV3ProjectPolicy}=await load('flow-project-policy-resolver.mjs');
+const {v3HandoffBinding}=await load('flow-v3-handoff-binding.mjs');
 const chunks=[];for await(const chunk of process.stdin)chunks.push(chunk);
-const {state,delivery}=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+const request=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+const {state,delivery}=request;
 
 function fixture(){
   const body='[FLOW]\nRola: Designer\nStan docelowy: agent-ready\nWykonano: Praca\nNastępny krok: Kod';
@@ -55,10 +58,27 @@ function fixture(){
     issue:{id:vars.number===1?'issue':'other-issue',number:vars.number}}}});
   const routes=[{installationId:'101',repositoryId:'201',registration:projectRegistration,
     registrationCommitment:input.registrationCommitment}];
-  return {input,project,graphql,routes,keyring,setChanged:()=>{change=true;},counts:()=>({waited,reads,writes})};
+  return {input,project,checkpoint,graphql,routes,keyring,setChanged:()=>{change=true;},counts:()=>({waited,reads,writes})};
 }
 
+function statusCommitment(v){
+  const binding=v3HandoffBinding(v.input.policy,v.checkpoint.selectedRecord,v.checkpoint.headOid);
+  assert.ok(binding);
+  const signer=createWorkerStatusSigner({key:Buffer.alloc(32,1),keyId:1});
+  const metadata={deliveryId:delivery.deliveryId,binding,itemId:'item',fromOptionId:'design',targetOptionId:'ready'};
+  return {signer,metadata,commitment:signer.sign(metadata)};
+}
 let f=fixture();
+if(request.mode==='commitment'){
+  const {signer,metadata}=statusCommitment(f);
+  if(request.targetOptionId)metadata.targetOptionId=request.targetOptionId;
+  const commitment=signer.sign(metadata);
+  assert.equal(commitment.kind,'worker-status-commitment');
+  await new Promise(resolve=>process.stdout.write(JSON.stringify(commitment)+'\n',resolve));
+  process.exit(0);
+}
+const prepared=statusCommitment(f);
+assert.equal(prepared.signer.verify(prepared.metadata,request.commitment),true);
 const observe=(v,overrides={})=>observeStatusRecovery({state,delivery,routes:v.routes,graphql:v.graphql,keyring:v.keyring,
   resolvePolicy:resolveV3ProjectPolicy,runCycle:runFirstV3Cycle,cycleInput:v.input,...overrides});
 assert.deepEqual(await observe(f),{kind:'retry-path-observation'});
@@ -72,4 +92,6 @@ assert.equal(f.counts().waited,120000);assert.equal(f.counts().writes,0);
 f=fixture();
 assert.deepEqual(await observe(f,{delivery:{...delivery,issueNumber:'2'}}),{kind:'blocked'});
 assert.equal(f.counts().waited,0);assert.equal(f.counts().writes,0);
+const changed=structuredClone(prepared.metadata);changed.binding.reservation.reservedAt='2026-01-01T10:04:00Z';
+assert.equal(prepared.signer.verify(changed,request.commitment),false);
 process.stdout.write('synthetic real-v3 recovery observation passed\n');

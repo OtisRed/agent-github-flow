@@ -6,7 +6,9 @@ This model can claim one ID and conservatively flag interrupted claims, but
 does not execute a controller, authorize retries or complete work.
 """
 import fcntl
+import hmac
 import os
+import re
 import sqlite3
 import stat
 import tempfile
@@ -15,13 +17,18 @@ from pathlib import Path
 import webhook_ingress as ingress
 
 APP_ID = 0x41474632
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 TABLE_SQL = """CREATE TABLE pending_deliveries (
             delivery_id TEXT PRIMARY KEY,
             state TEXT NOT NULL CHECK (state IN ('pending','running','recovering','uncertain')),
             ref_intent INTEGER NOT NULL CHECK (ref_intent IN (0,1)),
             status_intent INTEGER NOT NULL CHECK (status_intent IN (0,1)),
-            CHECK (state != 'pending' OR (ref_intent = 0 AND status_intent = 0))
+            status_key_id INTEGER,
+            status_mac TEXT,
+            CHECK (state != 'pending' OR (ref_intent = 0 AND status_intent = 0)),
+            CHECK ((status_intent = 0 AND status_key_id IS NULL AND status_mac IS NULL) OR
+                   (status_intent = 1 AND typeof(status_key_id) = 'integer' AND status_key_id BETWEEN 1 AND 9007199254740991 AND
+                    typeof(status_mac) = 'text' AND length(status_mac) = 64 AND status_mac NOT GLOB '*[^0-9a-f]*'))
         )"""
 ONE_ACTIVE_SQL = """CREATE UNIQUE INDEX ledger_one_active ON pending_deliveries ((1))
                     WHERE state != 'pending'"""
@@ -29,6 +36,13 @@ ONE_ACTIVE_SQL = """CREATE UNIQUE INDEX ledger_one_active ON pending_deliveries 
 
 class Busy(Exception):
     pass
+
+
+def valid_status_commitment(value):
+    return (type(value) is dict and set(value) == {'kind', 'keyId', 'mac'}
+            and value['kind'] == 'worker-status-commitment'
+            and type(value['keyId']) is int and 0 < value['keyId'] <= 2**53 - 1
+            and isinstance(value['mac'], str) and re.fullmatch(r'[0-9a-f]{64}', value['mac']) is not None)
 
 
 class Ledger:
@@ -146,7 +160,7 @@ class Ledger:
         self.db.execute("BEGIN IMMEDIATE")
         try:
             self._check()
-            self.db.executemany("INSERT OR IGNORE INTO pending_deliveries VALUES (?, 'pending', 0, 0)", ((x,) for x in delivery_ids))
+            self.db.executemany("INSERT OR IGNORE INTO pending_deliveries VALUES (?, 'pending', 0, 0, NULL, NULL)", ((x,) for x in delivery_ids))
             self.db.commit()
         except BaseException:
             self.db.rollback()
@@ -201,17 +215,23 @@ class Ledger:
                                   WHERE state != 'pending'
                                   ORDER BY delivery_id LIMIT ?""", (limit,)).fetchall()
 
-    def record_intent(self, delivery_id, operation):
-        """Record the next mutation before it is attempted; this performs none."""
-        if not ingress.canonical_delivery(delivery_id) or operation not in ('ref', 'status'):
+    def record_intent(self, delivery_id, operation, commitment=None):
+        """Record intent and its trusted status binding; perform no mutation."""
+        if (not ingress.canonical_delivery(delivery_id) or operation not in ('ref', 'status')
+                or (operation == 'status' and not valid_status_commitment(commitment))
+                or (operation == 'ref' and commitment is not None)):
             raise ValueError("Invalid intent")
         self._check()
         self.db.execute("BEGIN IMMEDIATE")
         try:
             self._check()
-            column = 'ref_intent' if operation == 'ref' else 'status_intent'
-            updated = self.db.execute(f"""UPDATE pending_deliveries SET {column}=1
-                                          WHERE delivery_id=? AND state='running' AND {column}=0""", (delivery_id,))
+            if operation == 'ref':
+                updated = self.db.execute("""UPDATE pending_deliveries SET ref_intent=1
+                                              WHERE delivery_id=? AND state='running' AND ref_intent=0""", (delivery_id,))
+            else:
+                updated = self.db.execute("""UPDATE pending_deliveries SET status_intent=1,status_key_id=?,status_mac=?
+                                              WHERE delivery_id=? AND state='running' AND status_intent=0""",
+                                          (commitment['keyId'], commitment['mac'], delivery_id))
             if updated.rowcount != 1:
                 raise ValueError("No running claim")
             self.db.commit()
@@ -219,19 +239,33 @@ class Ledger:
             self.db.rollback()
             raise
 
-    def begin_status_recovery(self, delivery_id):
+    def status_key_id(self, delivery_id):
+        """Return the historical key ID, not the private stored commitment."""
+        if not ingress.canonical_delivery(delivery_id):
+            raise ValueError("Invalid recovery ID")
+        self._check()
+        row = self.db.execute("SELECT status_key_id FROM pending_deliveries WHERE delivery_id=? AND status_intent=1",
+                              (delivery_id,)).fetchone()
+        return None if row is None else row[0]
+
+    def begin_status_recovery(self, delivery_id, commitment):
         """Reserve inspection only; this grants no write or retry permission.
 
         An uncertain ref or missing status intent requires a different recovery
         path. A fresh full wait and GitHub/checkpoint reads remain mandatory in
         the future controller adapter; this storage method performs none.
         """
-        if not ingress.canonical_delivery(delivery_id):
+        if not ingress.canonical_delivery(delivery_id) or not valid_status_commitment(commitment):
             raise ValueError("Invalid recovery ID")
         self._check()
         self.db.execute("BEGIN IMMEDIATE")
         try:
             self._check()
+            row = self.db.execute("""SELECT status_key_id,status_mac FROM pending_deliveries
+                                     WHERE delivery_id=? AND state='uncertain' AND ref_intent=0 AND status_intent=1""",
+                                  (delivery_id,)).fetchone()
+            if row is None or row[0] != commitment['keyId'] or not hmac.compare_digest(row[1], commitment['mac']):
+                raise ValueError("Status binding mismatch")
             updated = self.db.execute("""UPDATE pending_deliveries SET state='recovering'
                                          WHERE delivery_id=? AND state='uncertain'
                                            AND ref_intent=0 AND status_intent=1""", (delivery_id,))
