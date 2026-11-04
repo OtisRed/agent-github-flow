@@ -15,10 +15,11 @@ from pathlib import Path
 import webhook_ingress as ingress
 
 APP_ID = 0x41474632
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 TABLE_SQL = """CREATE TABLE pending_deliveries (
             delivery_id TEXT PRIMARY KEY,
-            state TEXT NOT NULL CHECK (state IN ('pending','running','uncertain'))
+            state TEXT NOT NULL CHECK (state IN ('pending','running','ref_intent','status_intent',
+                                                 'uncertain','uncertain_ref','uncertain_status'))
         )"""
 
 
@@ -72,7 +73,11 @@ class Ledger:
             # external action before it died; never silently requeue a claim.
             self.db.execute("BEGIN IMMEDIATE")
             self._check()
-            self.db.execute("UPDATE pending_deliveries SET state='uncertain' WHERE state='running'")
+            self.db.execute("""UPDATE pending_deliveries SET state=CASE state
+                               WHEN 'running' THEN 'uncertain'
+                               WHEN 'ref_intent' THEN 'uncertain_ref'
+                               WHEN 'status_intent' THEN 'uncertain_status' END
+                               WHERE state IN ('running','ref_intent','status_intent')""")
             self.db.commit()
             return self
         except BaseException:
@@ -161,7 +166,7 @@ class Ledger:
         self.db.execute("BEGIN IMMEDIATE")
         try:
             self._check()
-            busy = self.db.execute("SELECT 1 FROM pending_deliveries WHERE state IN ('running','uncertain') LIMIT 1").fetchone()
+            busy = self.db.execute("SELECT 1 FROM pending_deliveries WHERE state != 'pending' LIMIT 1").fetchone()
             if busy:
                 self.db.commit()
                 return {"kind": "blocked"}
@@ -191,8 +196,26 @@ class Ledger:
             raise ValueError("Invalid preview limit")
         self._check()
         return self.db.execute("""SELECT delivery_id,state FROM pending_deliveries
-                                  WHERE state IN ('running','uncertain')
+                                  WHERE state != 'pending'
                                   ORDER BY delivery_id LIMIT ?""", (limit,)).fetchall()
+
+    def record_intent(self, delivery_id, operation):
+        """Record the next mutation before it is attempted; this performs none."""
+        if not ingress.canonical_delivery(delivery_id) or operation not in ('ref', 'status'):
+            raise ValueError("Invalid intent")
+        self._check()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            self._check()
+            state = operation + '_intent'
+            updated = self.db.execute("""UPDATE pending_deliveries SET state=?
+                                         WHERE delivery_id=? AND state='running'""", (state, delivery_id))
+            if updated.rowcount != 1:
+                raise ValueError("No running claim")
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
 
     def import_page(self, ingress_path, fingerprint_key, after=None, limit=100):
         """Import one current page; caller restarts the next pass at None."""

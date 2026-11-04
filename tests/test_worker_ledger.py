@@ -158,6 +158,36 @@ class WorkerLedgerTests(unittest.TestCase):
             self.assertEqual(work.blocking_preview(), [(self.second, "uncertain")])
             self.assertEqual(work.claim_next(), {"kind": "blocked"})
 
+    def test_interrupted_ref_and_status_intents_remain_distinct_and_blocked(self):
+        src = str(Path(__file__).resolve().parents[1] / "src")
+        script = ("import os,sys; sys.path.insert(0,sys.argv[1]); import worker_ledger; "
+                  "w=worker_ledger.Ledger(sys.argv[2],sys.argv[3],allow_create=True); w.__enter__(); "
+                  "w.import_ids([sys.argv[4]]); w.claim_next(); w.record_intent(sys.argv[4],sys.argv[5]); os._exit(73)")
+        for operation in ("ref", "status"):
+            with self.subTest(operation=operation):
+                path = Path(self.directory.name) / (operation + ".sqlite")
+                process = subprocess.run([sys.executable, "-c", script, src, str(path), str(self.lock_path), self.first, operation],
+                                         capture_output=True, text=True)
+                self.assertEqual(process.returncode, 73, process.stderr)
+                with worker_ledger.Ledger(path, self.lock_path) as work:
+                    self.assertEqual(work.blocking_preview(), [(self.first, "uncertain_" + operation)])
+                    work.import_ids([self.first])
+                    self.assertEqual(work.blocking_preview(), [(self.first, "uncertain_" + operation)])
+                    self.assertEqual(work.claim_next(), {"kind": "blocked"})
+                    with self.assertRaises(ValueError):
+                        work.record_intent(self.first, operation)
+
+    def test_intent_requires_valid_operation_and_running_claim(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.import_ids([self.first])
+            for delivery, operation in ((self.first, "status"), (self.second, "ref"), (self.first, "other")):
+                with self.assertRaises(ValueError):
+                    work.record_intent(delivery, operation)
+            self.assertEqual(work.claim_next(), {"kind": "claimed", "deliveryId": self.first})
+            work.record_intent(self.first, "ref")
+            work.import_ids([self.first])
+            self.assertEqual(work.blocking_preview(), [(self.first, "ref_intent")])
+
     def test_killed_lock_owner_releases_lock_without_requeuing_claim(self):
         src = str(Path(__file__).resolve().parents[1] / "src")
         script = ("import sys,time; sys.path.insert(0,sys.argv[1]); import worker_ledger; "
