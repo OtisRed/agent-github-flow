@@ -1,6 +1,6 @@
 # Warianty uruchomienia centralnego kontrolera FLOW
 
-Status: **propozycja do decyzji**, nie wdrożona architektura. Issue: #75; realizacja kontrolera pozostaje w #5, nocnego uzgadniania w #6, a dostępu i rotacji w #48. Ten dokument nie zmienia istniejących uzgodnień o rolach, wspólnym smoke ani decyzji właściciela o zamknięciu issue.
+Status: **decyzja właściciela z 4.11.2026 — wariant B, centralny wykonawca na Mikrusie**. Architektura nie jest jeszcze wdrożona; szczegóły magazynu checkpointów i planu wdrożenia pozostają otwarte. Issue: #75; realizacja kontrolera pozostaje w #5, nocnego uzgadniania w #6, a dostępu i rotacji w #48. Ten dokument nie zmienia istniejących uzgodnień o rolach, wspólnym smoke ani decyzji właściciela o zamknięciu issue.
 
 ## Co wiemy z prób
 
@@ -25,9 +25,9 @@ GitHub Actions domyślnie utrzymuje jeden oczekujący przebieg w grupie. `queue:
 
 Widoczność repozytorium kodu i miejsce stanu to niezależne decyzje. Publiczne repo z kodem oraz prywatny stan na VPS są możliwe. Jeśli używamy reusable workflows z repozytoriów publicznych, zgodnie z [tabelą GitHub](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations) repozytorium wywoływanego workflow musi być publiczne. Nie wnioskujemy stąd, że całe rozwiązanie musi korzystać z reusable workflows ani że obecny prywatny magazyn można już usunąć.
 
-## Rekomendowany kierunek do oceny
+## Wybrany kierunek
 
-**Wariant B, z Actions dla CI oraz niezależnego monitorowania, a nie jako drugi wykonawca statusów.** Dla priorytetu jednego sposobu pracy i minimalizacji konfiguracji projektów bezpośredni webhook App upraszcza wejście. Wariant ten zwiększa jednak zależność od VPS i obowiązki operacyjne; trzeba porównać je z prostszym utrzymaniem Actions. To rekomendacja, nie zatwierdzenie ani instrukcja przełączenia.
+**Właściciel wybrał wariant B: centralny wykonawca na Mikrusie.** Actions mogą nadal obsługiwać CI i niezależny monitoring, ale nie stanowią drugiego wykonawcy statusów. Bezpośredni webhook App ma upraszczać wejście dla projektów. Wybór zwiększa zależność od VPS i obowiązki operacyjne; nie oznacza zatwierdzenia bazy checkpointów, migracji poświadczeń ani uruchomienia produkcyjnych zapisów.
 
 ```mermaid
 flowchart LR
@@ -41,7 +41,7 @@ flowchart LR
     MON[Monitoring i alarmy] -.-> Q
 ```
 
-Schemat przedstawia **proponowany** system. Obecny kod i działający punkt testowy realizują tylko ograniczoną część wejścia.
+Schemat przedstawia **docelowy kierunek do zaprojektowania i wdrożenia**. Obecny kod i działający punkt testowy realizują tylko ograniczoną część wejścia.
 
 ## Zasady bezpiecznej realizacji wariantu B
 
