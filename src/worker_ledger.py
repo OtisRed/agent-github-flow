@@ -20,9 +20,14 @@ from datetime import datetime
 import webhook_ingress as ingress
 
 APP_ID = 0x41474632
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
+SEQUENCE_SQL = """CREATE TABLE ledger_sequence (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            last_seq INTEGER NOT NULL CHECK (typeof(last_seq) = 'integer' AND last_seq >= 0)
+        )"""
 TABLE_SQL = """CREATE TABLE pending_deliveries (
             delivery_id TEXT PRIMARY KEY,
+            enqueue_seq INTEGER NOT NULL UNIQUE CHECK (typeof(enqueue_seq) = 'integer' AND enqueue_seq > 0),
             state TEXT NOT NULL CHECK (state IN ('pending','running','recovering','uncertain','completed')),
             ref_intent INTEGER NOT NULL CHECK (ref_intent IN (0,1)),
             status_intent INTEGER NOT NULL CHECK (status_intent IN (0,1)),
@@ -38,6 +43,8 @@ TABLE_SQL = """CREATE TABLE pending_deliveries (
         )"""
 ONE_ACTIVE_SQL = """CREATE UNIQUE INDEX ledger_one_active ON pending_deliveries ((1))
                     WHERE state IN ('running','recovering','uncertain')"""
+PENDING_ORDER_SQL = """CREATE INDEX ledger_pending_order ON pending_deliveries (enqueue_seq)
+                    WHERE state = 'pending'"""
 
 
 class Busy(Exception):
@@ -141,8 +148,11 @@ class Ledger:
                 db.execute("BEGIN IMMEDIATE")
                 db.execute(f"PRAGMA application_id={APP_ID}")
                 db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+                db.execute(SEQUENCE_SQL)
+                db.execute("INSERT INTO ledger_sequence VALUES (1, 0)")
                 db.execute(TABLE_SQL)
                 db.execute(ONE_ACTIVE_SQL)
+                db.execute(PENDING_ORDER_SQL)
                 db.commit()
             finally:
                 db.close()
@@ -174,9 +184,18 @@ class Ledger:
             raise ValueError("Unknown ledger")
         objects = self.db.execute("SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY name").fetchall()
         if objects != [("index", "ledger_one_active", "pending_deliveries", ONE_ACTIVE_SQL),
+                       ("index", "ledger_pending_order", "pending_deliveries", PENDING_ORDER_SQL),
+                       ("table", "ledger_sequence", "ledger_sequence", SEQUENCE_SQL),
                        ("table", "pending_deliveries", "pending_deliveries", TABLE_SQL),
-                       ("index", "sqlite_autoindex_pending_deliveries_1", "pending_deliveries", None)]:
+                       ("index", "sqlite_autoindex_pending_deliveries_1", "pending_deliveries", None),
+                       ("index", "sqlite_autoindex_pending_deliveries_2", "pending_deliveries", None)]:
             raise ValueError("Unknown ledger schema")
+        counters = self.db.execute("SELECT singleton,last_seq FROM ledger_sequence").fetchall()
+        if len(counters) != 1 or counters[0][0] != 1 or type(counters[0][1]) is not int or counters[0][1] < 0:
+            raise ValueError("Invalid ledger sequence")
+        highest = self.db.execute("SELECT MAX(enqueue_seq) FROM pending_deliveries").fetchone()[0]
+        if highest is not None and highest > counters[0][1]:
+            raise ValueError("Ledger sequence behind assigned values")
 
     def import_ids(self, delivery_ids):
         """Idempotently import a bounded observed page; not a claim or ack."""
@@ -187,7 +206,17 @@ class Ledger:
         self.db.execute("BEGIN IMMEDIATE")
         try:
             self._check()
-            self.db.executemany("INSERT OR IGNORE INTO pending_deliveries VALUES (?, 'pending', 0, 0, NULL, NULL, NULL)", ((x,) for x in delivery_ids))
+            for delivery_id in delivery_ids:
+                if self.db.execute("SELECT 1 FROM pending_deliveries WHERE delivery_id=?", (delivery_id,)).fetchone():
+                    continue
+                last_seq = self.db.execute("SELECT last_seq FROM ledger_sequence WHERE singleton=1").fetchone()[0]
+                if last_seq >= 2**63 - 1:
+                    raise ValueError("Ledger sequence exhausted")
+                next_seq = last_seq + 1
+                self.db.execute("UPDATE ledger_sequence SET last_seq=? WHERE singleton=1", (next_seq,))
+                self.db.execute("""INSERT INTO pending_deliveries
+                  (delivery_id,enqueue_seq,state,ref_intent,status_intent,status_key_id,status_mac,ref_transition)
+                  VALUES (?,?,'pending',0,0,NULL,NULL,NULL)""", (delivery_id,next_seq))
             self.db.commit()
         except BaseException:
             self.db.rollback()
@@ -198,7 +227,7 @@ class Ledger:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("Invalid preview limit")
         self._check()
-        values = [row[0] for row in self.db.execute("SELECT delivery_id FROM pending_deliveries WHERE state='pending' ORDER BY delivery_id LIMIT ?", (limit,))]
+        values = [row[0] for row in self.db.execute("SELECT delivery_id FROM pending_deliveries WHERE state='pending' ORDER BY enqueue_seq LIMIT ?", (limit,))]
         if not all(ingress.canonical_delivery(value) for value in values):
             raise ValueError("Invalid stored delivery ID")
         return values
@@ -213,7 +242,7 @@ class Ledger:
             if busy:
                 self.db.commit()
                 return {"kind": "blocked"}
-            row = self.db.execute("SELECT delivery_id FROM pending_deliveries WHERE state='pending' ORDER BY delivery_id LIMIT 1").fetchone()
+            row = self.db.execute("SELECT delivery_id FROM pending_deliveries WHERE state='pending' ORDER BY enqueue_seq LIMIT 1").fetchone()
             if row is None:
                 self.db.commit()
                 return {"kind": "empty"}

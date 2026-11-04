@@ -130,7 +130,7 @@ class ScanSchedulerTests(unittest.TestCase):
                 self.assertTrue(scheduler.step()['passComplete'])
                 self.assertEqual(ledger.pending_preview(), [delivery(2), delivery(3)])
                 self.assertFalse(scheduler.step()['passComplete'])
-                self.assertEqual(ledger.pending_preview(), [delivery(1), delivery(2), delivery(3)])
+                self.assertEqual(ledger.pending_preview(), [delivery(2), delivery(3), delivery(1)])
 
 
 if __name__ == '__main__':

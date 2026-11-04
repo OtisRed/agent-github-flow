@@ -41,12 +41,71 @@ class WorkerLedgerTests(unittest.TestCase):
         with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
             work.import_ids([self.second, self.first])
             work.import_ids([self.first])
-            self.assertEqual(work.pending_preview(), [self.first, self.second])
+            self.assertEqual(work.pending_preview(), [self.second, self.first])
         with worker_ledger.Ledger(self.path, self.lock_path) as work:
-            self.assertEqual(work.pending_preview(), [self.first, self.second])
+            self.assertEqual(work.pending_preview(), [self.second, self.first])
             with self.assertRaises(ValueError):
                 work.import_ids(["invalid"])
-            self.assertEqual(work.pending_preview(), [self.first, self.second])
+            self.assertEqual(work.pending_preview(), [self.second, self.first])
+
+    def test_claim_follows_first_import_not_uuid_sort_and_deduplicates(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.import_ids([self.second])
+            work.import_ids([self.first, self.second])
+            self.assertEqual(work.claim_next(), {"kind": "claimed", "deliveryId": self.second})
+            work._record_verified_noop(self.second)
+            work.import_ids([self.second])
+            self.assertEqual(work.claim_next(), {"kind": "claimed", "deliveryId": self.first})
+
+    def test_sequence_exhaustion_refuses_new_but_allows_duplicates(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.import_ids([self.first])
+            work.db.execute('UPDATE ledger_sequence SET last_seq=? WHERE singleton=1', (2**63 - 1,))
+            work.db.commit()
+            work.import_ids([self.first])
+            with self.assertRaises(ValueError):
+                work.import_ids([self.first, self.second])
+            self.assertEqual(work.pending_preview(), [self.first])
+
+    def test_last_sequence_slot_and_batch_overflow_are_atomic(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.db.execute('UPDATE ledger_sequence SET last_seq=? WHERE singleton=1', (2**63 - 2,))
+            work.db.commit()
+            with self.assertRaises(ValueError):
+                work.import_ids([self.first, self.second])
+            self.assertEqual(work.pending_preview(), [])
+            self.assertEqual(work.db.execute('SELECT last_seq FROM ledger_sequence').fetchone()[0], 2**63 - 2)
+            work.import_ids([self.first])
+            self.assertEqual(work.db.execute('SELECT enqueue_seq FROM pending_deliveries').fetchone()[0], 2**63 - 1)
+            with self.assertRaises(ValueError):
+                work.import_ids([self.second])
+            self.assertEqual(work.pending_preview(), [self.first])
+
+    def test_claim_uses_pending_index_not_entire_history(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            plan = work.db.execute("EXPLAIN QUERY PLAN SELECT delivery_id FROM pending_deliveries WHERE state='pending' ORDER BY enqueue_seq LIMIT 1").fetchall()
+            self.assertTrue(any('ledger_pending_order' in str(row) for row in plan), plan)
+
+    def test_sequence_and_page_roll_back_together_on_import_failure(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            original = work.db
+            class FailSecondInsert:
+                count = 0
+                def execute(self, sql, *args):
+                    if sql.lstrip().startswith('INSERT INTO pending_deliveries'):
+                        self.count += 1
+                        if self.count == 2: raise sqlite3.OperationalError('synthetic failure')
+                    return original.execute(sql, *args)
+                def __getattr__(self, name): return getattr(original, name)
+            work.db = FailSecondInsert()
+            with self.assertRaises(sqlite3.OperationalError):
+                work.import_ids([self.first, self.second])
+            work.db = original
+            self.assertEqual(work.pending_preview(), [])
+            self.assertEqual(work.db.execute('SELECT last_seq FROM ledger_sequence').fetchone()[0], 0)
+            work.import_ids([self.second, self.first, self.second])
+            self.assertEqual(work.db.execute('SELECT last_seq FROM ledger_sequence').fetchone()[0], 2)
+            self.assertEqual(work.claim_next(), {"kind": "claimed", "deliveryId": self.second})
 
     def test_verified_noop_stays_finished_after_rescan_and_restart(self):
         with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
@@ -133,6 +192,18 @@ os._exit(73)
         with self.assertRaises(ValueError):
             with worker_ledger.Ledger(self.path, self.lock_path):
                 self.fail("tampered schema accepted")
+
+    def test_old_version_is_refused_without_erasing_data(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.import_ids([self.first])
+        with sqlite3.connect(self.path) as db:
+            db.execute('PRAGMA user_version=9')
+        with self.assertRaises(ValueError):
+            with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True):
+                self.fail('old version was silently replaced')
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 9)
+            self.assertEqual(db.execute('SELECT delivery_id FROM pending_deliveries').fetchall(), [(self.first,)])
 
     def test_crash_before_initial_publish_does_not_leave_empty_target(self):
         src = str(Path(__file__).resolve().parents[1] / "src")
@@ -618,9 +689,9 @@ os._exit(73)
         with worker_ledger.Ledger(self.path, self.lock_path) as work:
             self.assertEqual(work.import_page(queue, key, limit=1)["nextAfter"], self.first)
             work.import_page(queue, key, after=self.first, limit=1)
-            self.assertEqual(work.pending_preview(), [self.first, self.second])
+            self.assertEqual(work.pending_preview(), [self.second, self.first])
             self.assertEqual(work.import_page(queue, b"wrong-key-" * 4), {"kind": "blocked"})
-            self.assertEqual(work.pending_preview(), [self.first, self.second])
+            self.assertEqual(work.pending_preview(), [self.second, self.first])
 
 
 if __name__ == "__main__":
