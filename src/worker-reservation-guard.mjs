@@ -1,14 +1,15 @@
 // Detached composition for the first v3 recovery reservation only. The
 // supplied cycle, readers, journal, clocks and Git transports must be trusted.
-// Optional status continuation is detached and intended for a synthetic
-// transport only. Final checkpoint commit is always blocked.
+// Optional status and final continuations are detached; tests use synthetic
+// transports. This module does not enforce that supplied callbacks are fake.
 import {isDeepStrictEqual} from 'node:util';
 import {observeIngressDelivery} from './ingress-observation.mjs';
+import {matchesFinalContext} from './worker-final-context.mjs';
 
 export async function runGuardedReservation(input={}){
   try{
     const {routes,graphql,keyring,resolvePolicy,runCycle,cycleInput,signer,createPublicationStep,publicationInputs,deriveBinding,journal,
-      createStatusStep,statusInputs}=input;
+      createStatusStep,statusInputs,finalInputs}=input;
     const state=structuredClone(input.state),delivery=structuredClone(input.delivery),stable=structuredClone(input.metadata);
     const commitment=structuredClone(input.commitment);
     if(!state||state.kind!=='recovering'||state.refIntent!==0||state.statusIntent!==1
@@ -70,7 +71,72 @@ export async function runGuardedReservation(input={}){
         ||!isDeepStrictEqual(registration,cycle.projectRegistration)
         ||!isDeepStrictEqual(commitmentUsed,cycle.registrationCommitment))return {kind:'blocked'};
     let waited=false,attempted=false,recorded=null,confirmed=false,statusCalls=0,statusObserved=false,approvedBinding=null;
+    let statusContext=null,finalAttempted=false,finalCompleted=false;
+    async function runFinal(args){
+      if(finalAttempted||!statusObserved||!confirmed||args?.operation!=='commit'
+          ||!isDeepStrictEqual(args.expectedBinding,approvedBinding)||!finalInputs
+          ||typeof finalInputs.encode!=='function'||typeof finalInputs.verifyContinuity!=='function'
+          ||typeof signer.completion!=='function'||typeof signer.verifyCompletion!=='function'
+          ||typeof journal.recordFinal!=='function'||typeof journal.finalize!=='function'
+          ||typeof publication.observe!=='function')return {kind:'blocked'};
+      finalAttempted=true;
+      const encode=finalInputs.encode,verifyContinuity=finalInputs.verifyContinuity;
+      const recordFinal=journal.recordFinal.bind(journal),finalize=journal.finalize.bind(journal),matchesStatus=journal.matchesStatus.bind(journal);
+      const publish=publication.publish,observe=publication.observe;
+      const metadata=structuredClone(stable);metadata.binding=structuredClone(approvedBinding);
+      const commitment={kind:'worker-status-commitment',keyId:recorded.keyId,mac:recorded.nextMac};
+      if(!signer.verify(metadata,commitment)||(await matchesStatus(delivery.deliveryId,structuredClone(commitment)))?.kind!=='matched'
+          ||!isDeepStrictEqual(statusContext,await verifiedCollect(approvedBinding))||!await protectionVerified()
+          ||!isDeepStrictEqual(statusContext,await verifiedCollect(approvedBinding)))return {kind:'blocked'};
+      const before=structuredClone(statusContext),expectedRecord=structuredClone(before.observation.checkpoint.selectedRecord);
+      expectedRecord.current.phase='committed';expectedRecord.reservation=null;
+      let proposed=null,publishStarted=false,publishAcknowledged=false,observed=false;
+      const guardedPublish=async payload=>{
+        if(publishStarted)return {kind:'blocked'};publishStarted=true;
+        const safePayload=structuredClone(payload);
+        const oldOid=safePayload?.expectedHeadOid,newOid=safePayload?.commit?.sha,treeOid=safePayload?.expectedTreeOid;
+        if(oldOid!==approvedBinding.checkpointOid||!isDeepStrictEqual(safePayload.after,expectedRecord)
+            ||safePayload.commit?.tree?.sha!==treeOid||!Array.isArray(safePayload.commit?.parents)
+            ||safePayload.commit.parents.length!==1||safePayload.commit.parents[0]?.sha!==oldOid)return {kind:'blocked'};
+        const encoded=encode(structuredClone(expectedRecord));
+        if(encoded?.kind!=='encoded-record'||verifyContinuity(structuredClone(before.observation.checkpoint.selectedRecord),
+            structuredClone(expectedRecord))?.kind!=='continuity-verified')return {kind:'blocked'};
+        const plan={metadata,oldOid,newOid,treeOid,recordContent:encoded.content};
+        const transition=signer.completion(plan);
+        if(transition.kind!=='worker-final-ref-transition'||!signer.verifyCompletion(plan,transition)
+            ||(await matchesStatus(delivery.deliveryId,structuredClone(commitment)))?.kind!=='matched'
+            ||!isDeepStrictEqual(before,await verifiedCollect(approvedBinding)))return {kind:'blocked'};
+        if((await recordFinal(delivery.deliveryId,structuredClone(transition)))?.kind!=='recorded')return {kind:'blocked'};
+        if(!isDeepStrictEqual(await read(delivery.deliveryId),transition)||!signer.verifyCompletion(plan,transition)
+            ||!isDeepStrictEqual(before,await verifiedCollect(approvedBinding))||!await protectionVerified()
+            ||!isDeepStrictEqual(before,await verifiedCollect(approvedBinding)))return {kind:'blocked'};
+        proposed={plan,transition};
+        const result=await publish(structuredClone(safePayload));
+        publishAcknowledged=result?.kind==='ref-update-acknowledged';
+        return result;
+      };
+      const guardedObserve=async input=>{
+        const safe=structuredClone(input);
+        if(observed||!proposed||!isDeepStrictEqual(safe,{oldOid:proposed.plan.oldOid,newOid:proposed.plan.newOid,
+          expectedTreeOid:proposed.plan.treeOid}))return {kind:'blocked'};
+        const result=await observe(safe);observed=result?.kind==='publication-observed';return result;
+      };
+      const step=createPublicationStep({...publication,publish:guardedPublish,observe:guardedObserve});
+      const result=await step(args);
+      if(!proposed||!publishStarted||!publishAcknowledged||!observed||result?.kind!=='v3-commit-observed'
+          ||!signer.verifyCompletion(proposed.plan,proposed.transition)
+          ||!isDeepStrictEqual(await read(delivery.deliveryId),proposed.transition))return {kind:'blocked'};
+      const after=await guardedCollect();
+      const comparison={before,after,receipt:result.receipt,oldOid:proposed.plan.oldOid,newOid:proposed.plan.newOid,
+        itemId:stable.itemId,targetOptionId:stable.targetOptionId,encode,verifyContinuity};
+      if(!matchesFinalContext(comparison)||!await protectionVerified()
+          ||!isDeepStrictEqual(after,await guardedCollect())||!matchesFinalContext(comparison))return {kind:'blocked'};
+      if((await finalize(delivery.deliveryId,structuredClone(proposed.transition)))?.kind!=='confirmed')return {kind:'blocked'};
+      finalCompleted=true;
+      return result;
+    }
     const makePublicationStep=()=>async args=>{
+      if(attempted&&args?.operation==='commit')return runFinal(args);
       if(attempted||!waited||args?.operation!=='reservation'||!isDeepStrictEqual(args.expectedBinding,stable.binding))return {kind:'blocked'};
       attempted=true;let proposed=null,expectedBinding=null,publishStarted=false,authorId=null;
       const guardedPublish=async payload=>{
@@ -149,12 +215,14 @@ export async function runGuardedReservation(input={}){
       if(!isDeepStrictEqual(context,normalized)||!await protectionVerified()
           ||!isDeepStrictEqual(after,await verifiedCollect(approvedBinding)))return {kind:'blocked'};
       statusObserved=true;
+      statusContext=structuredClone(after);
       return result;
     };
     const result=await runCycle({...cycle,
       wait:async ms=>{if(ms!==120000)throw Error('unexpected-wait');await cycle.wait(ms);waited=true;},
       makePublicationStep,makeStatusStep});
-    if(result?.kind==='v3-cycle-stopped'&&result.phase==='commit'&&confirmed&&recorded&&statusObserved&&statusCalls===1)
+    if(result?.kind==='first-v3-handoff-observed'&&finalCompleted&&statusObserved)return {kind:'final-observed-completed'};
+    if(!finalAttempted&&result?.kind==='v3-cycle-stopped'&&result.phase==='commit'&&confirmed&&recorded&&statusObserved&&statusCalls===1)
       return {kind:'status-observed-commit-blocked'};
     return typeof createStatusStep!=='function'&&result?.kind==='v3-cycle-stopped'&&result.phase==='status'&&confirmed&&recorded&&statusCalls===1
       ?{kind:'reservation-observed-status-blocked'}:{kind:'blocked'};

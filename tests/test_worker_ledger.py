@@ -670,7 +670,7 @@ os._exit(73)
             actions = []
             transition = None
             try:
-                child.stdin.write(json.dumps({"mode":"guarded-status-ipc", "state":state, "delivery":delivery,
+                child.stdin.write(json.dumps({"mode":"guarded-final-ipc", "state":state, "delivery":delivery,
                                               "commitment":commitment}).encode())
                 child.stdin.close()
                 child.stdin = None
@@ -702,15 +702,23 @@ os._exit(73)
                             response = {"kind":"confirmed"}
                         elif request["operation"] == "match-status":
                             response = {"kind":"matched" if work.matches_recovery_status(self.first, request["transition"]) else "blocked"}
+                        elif request["operation"] == "record-final":
+                            work.record_final_ref_intent(self.first, request["transition"])
+                            response = {"kind":"recorded"}
+                        elif request["operation"] == "finalize":
+                            work._record_verified_final_ref(self.first, request["transition"])
+                            response = {"kind":"confirmed"}
                         else:
                             self.fail("unexpected synthetic journal request")
                         os.write(reply_write, (json.dumps(response) + "\n").encode())
                 self.assertFalse(pending)
                 stdout, stderr = child.communicate(timeout=5)
                 self.assertEqual(child.returncode, 0, stderr.decode())
-                self.assertEqual(stdout.decode().strip(), "synthetic guarded status and ledger passed")
-                self.assertEqual(actions, ["record", "read", "read", "confirm", "match-status", "match-status"])
-                self.assertEqual(work.blocking_preview(), [(self.first, "recovering", 0, 1)])
+                self.assertEqual(stdout.decode().strip(), "synthetic guarded final cycle and ledger passed")
+                self.assertEqual(actions, ["record", "read", "read", "confirm", "match-status", "match-status",
+                                           "match-status", "match-status", "record-final", "read", "read", "finalize"])
+                self.assertEqual(work.blocking_preview(), [])
+                self.assertEqual(work.states_preview(), [(self.first, "completed", 0, 0)])
                 self.assertIsNone(work.recovery_ref_transition(self.first))
             finally:
                 if child.poll() is None:
@@ -719,9 +727,64 @@ os._exit(73)
                 os.close(request_read)
                 os.close(reply_write)
         with worker_ledger.Ledger(self.path, self.lock_path) as work:
-            self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", 0, 1)])
+            self.assertEqual(work.blocking_preview(), [])
+            self.assertEqual(work.states_preview(), [(self.first, "completed", 0, 0)])
             self.assertIsNone(work.recovery_ref_transition(self.first))
-            work.begin_status_recovery(self.first, {**commitment, "mac":transition["nextMac"]})
+            work.import_ids([self.first])
+            self.assertEqual(work.claim_next(), {"kind":"empty"})
+
+        lost_path = Path(self.directory.name) / 'lost-ack.sqlite'
+        with worker_ledger.Ledger(lost_path,self.lock_path,allow_create=True) as work:
+            work.import_ids([self.first]);work.claim_next();work.record_intent(self.first,'status',commitment)
+        with worker_ledger.Ledger(lost_path,self.lock_path) as work:
+            work.begin_status_recovery(self.first,commitment)
+            request_read,request_write=os.pipe();reply_read,reply_write=os.pipe()
+            env={'AGF_CONTROLLER_ROOT':os.environ['AGF_CONTROLLER_ROOT'],
+                 'AGF_TEST_REQUEST_FD':str(request_write),'AGF_TEST_REPLY_FD':str(reply_read)}
+            child=subprocess.Popen([os.environ['AGF_NODE'],str(script)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE,pass_fds=(request_write,reply_read),env=env)
+            os.close(request_write);os.close(reply_read)
+            actions=[]
+            try:
+                child.stdin.write(json.dumps({'mode':'guarded-final-lost-ack-ipc','state':state,
+                                              'delivery':delivery,'commitment':commitment}).encode())
+                child.stdin.close();child.stdin=None
+                pending=b'';deadline=time.monotonic()+30
+                while True:
+                    ready,_,_=select.select([request_read],[],[],max(0,deadline-time.monotonic()))
+                    if not ready:self.fail('synthetic lost-ack IPC timed out')
+                    chunk=os.read(request_read,8192)
+                    if not chunk:break
+                    pending+=chunk
+                    if len(pending)>16384:self.fail('synthetic lost-ack IPC message too large')
+                    while b'\n' in pending:
+                        line,pending=pending.split(b'\n',1);request=json.loads(line);actions.append(request['operation'])
+                        self.assertEqual(request['id'],self.first)
+                        if request['operation']=='record':
+                            work.record_recovery_ref_intent(self.first,request['transition']);response={'kind':'recorded'}
+                        elif request['operation']=='read':response=work.recovery_ref_transition(self.first)
+                        elif request['operation']=='confirm':
+                            work._record_verified_recovery_ref(self.first,request['transition']);response={'kind':'confirmed'}
+                        elif request['operation']=='match-status':
+                            response={'kind':'matched' if work.matches_recovery_status(self.first,request['transition']) else 'blocked'}
+                        elif request['operation']=='record-final':
+                            work.record_final_ref_intent(self.first,request['transition']);response={'kind':'recorded'}
+                        else:self.fail('unexpected synthetic lost-ack request')
+                        os.write(reply_write,(json.dumps(response)+'\n').encode())
+                self.assertFalse(pending)
+                stdout,stderr=child.communicate(timeout=5);self.assertEqual(child.returncode,0,stderr.decode())
+                self.assertEqual(stdout.decode().strip(),'synthetic lost-ack remained blocked')
+                self.assertNotIn('finalize',actions)
+                self.assertEqual(work.blocking_preview(),[(self.first,'recovering',1,1)])
+                lost_plan=work.recovery_ref_transition(self.first)
+                self.assertEqual(lost_plan['kind'],'worker-final-ref-transition')
+            finally:
+                if child.poll() is None:child.kill();child.wait(timeout=5)
+                os.close(request_read);os.close(reply_write)
+        with worker_ledger.Ledger(lost_path,self.lock_path) as work:
+            self.assertEqual(work.blocking_preview(),[(self.first,'uncertain',1,1)])
+            self.assertEqual(work.recovery_ref_transition(self.first),lost_plan)
+            work.import_ids([self.first]);self.assertEqual(work.claim_next(),{'kind':'blocked'})
 
     def test_killed_lock_owner_releases_lock_without_requeuing_claim(self):
         src = str(Path(__file__).resolve().parents[1] / "src")

@@ -140,22 +140,31 @@ assert.equal(prepared.signer.verify(changed,request.commitment),false);
 
 function guardedFixture({recordFailure=false,publishFailure=false,observeFailure=false,confirmFailure=false,
   mutateAfterRecord=false,mutateRecordPlan=false,journalOverride=null,runStatus=false,statusFailure=false,
-  statusFailureAfterWrite=false,statusNoObservation=false,statusMismatch=false}={}){
+  statusFailureAfterWrite=false,statusNoObservation=false,statusMismatch=false,runFinal=false,
+  finalRecordFailure=false,finalPublishFailure=false,finalLostAck=false,finalObserveFailure=false,
+  finalPlanCorrupt=false,finalConfirmFailure=false,finalChangeAfterRecord=false}={}){
   const v=fixture(),{signer,metadata,commitment}=statusCommitment(v);
-  let recorded=null,records=0,confirms=0,refWrites=0,statusWrites=0,statusTargets=[];
+  let recorded=null,records=0,confirms=0,refWrites=0,statusWrites=0,statusTargets=[],finalRecords=0,finalizes=0,observations=0;
   const verifyProtection=async()=>({kind:'checkpoint-protection-observed',repositoryId:'repo-id',appId:12,updateRulesetId:1,historyRulesetId:2});
   const prepare=async({snapshot})=>({kind:'checkpoint-objects-prepared',expectedHeadOid:snapshot.headOid,
-    expectedTreeOid:'e'.repeat(40),commit:{sha:'d'.repeat(40),tree:{sha:'e'.repeat(40)},parents:[{sha:snapshot.headOid}]}});
-  const publish=async payload=>{refWrites++;if(publishFailure)throw Error('synthetic failure');
-    v.checkpoint.headOid=payload.commit.sha;v.checkpoint.selectedRecord=payload.after;return {kind:'ref-update-acknowledged'};};
-  const observe=async()=>observeFailure?{kind:'blocked'}:{kind:'publication-observed'};
+    expectedTreeOid:'e'.repeat(40),commit:{sha:(snapshot.headOid==='d'.repeat(40)?'f':'d').repeat(40),
+      tree:{sha:'e'.repeat(40)},parents:[{sha:snapshot.headOid}]}});
+  const publish=async payload=>{refWrites++;if(publishFailure||(refWrites===2&&finalPublishFailure))throw Error('synthetic failure');
+    v.checkpoint.headOid=payload.commit.sha;v.checkpoint.selectedRecord=payload.after;
+    if(refWrites===2&&finalLostAck)throw Error('synthetic final response lost');return {kind:'ref-update-acknowledged'};};
+  const observe=async()=>{observations++;return observeFailure||(observations===2&&finalObserveFailure)
+    ?{kind:'blocked'}:{kind:'publication-observed'};};
   const journal=journalOverride??{record:async(_id,plan)=>{records++;if(recordFailure)return {kind:'blocked'};
       if(mutateRecordPlan)plan.newOid='f'.repeat(40);recorded=structuredClone(plan);
       if(mutateAfterRecord)v.project.itemId='changed-card';return {kind:'recorded'};},
     read:async()=>structuredClone(recorded),
     confirm:async(_id,plan)=>{confirms++;return confirmFailure||!isDeepEqual(plan,recorded)?{kind:'blocked'}:{kind:'confirmed'};},
     matchesStatus:async(_id,value)=>!statusMismatch&&confirms===1&&value.keyId===recorded?.keyId&&value.mac===recorded?.nextMac
-      ?{kind:'matched'}:{kind:'blocked'}};
+      ?{kind:'matched'}:{kind:'blocked'},
+    recordFinal:async(_id,plan)=>{finalRecords++;if(finalRecordFailure)return {kind:'blocked'};
+      if(finalPlanCorrupt)plan.newOid='1'.repeat(40);recorded=structuredClone(plan);
+      if(finalChangeAfterRecord)v.project.itemId='changed-card';return {kind:'recorded'};},
+    finalize:async(_id,plan)=>{finalizes++;return !finalConfirmFailure&&isDeepEqual(plan,recorded)?{kind:'confirmed'}:{kind:'blocked'};}};
   const publicationInputs={policy:v.input.policy,projectRegistration:v.input.projectRegistration,
     registrationCommitment:v.input.registrationCommitment,keyring:v.keyring,collectContext:v.input.collectContext,
     verifyProtection,prepare,publish,observe};
@@ -173,10 +182,12 @@ function guardedFixture({recordFailure=false,publishFailure=false,observeFailure
     args.createStatusStep=createV3ProjectStatusStep;
     args.statusInputs={collectContext:v.input.collectContext,verifyProtection,transport};
   }
+  if(runFinal)args.finalInputs={encode:encodeCheckpointV3,verifyContinuity:verifyCheckpointV3Continuity};
   return {args,project:v.project,checkpoint:v.checkpoint,handoff:v.handoff,statusTargets,
+    finalCounts:()=>({finalRecords,finalizes}),
     counts:()=>({records,confirms,refWrites,waited:v.counts().waited,statusWrites:statusWrites+v.counts().writes})};
 }
-if(request.mode==='guarded-status-ipc'){
+if(request.mode==='guarded-final-ipc'||request.mode==='guarded-final-lost-ack-ipc'){
   const requestFd=Number(process.env.AGF_TEST_REQUEST_FD),replyFd=Number(process.env.AGF_TEST_REPLY_FD);
   assert.ok(Number.isInteger(requestFd)&&requestFd>=3&&Number.isInteger(replyFd)&&replyFd>=3&&requestFd!==replyFd);
   const call=(operation,id,transition)=>{
@@ -187,11 +198,14 @@ if(request.mode==='guarded-status-ipc'){
     throw Error('journal reply too long');
   };
   const journal={record:async(id,plan)=>call('record',id,plan),read:async id=>call('read',id),
-    confirm:async(id,plan)=>call('confirm',id,plan),matchesStatus:async(id,value)=>call('match-status',id,value)};
-  const g=guardedFixture({journalOverride:journal,runStatus:true});
-  assert.deepEqual(await runGuardedReservation(g.args),{kind:'status-observed-commit-blocked'});
-  assert.equal(g.counts().refWrites,1);assert.equal(g.counts().statusWrites,1);assert.equal(g.counts().waited,120000);
-  await new Promise(resolve=>process.stdout.write('synthetic guarded status and ledger passed\n',resolve));
+    confirm:async(id,plan)=>call('confirm',id,plan),matchesStatus:async(id,value)=>call('match-status',id,value),
+    recordFinal:async(id,plan)=>call('record-final',id,plan),finalize:async(id,plan)=>call('finalize',id,plan)};
+  const lostAck=request.mode==='guarded-final-lost-ack-ipc';
+  const g=guardedFixture({journalOverride:journal,runStatus:true,runFinal:true,finalLostAck:lostAck});
+  assert.deepEqual(await runGuardedReservation(g.args),{kind:lostAck?'blocked':'final-observed-completed'});
+  assert.equal(g.counts().refWrites,2);assert.equal(g.counts().statusWrites,1);assert.equal(g.counts().waited,120000);
+  if(lostAck){assert.equal(g.checkpoint.headOid,'f'.repeat(40));assert.equal(g.checkpoint.selectedRecord.current.phase,'committed');}
+  await new Promise(resolve=>process.stdout.write(lostAck?'synthetic lost-ack remained blocked\n':'synthetic guarded final cycle and ledger passed\n',resolve));
   process.exit(0);
 }
 let guarded=guardedFixture();
@@ -200,6 +214,52 @@ assert.deepEqual(guarded.counts(),{records:1,confirms:1,refWrites:1,waited:12000
 guarded=guardedFixture({runStatus:true});
 assert.deepEqual(await runGuardedReservation(guarded.args),{kind:'status-observed-commit-blocked'});
 assert.deepEqual(guarded.counts(),{records:1,confirms:1,refWrites:1,waited:120000,statusWrites:1});
+guarded=guardedFixture({runStatus:true,runFinal:true});
+assert.deepEqual(await runGuardedReservation(guarded.args),{kind:'final-observed-completed'});
+assert.deepEqual(guarded.counts(),{records:1,confirms:1,refWrites:2,waited:120000,statusWrites:1});
+assert.deepEqual(guarded.finalCounts(),{finalRecords:1,finalizes:1});
+for(const options of [{finalRecordFailure:true},{finalPlanCorrupt:true},{finalChangeAfterRecord:true},
+  {finalPublishFailure:true},{finalLostAck:true},{finalObserveFailure:true},{finalConfirmFailure:true}]){
+  guarded=guardedFixture({runStatus:true,runFinal:true,...options});
+  assert.deepEqual(await runGuardedReservation(guarded.args),{kind:'blocked'});
+  assert.equal(guarded.finalCounts().finalRecords,1);
+  assert.equal(guarded.finalCounts().finalizes,options.finalConfirmFailure?1:0);
+  assert.equal(guarded.counts().refWrites,(options.finalRecordFailure||options.finalPlanCorrupt||options.finalChangeAfterRecord)?1:2);
+}
+guarded=guardedFixture({runStatus:true,runFinal:true});
+{
+  const original=guarded.args.createPublicationStep;
+  guarded.args.createPublicationStep=options=>{const step=original(options);return async args=>{
+    const result=await step(args);if(args.operation==='commit'&&result.receipt)result.receipt.commentId='999';return result;};};
+  assert.deepEqual(await runGuardedReservation(guarded.args),{kind:'blocked'});
+  assert.deepEqual(guarded.finalCounts(),{finalRecords:1,finalizes:0});
+}
+guarded=guardedFixture({runStatus:true,runFinal:true});
+{
+  const original=guarded.args.createPublicationStep;
+  guarded.args.createPublicationStep=options=>{const step=original(options);return async args=>
+    args.operation==='commit'?{kind:'v3-commit-observed',receipt:{}}:step(args);};
+  assert.deepEqual(await runGuardedReservation(guarded.args),{kind:'blocked'});
+  assert.deepEqual(guarded.finalCounts(),{finalRecords:0,finalizes:0});
+  assert.equal(guarded.counts().refWrites,1);
+}
+for(const change of [g=>{g.checkpoint.headOid='1'.repeat(40);},g=>{g.handoff.authorId='other';},
+  g=>{g.handoff.body+=' altered';},g=>{g.project.statusOptionId='foreign';},g=>{g.project.itemId='foreign';}]){
+  guarded=guardedFixture({runStatus:true,runFinal:true});const original=guarded.args.journal.recordFinal;
+  guarded.args.journal.recordFinal=async(...args)=>{const result=await original(...args);change(guarded);return result;};
+  assert.deepEqual(await runGuardedReservation(guarded.args),{kind:'blocked'});
+  assert.deepEqual(guarded.finalCounts(),{finalRecords:1,finalizes:0});
+  assert.equal(guarded.counts().refWrites,1);
+}
+for(const change of [g=>{g.checkpoint.headOid='1'.repeat(40);},g=>{g.handoff.authorId='other';},
+  g=>{g.handoff.body+=' altered';},g=>{g.project.statusOptionId='foreign';},g=>{g.project.itemId='foreign';}]){
+  guarded=guardedFixture({runStatus:true,runFinal:true});const original=guarded.args.createPublicationStep;
+  guarded.args.createPublicationStep=options=>{const step=original(options);return async args=>{
+    const result=await step(args);if(args.operation==='commit')change(guarded);return result;};};
+  assert.deepEqual(await runGuardedReservation(guarded.args),{kind:'blocked'});
+  assert.deepEqual(guarded.finalCounts(),{finalRecords:1,finalizes:0});
+  assert.equal(guarded.counts().refWrites,2);
+}
 for(const settings of [{statusFailure:true},{statusFailureAfterWrite:true},{statusNoObservation:true},{statusMismatch:true}]){
   guarded=guardedFixture({runStatus:true,...settings});
   assert.deepEqual(await runGuardedReservation(guarded.args),{kind:'blocked'});
