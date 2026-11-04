@@ -189,6 +189,15 @@ class WorkerLedgerTests(unittest.TestCase):
             work.import_ids([self.first])
             self.assertEqual(work.blocking_preview(), [(self.first, "running", 1, 0)])
 
+    def test_schema_refuses_two_active_or_uncertain_entries(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.import_ids([self.first, self.second])
+            self.assertEqual(work.claim_next(), {"kind": "claimed", "deliveryId": self.first})
+            with sqlite3.connect(self.path) as db:
+                with self.assertRaises(sqlite3.IntegrityError):
+                    db.execute("UPDATE pending_deliveries SET state='uncertain' WHERE delivery_id=?", (self.second,))
+            self.assertEqual(work.blocking_preview(), [(self.first, "running", 0, 0)])
+
     def test_two_uncertain_intents_are_preserved_together_after_process_death(self):
         src = str(Path(__file__).resolve().parents[1] / "src")
         script = ("import os,sys; sys.path.insert(0,sys.argv[1]); import worker_ledger; "

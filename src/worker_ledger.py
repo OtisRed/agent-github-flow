@@ -15,7 +15,7 @@ from pathlib import Path
 import webhook_ingress as ingress
 
 APP_ID = 0x41474632
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 TABLE_SQL = """CREATE TABLE pending_deliveries (
             delivery_id TEXT PRIMARY KEY,
             state TEXT NOT NULL CHECK (state IN ('pending','running','recovering','uncertain')),
@@ -23,6 +23,8 @@ TABLE_SQL = """CREATE TABLE pending_deliveries (
             status_intent INTEGER NOT NULL CHECK (status_intent IN (0,1)),
             CHECK (state != 'pending' OR (ref_intent = 0 AND status_intent = 0))
         )"""
+ONE_ACTIVE_SQL = """CREATE UNIQUE INDEX ledger_one_active ON pending_deliveries ((1))
+                    WHERE state != 'pending'"""
 
 
 class Busy(Exception):
@@ -99,6 +101,7 @@ class Ledger:
                 db.execute(f"PRAGMA application_id={APP_ID}")
                 db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
                 db.execute(TABLE_SQL)
+                db.execute(ONE_ACTIVE_SQL)
                 db.commit()
             finally:
                 db.close()
@@ -129,7 +132,8 @@ class Ledger:
                 or self.db.execute("PRAGMA synchronous").fetchone()[0] != 3):
             raise ValueError("Unknown ledger")
         objects = self.db.execute("SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY name").fetchall()
-        if objects != [("table", "pending_deliveries", "pending_deliveries", TABLE_SQL),
+        if objects != [("index", "ledger_one_active", "pending_deliveries", ONE_ACTIVE_SQL),
+                       ("table", "pending_deliveries", "pending_deliveries", TABLE_SQL),
                        ("index", "sqlite_autoindex_pending_deliveries_1", "pending_deliveries", None)]:
             raise ValueError("Unknown ledger schema")
 
