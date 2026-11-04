@@ -2,6 +2,8 @@ import os
 import hashlib
 import hmac
 import json
+import select
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -27,7 +29,7 @@ class WorkerLedgerTests(unittest.TestCase):
         self.directory.cleanup()
 
     def test_import_is_idempotent_and_survives_reopen(self):
-        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
             work.import_ids([self.second, self.first])
             work.import_ids([self.first])
             self.assertEqual(work.pending_preview(), [self.first, self.second])
@@ -42,7 +44,7 @@ class WorkerLedgerTests(unittest.TestCase):
         script = ("import sys; sys.path.insert(0,sys.argv[1]); import worker_ledger; "
                   "w=worker_ledger.Ledger(sys.argv[2],sys.argv[3]); "
                   "w.__enter__(); w.__exit__(None,None,None)")
-        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
             with self.assertRaises(RuntimeError):
                 work.__enter__()
             process = subprocess.run([sys.executable, "-c", script, src, str(self.path), str(self.lock_path)], capture_output=True, text=True)
@@ -57,7 +59,7 @@ class WorkerLedgerTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, process.stderr)
 
     def test_unknown_or_tampered_database_is_not_accepted(self):
-        with worker_ledger.Ledger(self.path, self.lock_path):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True):
             pass
         with sqlite3.connect(self.path) as db:
             db.execute("CREATE TABLE unrelated (x)")
@@ -65,9 +67,67 @@ class WorkerLedgerTests(unittest.TestCase):
             with worker_ledger.Ledger(self.path, self.lock_path):
                 self.fail("tampered schema accepted")
 
+    def test_crash_before_initial_publish_does_not_leave_empty_target(self):
+        src = str(Path(__file__).resolve().parents[1] / "src")
+        script = ("import os,sys; sys.path.insert(0,sys.argv[1]); import worker_ledger; "
+                  "worker_ledger.os.link=lambda *args,**kwargs: os._exit(73); "
+                  "worker_ledger.Ledger(sys.argv[2],sys.argv[3],allow_create=True).__enter__()")
+        process = subprocess.run([sys.executable, "-c", script, src, str(self.path), str(self.lock_path)],
+                                 capture_output=True, text=True)
+        self.assertEqual(process.returncode, 73, process.stderr)
+        self.assertFalse(self.path.exists())
+        self.assertTrue(list(Path(self.directory.name).glob(".agf-ledger-init-*")))
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.import_ids([self.first])
+            self.assertEqual(work.pending_preview(), [self.first])
+
+    def test_crash_after_link_keeps_readable_target_in_process_failure(self):
+        src = str(Path(__file__).resolve().parents[1] / "src")
+        script = ("import os,stat,sys; sys.path.insert(0,sys.argv[1]); import worker_ledger; "
+                  "old=os.fsync; worker_ledger.os.fsync=lambda fd: os._exit(73) if stat.S_ISDIR(os.fstat(fd).st_mode) else old(fd); "
+                  "worker_ledger.Ledger(sys.argv[2],sys.argv[3],allow_create=True).__enter__()")
+        process = subprocess.run([sys.executable, "-c", script, src, str(self.path), str(self.lock_path)],
+                                 capture_output=True, text=True)
+        self.assertEqual(process.returncode, 73, process.stderr)
+        self.assertTrue(self.path.exists())
+        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            self.assertEqual(work.pending_preview(), [])
+
+    def test_crash_after_directory_sync_keeps_readable_target(self):
+        src = str(Path(__file__).resolve().parents[1] / "src")
+        script = ("import os,sys; sys.path.insert(0,sys.argv[1]); import worker_ledger; "
+                  "worker_ledger.os.unlink=lambda *args,**kwargs: os._exit(73); "
+                  "worker_ledger.Ledger(sys.argv[2],sys.argv[3],allow_create=True).__enter__()")
+        process = subprocess.run([sys.executable, "-c", script, src, str(self.path), str(self.lock_path)],
+                                 capture_output=True, text=True)
+        self.assertEqual(process.returncode, 73, process.stderr)
+        self.assertTrue(self.path.exists())
+        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            self.assertEqual(work.pending_preview(), [])
+
+    def test_missing_target_with_orphan_sidecar_is_not_initialized(self):
+        orphan = Path(str(self.path) + "-journal")
+        orphan.write_bytes(b"synthetic orphan")
+        orphan.chmod(0o600)
+        with self.assertRaises(ValueError):
+            with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True):
+                self.fail("orphan sidecar accepted")
+        self.assertFalse(self.path.exists())
+        self.assertEqual(orphan.read_bytes(), b"synthetic orphan")
+
+    def test_missing_established_ledger_fails_closed_without_bootstrap(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.import_ids([self.first])
+            self.assertEqual(work.claim_next(), {"kind": "claimed", "deliveryId": self.first})
+        self.path.unlink()
+        with self.assertRaises(FileNotFoundError):
+            with worker_ledger.Ledger(self.path, self.lock_path):
+                self.fail("missing ledger silently recreated")
+        self.assertFalse(self.path.exists())
+
     def test_replaced_lock_is_detected_before_further_work(self):
         lock = self.lock_path
-        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
             lock.unlink()
             lock.touch(mode=0o600)
             with self.assertRaises(ValueError):
@@ -76,7 +136,7 @@ class WorkerLedgerTests(unittest.TestCase):
     def test_claim_is_durable_and_process_death_never_silently_requeues(self):
         src = str(Path(__file__).resolve().parents[1] / "src")
         script = ("import os,sys; sys.path.insert(0,sys.argv[1]); import worker_ledger; "
-                  "w=worker_ledger.Ledger(sys.argv[2],sys.argv[3]); w.__enter__(); "
+                  "w=worker_ledger.Ledger(sys.argv[2],sys.argv[3],allow_create=True); w.__enter__(); "
                   "w.import_ids([sys.argv[4]]); assert w.claim_next()['kind']=='claimed'; os._exit(0)")
         process = subprocess.run([sys.executable, "-c", script, src, str(self.path), str(self.lock_path), self.first],
                                  capture_output=True, text=True)
@@ -88,7 +148,7 @@ class WorkerLedgerTests(unittest.TestCase):
             self.assertEqual(work.claim_next(), {"kind": "blocked"})
 
     def test_blocking_preview_finds_uncertain_after_many_earlier_pending(self):
-        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
             work.import_ids([self.second])
             self.assertEqual(work.claim_next(), {"kind": "claimed", "deliveryId": self.second})
             earlier = [f"00000000-0000-4000-8000-{number:012x}" for number in range(100)]
@@ -96,6 +156,28 @@ class WorkerLedgerTests(unittest.TestCase):
         with worker_ledger.Ledger(self.path, self.lock_path) as work:
             self.assertEqual(len(work.states_preview()), 100)
             self.assertEqual(work.blocking_preview(), [(self.second, "uncertain")])
+            self.assertEqual(work.claim_next(), {"kind": "blocked"})
+
+    def test_killed_lock_owner_releases_lock_without_requeuing_claim(self):
+        src = str(Path(__file__).resolve().parents[1] / "src")
+        script = ("import sys,time; sys.path.insert(0,sys.argv[1]); import worker_ledger; "
+                  "w=worker_ledger.Ledger(sys.argv[2],sys.argv[3],allow_create=True); w.__enter__(); "
+                  "w.import_ids([sys.argv[4]]); assert w.claim_next()['kind']=='claimed'; "
+                  "print('ready',flush=True); time.sleep(300)")
+        process = subprocess.Popen([sys.executable, "-c", script, src, str(self.path), str(self.lock_path), self.first],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            self.assertTrue(select.select([process.stdout], [], [], 10)[0], "worker did not start")
+            self.assertEqual(process.stdout.readline().strip(), "ready")
+            process.kill()
+            process.communicate(timeout=5)
+            self.assertEqual(process.returncode, -signal.SIGKILL)
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=5)
+        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            self.assertEqual(work.blocking_preview(), [(self.first, "uncertain")])
             self.assertEqual(work.claim_next(), {"kind": "blocked"})
 
     def test_scan_import_restarts_after_uncommitted_read_and_finds_earlier_id(self):
@@ -110,7 +192,7 @@ class WorkerLedgerTests(unittest.TestCase):
         self.assertEqual(ingress.receive(queue, secret, key, registry, self.second, "issue_comment", signature, body), "accepted")
         # A process can read a page and exit before importing it: source persists.
         self.assertEqual(ingress.scan_delivery_ids(queue, key, limit=1)["deliveryIds"], [self.second])
-        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
             self.assertEqual(work.import_page(queue, key, limit=1)["nextAfter"], self.second)
             self.assertEqual(ingress.receive(queue, secret, key, registry, self.first, "issue_comment", signature, body), "accepted")
         with worker_ledger.Ledger(self.path, self.lock_path) as work:

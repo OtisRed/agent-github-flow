@@ -9,6 +9,7 @@ import fcntl
 import os
 import sqlite3
 import stat
+import tempfile
 from pathlib import Path
 
 import webhook_ingress as ingress
@@ -28,9 +29,12 @@ class Busy(Exception):
 class Ledger:
     """A POSIX owner and shared lock path; configuration must be trusted."""
 
-    def __init__(self, path, lock_path):
+    def __init__(self, path, lock_path, *, allow_create=False):
+        if type(allow_create) is not bool:
+            raise ValueError("Invalid bootstrap mode")
         self.path = os.path.abspath(os.fspath(path))
         self.lock_path = os.path.abspath(os.fspath(lock_path))
+        self.allow_create = allow_create
         if self.path == self.lock_path:
             raise ValueError("Ledger and lock paths must differ")
         self.lock_fd = None
@@ -55,23 +59,13 @@ class Ledger:
             except BlockingIOError as exc:
                 raise Busy("Worker already running") from exc
             try:
-                fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            except FileExistsError:
-                new = False
-            else:
-                os.close(fd)
-                new = True
-            ingress.check_storage(self.path)
+                ingress.check_storage(self.path)
+            except FileNotFoundError:
+                if not self.allow_create:
+                    raise
+                self._create_new()
+                ingress.check_storage(self.path)
             self.db = sqlite3.connect(Path(self.path).as_uri() + "?mode=rw", uri=True, timeout=2)
-            if new:
-                if self.db.execute("PRAGMA journal_mode=DELETE").fetchone()[0] != "delete":
-                    raise ValueError("Unexpected ledger journal")
-                self.db.execute("PRAGMA synchronous=EXTRA")
-                self.db.execute("BEGIN IMMEDIATE")
-                self.db.execute(f"PRAGMA application_id={APP_ID}")
-                self.db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-                self.db.execute(TABLE_SQL)
-                self.db.commit()
             self.db.execute("PRAGMA synchronous=EXTRA")
             self._check()
             # Lock ownership changed. A previous owner might have performed an
@@ -84,6 +78,40 @@ class Ledger:
         except BaseException:
             self.__exit__(None, None, None)
             raise
+
+    def _create_new(self):
+        """Publish a complete new database without replacing an existing path."""
+        directory = os.path.dirname(self.path)
+        if any(os.path.lexists(self.path + suffix) for suffix in ("-journal", "-wal", "-shm")):
+            raise ValueError("Unexpected orphan ledger sidecar")
+        fd, temporary = tempfile.mkstemp(prefix=".agf-ledger-init-", dir=directory)
+        os.close(fd)
+        try:
+            db = sqlite3.connect(Path(temporary).as_uri() + "?mode=rw", uri=True, timeout=2)
+            try:
+                if db.execute("PRAGMA journal_mode=DELETE").fetchone()[0] != "delete":
+                    raise ValueError("Unexpected ledger journal")
+                db.execute("PRAGMA synchronous=EXTRA")
+                db.execute("BEGIN IMMEDIATE")
+                db.execute(f"PRAGMA application_id={APP_ID}")
+                db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+                db.execute(TABLE_SQL)
+                db.commit()
+            finally:
+                db.close()
+            fd = os.open(temporary, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            os.link(temporary, self.path, follow_symlinks=False)
+            dir_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        finally:
+            os.unlink(temporary)
 
     def _check(self):
         if self.db is None or self.lock_fd is None:
