@@ -278,6 +278,37 @@ class WorkerLedgerTests(unittest.TestCase):
                 work.begin_status_recovery(self.first)
             self.assertEqual(work.claim_next(), {"kind": "blocked"})
 
+    @unittest.skipUnless(os.environ.get("AGF_CONTROLLER_ROOT") and os.environ.get("AGF_NODE"),
+                         "Actual controller checkout and Node not supplied")
+    def test_status_recovery_observes_real_v3_cycle_without_mutation(self):
+        queue = Path(self.directory.name) / "ingress.sqlite"
+        key = b"synthetic-fingerprint-key-for-the-tests-only"
+        secret = b"synthetic-webhook-secret-for-the-tests-only"
+        ingress.initialize(queue, key)
+        registry = ingress.validate_registry([(101, 201)])
+        body = json.dumps({"action":"created", "installation":{"id":101}, "repository":{"id":201},
+                           "issue":{"number":1}, "comment":{"id":77}}).encode()
+        signature = "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
+        self.assertEqual(ingress.receive(queue, secret, key, registry, self.first, "issue_comment", signature, body), "accepted")
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.import_page(queue, key)
+            work.claim_next()
+            work.record_intent(self.first, "status")
+        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            work.begin_status_recovery(self.first)
+            row = work.blocking_preview()[0]
+            state = {"deliveryId": row[0], "kind": row[1], "refIntent": row[2], "statusIntent": row[3]}
+            delivery = ingress.read_delivery(queue, key, row[0])
+            script = Path(__file__).with_name("recovery-cycle-integration.mjs")
+            process = subprocess.run([os.environ["AGF_NODE"], str(script)], input=json.dumps({"state":state,"delivery":delivery}), text=True,
+                                     capture_output=True, timeout=30,
+                                     env={"AGF_CONTROLLER_ROOT": os.environ["AGF_CONTROLLER_ROOT"]})
+            self.assertEqual(process.returncode, 0, process.stderr)
+            self.assertEqual(process.stdout.strip(), "synthetic real-v3 recovery observation passed")
+            self.assertEqual(work.blocking_preview(), [(self.first, "recovering", 0, 1)])
+        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", 0, 1)])
+
     def test_killed_lock_owner_releases_lock_without_requeuing_claim(self):
         src = str(Path(__file__).resolve().parents[1] / "src")
         script = ("import sys,time; sys.path.insert(0,sys.argv[1]); import worker_ledger; "
