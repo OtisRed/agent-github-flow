@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -456,16 +457,68 @@ os._exit(73)
             self.assertEqual(process.returncode, 0, process.stderr)
             self.assertEqual(process.stdout.strip(), "synthetic real-v3 recovery observation passed")
             self.assertEqual(work.blocking_preview(), [(self.first, "recovering", 0, 1)])
-            planned = subprocess.run([os.environ["AGF_NODE"], str(script)], input=json.dumps({"mode":"transition","delivery":delivery}),
-                                     text=True, capture_output=True, timeout=30,
-                                     env={"AGF_CONTROLLER_ROOT": os.environ["AGF_CONTROLLER_ROOT"]})
-            self.assertEqual(planned.returncode, 0, planned.stderr)
-            transition = json.loads(planned.stdout)
-            work.record_recovery_ref_intent(self.first, transition)
-            self.assertEqual(work.recovery_ref_transition(self.first), transition)
+            request_read, request_write = os.pipe()
+            reply_read, reply_write = os.pipe()
+            env = {"AGF_CONTROLLER_ROOT":os.environ["AGF_CONTROLLER_ROOT"],
+                   "AGF_TEST_REQUEST_FD":str(request_write), "AGF_TEST_REPLY_FD":str(reply_read)}
+            child = subprocess.Popen([os.environ["AGF_NODE"], str(script)], stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     pass_fds=(request_write, reply_read), env=env)
+            os.close(request_write)
+            os.close(reply_read)
+            actions = []
+            transition = None
+            try:
+                child.stdin.write(json.dumps({"mode":"guarded-ipc", "state":state, "delivery":delivery,
+                                              "commitment":commitment}).encode())
+                child.stdin.close()
+                child.stdin = None
+                pending = b""
+                deadline = time.monotonic() + 30
+                while True:
+                    ready, _, _ = select.select([request_read], [], [], max(0, deadline - time.monotonic()))
+                    if not ready:
+                        self.fail("synthetic journal IPC timed out")
+                    chunk = os.read(request_read, 8192)
+                    if not chunk:
+                        break
+                    pending += chunk
+                    if len(pending) > 16384:
+                        self.fail("synthetic journal IPC message too large")
+                    while b"\n" in pending:
+                        line, pending = pending.split(b"\n", 1)
+                        request = json.loads(line)
+                        self.assertEqual(request["id"], self.first)
+                        actions.append(request["operation"])
+                        if request["operation"] == "record":
+                            transition = request["transition"]
+                            work.record_recovery_ref_intent(self.first, transition)
+                            response = {"kind":"recorded"}
+                        elif request["operation"] == "read":
+                            response = work.recovery_ref_transition(self.first)
+                        elif request["operation"] == "confirm":
+                            work._record_verified_recovery_ref(self.first, request["transition"])
+                            response = {"kind":"confirmed"}
+                        else:
+                            self.fail("unexpected synthetic journal request")
+                        os.write(reply_write, (json.dumps(response) + "\n").encode())
+                self.assertFalse(pending)
+                stdout, stderr = child.communicate(timeout=5)
+                self.assertEqual(child.returncode, 0, stderr.decode())
+                self.assertEqual(stdout.decode().strip(), "synthetic guarded cycle and ledger passed")
+                self.assertEqual(actions, ["record", "read", "read", "confirm"])
+                self.assertEqual(work.blocking_preview(), [(self.first, "recovering", 0, 1)])
+                self.assertIsNone(work.recovery_ref_transition(self.first))
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=5)
+                os.close(request_read)
+                os.close(reply_write)
         with worker_ledger.Ledger(self.path, self.lock_path) as work:
-            self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", 1, 1)])
-            self.assertEqual(work.recovery_ref_transition(self.first), transition)
+            self.assertEqual(work.blocking_preview(), [(self.first, "uncertain", 0, 1)])
+            self.assertIsNone(work.recovery_ref_transition(self.first))
+            work.begin_status_recovery(self.first, {**commitment, "mac":transition["nextMac"]})
 
     def test_killed_lock_owner_releases_lock_without_requeuing_claim(self):
         src = str(Path(__file__).resolve().parents[1] / "src")
