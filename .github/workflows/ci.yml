@@ -29,6 +29,8 @@ jobs:
           persist-credentials: false
       - name: Verify Node tests
         run: node --test src/*.test.mjs
+      - name: Verify GitHub Flow skill tests
+        run: node --test skills/github-flow/tests/*.test.mjs
       - name: Verify webhook spike tests
         run: python3 -m unittest discover -s spikes/mikrus-webhook -p 'test_*.py' -v
       - name: Verify detached webhook intake tests
