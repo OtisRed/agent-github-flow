@@ -289,3 +289,38 @@ def read_delivery(path, fingerprint_key, delivery_id):
     finally:
         if db is not None:
             db.close()
+
+
+def scan_delivery_ids(path, fingerprint_key, after=None, limit=100):
+    """Read a bounded page. `after` is an in-memory page marker, not a cursor.
+
+    Callers must restart at None after each pass: a new UUID may sort before
+    the current marker. The result never claims or acknowledges a delivery.
+    """
+    if (not isinstance(fingerprint_key, bytes) or len(fingerprint_key) < 32
+            or (after is not None and not canonical_delivery(after))
+            or type(limit) is not int or not 1 <= limit <= 100):
+        return {"kind": "invalid"}
+    db = None
+    try:
+        db = connect_existing(path)
+        db.execute("BEGIN")
+        validate_schema(db, fingerprint_key)
+        if after is None:
+            rows = db.execute("""SELECT delivery_id FROM ingress_deliveries
+                                 ORDER BY delivery_id LIMIT ?""", (limit + 1,)).fetchall()
+        else:
+            rows = db.execute("""SELECT delivery_id FROM ingress_deliveries
+                                 WHERE delivery_id > ? ORDER BY delivery_id LIMIT ?""",
+                              (after, limit + 1)).fetchall()
+        db.commit()
+        ids = [row[0] for row in rows]
+        if not all(canonical_delivery(value) for value in ids):
+            return {"kind": "invalid"}
+        return {"kind": "page", "deliveryIds": ids[:limit],
+                "more": len(ids) > limit}
+    except (sqlite3.Error, OSError, ValueError):
+        return {"kind": "storage_unavailable"}
+    finally:
+        if db is not None:
+            db.close()

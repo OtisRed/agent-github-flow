@@ -1,0 +1,9 @@
+# Roboczy import sygnałów dla workera
+
+Niekompletny zakres issue #81: stronicowany odczyt identyfikatorów z kolejki przyjęć i idempotentny import do osobnego prywatnego magazynu. Import używa istniejącego ID dostawy i nie usuwa źródła. Marker strony jest wyłącznie chwilowy: po dojściu do końca lub po wyczerpaniu przyszłego budżetu stron/czasu trzeba rozpocząć nowy przebieg od początku. Nowy identyfikator przed markerem zostanie odnaleziony w kolejnym pełnym przebiegu. Skan musi być ponawiany także po pustym wyniku; tego harmonogramu jeszcze tu nie ma.
+
+Magazyn importu jest odrębny od bazy #77 i od checkpointu FLOW. Import strony kończy się sukcesem tylko po zatwierdzeniu transakcji; ponowienie jest idempotentne. Utrzymanie jednej zaufanej ścieżki kolejki i jednej ścieżki magazynu jest obowiązkiem przyszłej konfiguracji. Zmienienie źródła lub cofnięcie bazy wymaga osobnej obsługi; to nie jest automatycznie wykrywane.
+
+Blokada `flock` dotyczy pliku przy konkretnej ścieżce magazynu, nie gwarantuje jednego globalnego wykonawcy przy różnych ścieżkach. Sprawdzenie tożsamości pliku wykrywa widoczną w danym momencie podmianę, ale nie jest atomowym fencingiem. Przed prawdziwymi operacjami GitHub konieczne są zaufany katalog, zakaz podmiany pliku i projekt jednej globalnej wyłączności. Przerwanie tworzenia pliku przed inicjalizacją może pozostawić pustą bazę, którą następne uruchomienie odrzuci; automatyczne odzyskiwanie i alarm nie są jeszcze wdrożone.
+
+Nie ma stanów claim/running/uncertain/completed, wywołania kontrolera, obsługi GitHuba, retry, monitoringu ani archiwizacji. Nie włączono produkcyjnego webhooka i nie stosuje się tego magazynu do rzeczywistej pracy. Testy używają wyłącznie tymczasowych baz i syntetycznych danych; ponowne otwarcie oraz uruchomienie drugiego procesu nie są testem restartu serwera ani awarii sprzętu.

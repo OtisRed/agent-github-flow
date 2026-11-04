@@ -72,6 +72,24 @@ class WebhookIngressTests(unittest.TestCase):
         self.assertEqual(ingress.read_delivery(self.path, FINGERPRINT_KEY, str(uuid.uuid4())), {"kind": "missing"})
         self.assertEqual(ingress.read_delivery(self.path, FINGERPRINT_KEY, "bad"), {"kind": "invalid"})
 
+    def test_scan_pages_restart_finds_insert_before_current_marker(self):
+        first = "10000000-0000-4000-8000-000000000000"
+        middle = "80000000-0000-4000-8000-000000000000"
+        last = "f0000000-0000-4000-8000-000000000000"
+        self.assertEqual(self.send(delivery=middle), "accepted")
+        self.assertEqual(self.send(delivery=last), "accepted")
+        self.assertEqual(ingress.scan_delivery_ids(self.path, FINGERPRINT_KEY, limit=1),
+                         {"kind": "page", "deliveryIds": [middle], "more": True})
+        self.assertEqual(self.send(delivery=first), "accepted")
+        self.assertEqual(ingress.scan_delivery_ids(self.path, FINGERPRINT_KEY, after=middle, limit=1),
+                         {"kind": "page", "deliveryIds": [last], "more": False})
+        self.assertEqual(ingress.scan_delivery_ids(self.path, FINGERPRINT_KEY, limit=2),
+                         {"kind": "page", "deliveryIds": [first, middle], "more": True})
+        self.assertEqual(ingress.scan_delivery_ids(self.path, FINGERPRINT_KEY, after=last),
+                         {"kind": "page", "deliveryIds": [], "more": False})
+        self.assertEqual(ingress.scan_delivery_ids(self.path, FINGERPRINT_KEY, limit=True), {"kind": "invalid"})
+        self.assertEqual(ingress.scan_delivery_ids(self.path, b"wrong-key-" * 4), {"kind": "storage_unavailable"})
+
     @unittest.skipUnless(os.environ.get("AGF_CONTROLLER_ROOT") and os.environ.get("AGF_NODE"),
                          "Actual controller checkout and Node not supplied")
     def test_real_controller_resolver_on_two_synthetic_queue_entries(self):
