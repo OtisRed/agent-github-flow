@@ -1,63 +1,57 @@
-name: App atomic ref-pair probe
+name: App webhook dispatch spike probe
 on:
   workflow_dispatch:
+    inputs:
+      expected_sha:
+        required: true
+        type: string
 permissions:
   contents: read
-concurrency:
-  group: app-atomic-ref-probe
-  cancel-in-progress: false
 jobs:
-  probe:
-    if: github.ref == 'refs/heads/main' && github.actor == 'OtisRed' && github.triggering_actor == 'OtisRed'
-    name: Probe scoped App on temporary refs
+  dispatch:
+    if: github.ref == 'refs/heads/probe/71-app-webhook-dispatch' && github.sha == inputs.expected_sha && github.actor == 'OtisRed' && github.triggering_actor == 'OtisRed' && github.run_attempt == 1
     runs-on: ubuntu-24.04
     environment: flow-controller
-    timeout-minutes: 10
-    permissions:
-      contents: read
+    timeout-minutes: 5
     steps:
-      - name: Check out reviewed revision
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          persist-credentials: false
-      - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '22'
-      - name: Validate one target before issuing App token
+      - name: Validate single target scope
         env:
-          TARGET_OWNER: ${{ secrets.FLOW_PROBE_REPO_OWNER }}
-          TARGET_REPO: ${{ secrets.FLOW_PROBE_REPO_NAME }}
-          EXPECTED_REPOSITORY_ID: ${{ secrets.FLOW_PROBE_REPO_ID }}
-          EXPECTED_HEAD: ${{ secrets.FLOW_PROBE_REPO_HEAD }}
-          EXPECTED_PARENT: ${{ secrets.FLOW_PROBE_REPO_PARENT }}
-        run: node src/atomic-ref-target-check.mjs
+          TARGET_OWNER: ${{ secrets.AGF_SPIKE_71_OWNER }}
+          TARGET_REPO: ${{ secrets.AGF_SPIKE_71_REPO }}
+          TARGET_ID: ${{ secrets.AGF_SPIKE_71_ID }}
+        run: |
+          node <<'NODE'
+          for (const key of ['TARGET_OWNER', 'TARGET_REPO']) if (!/^[\w.-]+$/.test(process.env[key] || '')) process.exit(1);
+          if (!/^\d+$/.test(process.env.TARGET_ID || '')) process.exit(1);
+          NODE
       - name: Create scoped App token
         id: app
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
         with:
           app-id: ${{ vars.FLOW_APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          owner: ${{ secrets.FLOW_PROBE_REPO_OWNER }}
-          repositories: ${{ secrets.FLOW_PROBE_REPO_NAME }}
+          owner: ${{ secrets.AGF_SPIKE_71_OWNER }}
+          repositories: ${{ secrets.AGF_SPIKE_71_REPO }}
           permission-contents: write
-      - name: Probe temporary refs and conditional cleanup
-        id: probe
+      - name: Verify target and dispatch once
         env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
-          EXPECTED_APP_SLUG: ${{ vars.FLOW_APP_SLUG }}
-          ACTUAL_APP_SLUG: ${{ steps.app.outputs.app-slug }}
-          TARGET_OWNER: ${{ secrets.FLOW_PROBE_REPO_OWNER }}
-          TARGET_REPO: ${{ secrets.FLOW_PROBE_REPO_NAME }}
-          EXPECTED_REPOSITORY_ID: ${{ secrets.FLOW_PROBE_REPO_ID }}
-          EXPECTED_HEAD: ${{ secrets.FLOW_PROBE_REPO_HEAD }}
-          EXPECTED_PARENT: ${{ secrets.FLOW_PROBE_REPO_PARENT }}
-        run: node src/atomic-ref-probe-cli.mjs
-      - name: Stale CAS response confirmed
-        if: steps.probe.outputs.negative == 'confirmed'
-        run: echo 'The server response identified the intentionally stale comparison.'
-      - name: Stale CAS response unverified
-        if: steps.probe.outputs.negative == 'unverified'
+          TOKEN: ${{ steps.app.outputs.token }}
+          TARGET_OWNER: ${{ secrets.AGF_SPIKE_71_OWNER }}
+          TARGET_REPO: ${{ secrets.AGF_SPIKE_71_REPO }}
+          TARGET_ID: ${{ secrets.AGF_SPIKE_71_ID }}
         run: |
-          echo 'The response did not identify the reason; the negative case remains unverified.'
-          exit 1
+          node <<'NODE'
+          (async () => {
+            const {TOKEN, TARGET_OWNER, TARGET_REPO, TARGET_ID} = process.env;
+            if (!TOKEN || !/^[\w.-]+$/.test(TARGET_OWNER || '') || !/^[\w.-]+$/.test(TARGET_REPO || '') || !/^\d+$/.test(TARGET_ID || '')) throw Error('Invalid configuration');
+            const path = `https://api.github.com/repos/${encodeURIComponent(TARGET_OWNER)}/${encodeURIComponent(TARGET_REPO)}`;
+            const headers = {'authorization': `Bearer ${TOKEN}`, 'accept':'application/vnd.github+json', 'x-github-api-version':'2022-11-28'};
+            const repo = await fetch(path, {headers, redirect:'error', signal:AbortSignal.timeout(10000)});
+            if (!repo.ok) throw Error('Target check failed');
+            const data = await repo.json();
+            if (String(data.id) !== TARGET_ID || data.private !== true || data.owner?.login !== TARGET_OWNER || data.name !== TARGET_REPO) throw Error('Target mismatch');
+            const response = await fetch(path + '/dispatches', {method:'POST', headers:{...headers,'content-type':'application/json'}, body:JSON.stringify({event_type:'agf_webhook_spike_v1',client_payload:{nonce:process.env.GITHUB_RUN_ID}}), redirect:'error', signal:AbortSignal.timeout(10000)});
+            if (response.status !== 204) throw Error('Dispatch rejected or uncertain');
+            console.log('Dispatch accepted; delivery must be checked separately.');
+          })().catch(() => { console.error('Probe failed or outcome is uncertain; do not retry automatically.'); process.exitCode=1; });
+          NODE
