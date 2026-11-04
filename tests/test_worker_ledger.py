@@ -48,6 +48,64 @@ class WorkerLedgerTests(unittest.TestCase):
                 work.import_ids(["invalid"])
             self.assertEqual(work.pending_preview(), [self.first, self.second])
 
+    def test_verified_noop_stays_finished_after_rescan_and_restart(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.import_ids([self.first, self.second])
+            self.assertEqual(work.claim_next(), {"kind": "claimed", "deliveryId": self.first})
+            work._record_verified_noop(self.first)
+            work.import_ids([self.first])
+            self.assertEqual(work.claim_next(), {"kind": "claimed", "deliveryId": self.second})
+        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            self.assertEqual(work.states_preview(), [(self.first, "completed", 0, 0), (self.second, "uncertain", 0, 0)])
+            self.assertEqual(work.blocking_preview(), [(self.second, "uncertain", 0, 0)])
+            work.import_ids([self.first])
+            self.assertEqual(work.pending_preview(), [])
+
+    def test_noop_completion_refuses_pending_uncertain_and_intent(self):
+        with worker_ledger.Ledger(self.path, self.lock_path, allow_create=True) as work:
+            work.import_ids([self.first, self.second])
+            with self.assertRaises(ValueError):
+                work._record_verified_noop(self.first)
+            work.claim_next()
+            work.record_intent(self.first, "ref")
+            with self.assertRaises(ValueError):
+                work._record_verified_noop(self.first)
+        with worker_ledger.Ledger(self.path, self.lock_path) as work:
+            with self.assertRaises(ValueError):
+                work._record_verified_noop(self.first)
+            self.assertEqual(work.claim_next(), {"kind": "blocked"})
+
+    def test_noop_process_death_before_and_after_commit(self):
+        src = str(Path(__file__).resolve().parents[1] / "src")
+        script = """import os,sys
+sys.path.insert(0,sys.argv[1])
+import worker_ledger
+w=worker_ledger.Ledger(sys.argv[2],sys.argv[3],allow_create=True); w.__enter__()
+w.import_ids([sys.argv[4]]); w.claim_next()
+if sys.argv[5]=='before':
+    class KillAfterUpdate:
+        def __init__(self,db): self.db=db
+        def execute(self,sql,*args):
+            result=self.db.execute(sql,*args)
+            if sql.strip().startswith("UPDATE pending_deliveries SET state='completed'"): os._exit(73)
+            return result
+        def __getattr__(self,name): return getattr(self.db,name)
+    w.db=KillAfterUpdate(w.db)
+w._record_verified_noop(sys.argv[4])
+os._exit(73)
+"""
+        for mode in ("before", "after"):
+            with self.subTest(mode=mode):
+                path = Path(self.directory.name) / (mode + "-noop.sqlite")
+                process = subprocess.run([sys.executable, "-c", script, src, str(path), str(self.lock_path), self.first, mode],
+                                         capture_output=True, text=True)
+                self.assertEqual(process.returncode, 73, process.stderr)
+                with worker_ledger.Ledger(path, self.lock_path) as work:
+                    expected = "uncertain" if mode == "before" else "completed"
+                    self.assertEqual(work.states_preview(), [(self.first, expected, 0, 0)])
+                    work.import_ids([self.first])
+                    self.assertEqual(work.pending_preview(), [])
+                    self.assertEqual(work.claim_next(), {"kind": "blocked" if mode == "before" else "empty"})
     def test_lock_excludes_second_process_and_releases_after_exit(self):
         src = str(Path(__file__).resolve().parents[1] / "src")
         script = ("import sys; sys.path.insert(0,sys.argv[1]); import worker_ledger; "

@@ -3,7 +3,8 @@
 The separate ledger leaves the validated ingress schema intact. A caller must
 hold the configured shared lock for a complete scan and restart scans from None.
 This model can claim one ID and conservatively flag interrupted claims, but
-does not execute a controller, authorize retries or complete work.
+does not execute a controller or authorize retries. A trusted caller may
+record a verified no-op; the ledger cannot verify the caller's conclusion.
 """
 import fcntl
 import hmac
@@ -19,16 +20,16 @@ from datetime import datetime
 import webhook_ingress as ingress
 
 APP_ID = 0x41474632
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 TABLE_SQL = """CREATE TABLE pending_deliveries (
             delivery_id TEXT PRIMARY KEY,
-            state TEXT NOT NULL CHECK (state IN ('pending','running','recovering','uncertain')),
+            state TEXT NOT NULL CHECK (state IN ('pending','running','recovering','uncertain','completed')),
             ref_intent INTEGER NOT NULL CHECK (ref_intent IN (0,1)),
             status_intent INTEGER NOT NULL CHECK (status_intent IN (0,1)),
             status_key_id INTEGER,
             status_mac TEXT,
             ref_transition TEXT,
-            CHECK (state != 'pending' OR (ref_intent = 0 AND status_intent = 0)),
+            CHECK (state NOT IN ('pending','completed') OR (ref_intent = 0 AND status_intent = 0)),
             CHECK ((status_intent = 0 AND status_key_id IS NULL AND status_mac IS NULL) OR
                    (status_intent = 1 AND typeof(status_key_id) = 'integer' AND status_key_id BETWEEN 1 AND 9007199254740991 AND
                     typeof(status_mac) = 'text' AND length(status_mac) = 64 AND status_mac NOT GLOB '*[^0-9a-f]*')),
@@ -36,7 +37,7 @@ TABLE_SQL = """CREATE TABLE pending_deliveries (
                    typeof(ref_transition) = 'text' AND length(ref_transition) <= 4096))
         )"""
 ONE_ACTIVE_SQL = """CREATE UNIQUE INDEX ledger_one_active ON pending_deliveries ((1))
-                    WHERE state != 'pending'"""
+                    WHERE state IN ('running','recovering','uncertain')"""
 
 
 class Busy(Exception):
@@ -208,7 +209,7 @@ class Ledger:
         self.db.execute("BEGIN IMMEDIATE")
         try:
             self._check()
-            busy = self.db.execute("SELECT 1 FROM pending_deliveries WHERE state != 'pending' LIMIT 1").fetchone()
+            busy = self.db.execute("SELECT 1 FROM pending_deliveries WHERE state IN ('running','recovering','uncertain') LIMIT 1").fetchone()
             if busy:
                 self.db.commit()
                 return {"kind": "blocked"}
@@ -238,8 +239,30 @@ class Ledger:
             raise ValueError("Invalid preview limit")
         self._check()
         return self.db.execute("""SELECT delivery_id,state,ref_intent,status_intent FROM pending_deliveries
-                                  WHERE state != 'pending'
+                                  WHERE state IN ('running','recovering','uncertain')
                                   ORDER BY delivery_id LIMIT ?""", (limit,)).fetchall()
+
+    def _record_verified_noop(self, delivery_id):
+        """Record a no-op verified by a trusted caller, not by this ledger.
+
+        This operation cannot resolve a potentially sent external mutation.
+        The completed ID remains present for idempotent future imports.
+        """
+        if not ingress.canonical_delivery(delivery_id):
+            raise ValueError("Invalid delivery ID")
+        self._check()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            self._check()
+            updated = self.db.execute("""UPDATE pending_deliveries SET state='completed'
+                                         WHERE delivery_id=? AND state='running'
+                                           AND ref_intent=0 AND status_intent=0""", (delivery_id,))
+            if updated.rowcount != 1:
+                raise ValueError("No eligible running no-op")
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
 
     def record_intent(self, delivery_id, operation, commitment=None):
         """Record intent and its trusted status binding; perform no mutation."""
