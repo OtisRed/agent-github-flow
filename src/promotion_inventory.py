@@ -5,6 +5,8 @@ from promotion_plan import SHA, closed_prefix, issue_reference
 
 
 MAX_COMMITS = 500
+MERGE_COMMIT_QUERY = '''query($owner:String!,$repo:String!,$number:Int!){
+ repository(owner:$owner,name:$repo){pullRequest(number:$number){number merged mergeCommit{oid}}}}'''
 
 
 def inventory(transport, token, owner, repository):
@@ -42,9 +44,33 @@ def inventory(transport, token, owner, repository):
         prs = read('/commits/' + sha + '/pulls?' + urlencode({'per_page': 100}))
         if not isinstance(prs, list):
             raise ValueError('Invalid pull request mapping')
-        matching = [p for p in prs if isinstance(p, dict) and p.get('merge_commit_sha') == sha
-                    and p.get('base', {}).get('ref') == 'smoke' and p.get('merged_at')]
-        if len(matching) != 1 or len(prs) >= 100:
+        if len(prs) >= 100:
+            raise ValueError('Ambiguous pull request mapping')
+        matching = []
+        for pr in prs:
+            if not isinstance(pr, dict):
+                raise ValueError('Invalid pull request mapping')
+            if pr.get('base', {}).get('ref') != 'smoke' or not pr.get('merged_at'):
+                continue
+            number = pr.get('number')
+            if type(number) is not int or number <= 0:
+                raise ValueError('Invalid pull request identity')
+            result, _ = transport('/graphql', token, body={
+                'query': MERGE_COMMIT_QUERY,
+                'variables': {'owner': owner, 'repo': repository, 'number': number},
+            })
+            try:
+                detail = result['data']['repository']['pullRequest']
+                if result.get('errors') or detail['number'] != number or detail['merged'] is not True:
+                    raise ValueError('Invalid pull request detail')
+                oid = detail['mergeCommit']['oid']
+                if not isinstance(oid, str) or not SHA.fullmatch(oid):
+                    raise ValueError('Invalid merge commit')
+            except (KeyError, TypeError):
+                raise ValueError('Invalid pull request detail') from None
+            if oid == sha:
+                matching.append(pr)
+        if len(matching) != 1:
             raise ValueError('Ambiguous pull request mapping')
         pr = matching[0]
         number = issue_reference(pr.get('body'))
