@@ -84,6 +84,20 @@ def initialize(config):
         os.close(fd)
 
 
+def migrate_v1(config):
+    """Upgrade a stopped service's existing state under its regular lock."""
+    state = Path(config["state_path"])
+    _private_directory(state.parent)
+    info = os.stat(state, follow_symlinks=False)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+        raise ValueError("State file must be private and service-owned")
+    fd = _lock(str(state) + ".lock")
+    try:
+        Store(state).migrate_v1()
+    finally:
+        os.close(fd)
+
+
 def run(config):
     state = Path(config["state_path"])
     _private_directory(state.parent)
@@ -161,7 +175,7 @@ def run(config):
                 store.block(row["repository_id"], row["issue_number"], row["generation"], "unknown-project")
                 continue
             client, enrolled_at, authors = project
-            result = process_one(store, client, enrolled_at=enrolled_at, trusted_authors=authors)
+            result = process_one(store, client, enrolled_at=enrolled_at, trusted_authors=authors, row=row)
             if result["kind"] in ("read-failed", "blocked", "write-uncertain", "awaiting-card"):
                 # No issue IDs, response bodies, tokens or comment contents.
                 print("FLOW attention: " + result["kind"], file=sys.stderr, flush=True)
@@ -178,12 +192,17 @@ def run(config):
 
 def main():
     parser = argparse.ArgumentParser(description="Private agent-github-flow MVP service")
-    parser.add_argument("action", choices=("initialize", "run"))
+    parser.add_argument("action", choices=("initialize", "migrate-v1", "run"))
     parser.add_argument("config", help="Path to a private service-owned JSON config")
     args = parser.parse_args()
     try:
         config = _load(args.config)
-        initialize(config) if args.action == "initialize" else run(config)
+        if args.action == "initialize":
+            initialize(config)
+        elif args.action == "migrate-v1":
+            migrate_v1(config)
+        else:
+            run(config)
     except Exception as exc:
         # Do not print file contents, tokens, paths or HTTP response bodies.
         raise SystemExit("FLOW service failed: " + type(exc).__name__) from None

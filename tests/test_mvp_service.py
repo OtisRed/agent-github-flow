@@ -7,6 +7,7 @@ import os
 import select
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,28 @@ sys.path.insert(0, str(ROOT / "src"))
 
 @unittest.skipUnless(os.name == "posix" and importlib.util.find_spec("cryptography"), "POSIX and cryptography required")
 class ServiceTests(unittest.TestCase):
+    def test_migration_requires_stopped_service_lock(self):
+        from mvp_service import _lock, initialize, migrate_v1
+        from mvp_store import Store
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / 'state.sqlite'
+            config = {'state_path': str(state)}
+            initialize(config)
+            Store(state).enqueue(20, 7)
+            with sqlite3.connect(state) as db:
+                db.execute('DROP TABLE work_queue')
+                db.execute('PRAGMA user_version=1')
+            fd = _lock(str(state) + '.lock')
+            try:
+                with self.assertRaises(BlockingIOError):
+                    migrate_v1(config)
+                with sqlite3.connect(state) as db:
+                    self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 1)
+            finally:
+                os.close(fd)
+            migrate_v1(config)
+            self.assertEqual(Store(state).next_pending()['issue_number'], 7)
+
     def test_private_service_single_owner_restart_and_signed_ping(self):
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
