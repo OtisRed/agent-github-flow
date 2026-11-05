@@ -1,0 +1,27 @@
+[Unit]
+Description=Isolated reverse proxy for Agent GitHub Flow spike
+After=agf-webhook-spike-71.service
+Wants=agf-webhook-spike-71.service
+
+[Service]
+Type=simple
+DynamicUser=yes
+RuntimeDirectory=agf-webhook-proxy-71
+StateDirectory=agf-webhook-proxy-71
+StateDirectoryMode=0700
+ExecStartPre=/usr/bin/curl --noproxy * --retry 5 --retry-connrefused --retry-delay 1 --max-time 2 --silent --show-error --fail --output /dev/null http://127.0.0.1:19071/agf-spike/health
+ExecStart=/usr/sbin/nginx -c /opt/agent-github-flow-spike-71/standalone-nginx.conf -g "daemon off;"
+ExecReload=/usr/sbin/nginx -c /opt/agent-github-flow-spike-71/standalone-nginx.conf -s reload
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+MemoryMax=64M
+TasksMax=16
+
+[Install]
+WantedBy=multi-user.target

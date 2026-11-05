@@ -21,8 +21,20 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
+      - name: Check out pinned controller draft for integration fixture
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 395c3b296172fce536f7ce1c2faae3e177140fbd
+          path: .controller-fixture
+          persist-credentials: false
       - name: Verify Node tests
         run: node --test src/*.test.mjs
+      - name: Verify webhook spike tests
+        run: python3 -m unittest discover -s spikes/mikrus-webhook -p 'test_*.py' -v
+      - name: Verify detached webhook intake tests
+        run: |
+          AGF_CONTROLLER_ROOT="$GITHUB_WORKSPACE/.controller-fixture" AGF_NODE="$(command -v node)" \
+            python3 -m unittest discover -s tests -p 'test_*.py' -v
       - name: Download and verify actionlint
         shell: bash
         run: |

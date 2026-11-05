@@ -1,0 +1,9 @@
+# Decyzja kontrolera MVP
+
+`src/mvp_decision.py` przygotowuje decyzję dla jednego kompletnego, świeżo odczytanego issue. Jest odłączona od GitHuba i nie zmienia statusów. Dostawca danych musi sprawdzić tożsamość repozytorium i karty, pobrać wszystkie komentarze i ostatni rzeczywisty reopen oraz przekazać zaufanych autorów i stałą datę podłączenia projektu.
+
+Utracony lub zmieniony zapamiętany komentarz blokuje działanie. Zamknięte issue wskazuje `done`. Po rzeczywistym reopen odnotowanym po podłączeniu projekt przechodzi najpierw do `needs-design`, a następne przekazanie może zostać rozpatrzone po ponownym sprawdzeniu; dawne reopen i komentarze sprzed podłączenia nie resetują starej pracy. Nowe issue bez przekazania zaczyna od `needs-design`. Ostatni komentarz zaufanego autora wskazuje docelowy status po sprawdzeniu stałego formatu. Niepoprawny format, niekompletny odczyt i niejednoznaczna granica czasu blokują decyzję. Dla otwartego issue nie ustawiamy `done` na podstawie komentarza.
+
+Parser Python odtwarza istniejący pięcioliniowy format `src/flow.mjs`; test porównuje ich wyniki, gdy dostępny jest Node. Przygotowany worker łączy decyzję, magazyn, ponowny odczyt i adapter GitHuba; ID obsłużonego reopen i ponowne sprawdzenie są zapisywane w jednej transakcji. Testy używają syntetycznego GitHuba, a odczyt adaptera sprawdzono także tożsamością użytkownika. Docelowe poświadczenia, rzeczywisty zapis i uruchomienie jako jeden aktywny właściciel nadal wymagają sprawdzenia.
+
+Przy starcie i raz dziennie po 02:00 czasu polskiego przygotowywana usługa zbiera karty z danej tablicy oraz nowe issue powstałe po ustalonej dacie podłączenia. Nie zakłada kart dawnym issue spoza Projectu. Data podłączenia jest przy pierwszym uruchomieniu zapisywana w bazie i jej przypadkowa zmiana blokuje start. Pełny przebieg wymaga jeszcze sprawdzenia na rzeczywistych poświadczeniach oraz kontrolowanego uruchomienia z jednym właścicielem statusów.

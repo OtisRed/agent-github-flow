@@ -1,0 +1,22 @@
+[Unit]
+Description=Agent GitHub Flow central controller
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=agent-flow
+Group=agent-flow
+WorkingDirectory=/opt/agent-github-flow-mvp
+ExecStart=/usr/bin/python3 /opt/agent-github-flow-mvp/current/src/mvp_service.py run /etc/agent-github-flow-mvp/config.json
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/agent-github-flow-mvp
+
+[Install]
+WantedBy=multi-user.target
