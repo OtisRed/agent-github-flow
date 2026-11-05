@@ -18,6 +18,7 @@ from mvp_github import GitHub
 from mvp_http import make_server
 from mvp_store import Store
 from mvp_worker import process_one
+from promotion_schedule import run_promotions
 from webhook_ingress import validate_registry
 
 
@@ -58,6 +59,8 @@ def validate_config(config):
     for project in projects:
         if not isinstance(project, dict) or type(project.get("repository_id")) is not int or project["repository_id"] <= 0:
             raise ValueError("Invalid project")
+        if 'promotion_enabled' in project and type(project['promotion_enabled']) is not bool:
+            raise ValueError("Invalid promotion setting")
         ids.append(project["repository_id"])
         authors = project.get("trusted_author_ids")
         if (not isinstance(authors, list) or not authors or any(type(value) is not int or value <= 0 for value in authors)
@@ -108,6 +111,7 @@ def run(config):
     fd = _lock(str(state) + ".lock")
     server = None
     thread = None
+    promotion_thread = None
     try:
         store = Store(state)
         store.next_pending()  # fail closed on a missing or incompatible database
@@ -130,6 +134,9 @@ def run(config):
         stop = threading.Event()
         signal.signal(signal.SIGTERM, lambda *_: stop.set())
         signal.signal(signal.SIGINT, lambda *_: stop.set())
+        if any(p.get('promotion_enabled') is True for p in config['projects']):
+            promotion_thread = threading.Thread(target=run_promotions, args=(stop, config, private_key), daemon=True)
+            promotion_thread.start()
         zone = ZoneInfo("Europe/Warsaw")
         today = datetime.now(zone)
         last_night = today.date() if today.hour >= 2 else today.date() - timedelta(days=1)
@@ -140,6 +147,8 @@ def run(config):
         while not stop.is_set():
             if not thread.is_alive():
                 raise RuntimeError("Webhook listener stopped")
+            if promotion_thread is not None and not promotion_thread.is_alive():
+                raise RuntimeError("Promotion worker stopped")
             now = datetime.now(zone)
             if now.hour >= 2 and now.date() != last_night:
                 pending_scans.update(clients)
@@ -182,6 +191,9 @@ def run(config):
             if result["kind"] in ("rescan", "read-failed", "waiting"):
                 stop.wait(1)
     finally:
+        if promotion_thread is not None:
+            stop.set()
+            promotion_thread.join(timeout=10)
         if server is not None:
             if thread is not None and thread.is_alive():
                 server.shutdown()

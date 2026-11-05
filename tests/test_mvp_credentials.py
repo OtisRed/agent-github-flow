@@ -14,6 +14,22 @@ from mvp_credentials import AppToken, read_private_file
 
 @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography is unavailable")
 class AppTokenTests(unittest.TestCase):
+    def test_promotion_token_is_repo_scoped_and_rejects_extra_permissions(self):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+        permissions = {'issues': 'read', 'contents': 'write', 'pull_requests': 'write', 'administration': 'read'}
+        now = 1_800_000_000
+        def transport(path, jwt, *, body=None):
+            self.assertEqual(body, {'repository_ids': [20], 'permissions': permissions})
+            expiry = datetime.fromtimestamp(now + 3600, timezone.utc).isoformat()
+            return {'token': 'synthetic-token', 'expires_at': expiry,
+                    'permissions': dict(permissions, metadata='read', secrets='read')}, None
+        provider = AppToken(9, 10, 20, pem, transport=transport, clock=lambda: now, purpose='promotion')
+        with self.assertRaises(ValueError):
+            provider()
+
     def test_token_request_is_scoped_and_reused_until_near_expiry(self):
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import padding, rsa
