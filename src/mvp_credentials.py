@@ -35,7 +35,8 @@ def _b64(data):
 class AppToken:
     """Issue a short-lived, repository-scoped installation token in memory."""
 
-    def __init__(self, app_id, installation_id, repository_id, private_key_pem, *, transport=request, clock=time.time):
+    def __init__(self, app_id, installation_id, repository_id, private_key_pem, *, transport=request, clock=time.time,
+                 purpose="status"):
         if any(type(value) is not int or value <= 0 for value in (app_id, installation_id, repository_id)):
             raise ValueError("Invalid App configuration")
         if not isinstance(private_key_pem, bytes) or not callable(transport):
@@ -50,6 +51,12 @@ class AppToken:
             raise ValueError("Invalid App key") from None
         if not isinstance(self._key, RSAPrivateKey):
             raise ValueError("Invalid App key")
+        permissions = {"status": {"issues": "read"},
+                       "promotion": {"issues": "read", "contents": "write",
+                                     "pull_requests": "write", "administration": "read"}}
+        if purpose not in permissions:
+            raise ValueError("Invalid App token purpose")
+        self.permissions = permissions[purpose]
         self.app_id, self.installation_id, self.repository_id = app_id, installation_id, repository_id
         self.transport, self.clock = transport, clock
         self._cached, self._expires = None, 0
@@ -66,14 +73,16 @@ class AppToken:
         message = (header + "." + payload).encode("ascii")
         jwt = message.decode("ascii") + "." + _b64(self._key.sign(message, padding.PKCS1v15(), hashes.SHA256()))
         response, _ = self.transport(f"/app/installations/{self.installation_id}/access_tokens", jwt,
-            body={"repository_ids": [self.repository_id], "permissions": {"issues": "read"}})
+            body={"repository_ids": [self.repository_id], "permissions": self.permissions})
         if not isinstance(response, dict):
             raise ValueError("Invalid App token response")
         token, expiry, permissions = response.get("token"), response.get("expires_at"), response.get("permissions")
         if not isinstance(token, str) or not token or re.search(r"[\s\x00-\x1f\x7f]", token):
             raise ValueError("Invalid App token response")
-        if (not isinstance(permissions, dict) or permissions.get("issues") != "read"
-                or any(name not in ("issues", "metadata") or access != "read" for name, access in permissions.items())):
+        if (not isinstance(permissions, dict)
+                or any(permissions.get(name) != access for name, access in self.permissions.items())
+                or any((name not in self.permissions and (name != "metadata" or access != "read"))
+                       for name, access in permissions.items())):
             raise ValueError("Unexpected App token permissions")
         repositories = response.get("repositories")
         if repositories is not None and (not isinstance(repositories, list) or len(repositories) != 1
