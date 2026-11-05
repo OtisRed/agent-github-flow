@@ -31,6 +31,9 @@ jobs:
         run: node --test src/*.test.mjs
       - name: Verify GitHub Flow skill tests
         run: node --test skills/github-flow/tests/*.test.mjs
+      - name: Verify backup monitor decisions
+        shell: pwsh
+        run: ./tests/test_backup_monitor.ps1
       - name: Verify webhook spike tests
         run: python3 -m unittest discover -s spikes/mikrus-webhook -p 'test_*.py' -v
       - name: Verify detached webhook intake tests
