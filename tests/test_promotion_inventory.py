@@ -10,6 +10,7 @@ class InventoryTests(unittest.TestCase):
     def setUp(self):
         a, b, c = ('a' * 40, 'b' * 40, 'c' * 40)
         self.a, self.b, self.c = a, b, c
+        self.graphql_override = None
         self.values = {
             '/branches/main': {'commit': {'sha': a}},
             '/branches/smoke': {'commit': {'sha': c}},
@@ -24,10 +25,16 @@ class InventoryTests(unittest.TestCase):
 
     @staticmethod
     def pr(sha, n):
-        return {'merge_commit_sha': sha, 'base': {'ref': 'smoke'}, 'merged_at': '2026-11-01T00:00:00Z', 'body': f'Refs #{n}'}
+        return {'number': n, 'merge_commit_sha': sha, 'base': {'ref': 'smoke'}, 'merged_at': '2026-11-01T00:00:00Z', 'body': f'Refs #{n}'}
 
-    def transport(self, path, token):
+    def transport(self, path, token, *, body=None):
         self.assertEqual(token, 'test-token')
+        if path == '/graphql':
+            if self.graphql_override is not None:
+                return self.graphql_override, None
+            number = body['variables']['number']
+            oid = self.b if number == 1 else self.c
+            return {'data': {'repository': {'pullRequest': {'number': number, 'merged': True, 'mergeCommit': {'oid': oid}}}}}, None
         return self.values[path.removeprefix('/repos/example/repo')], None
 
     def run_inventory(self):
@@ -35,6 +42,21 @@ class InventoryTests(unittest.TestCase):
 
     def test_selects_contiguous_prefix(self):
         self.assertEqual(self.run_inventory()['plan'], {'kind': 'ready', 'sha': self.b, 'count': 1})
+
+    def test_current_rest_version_without_merge_commit_sha(self):
+        for sha in (self.b, self.c):
+            del self.values[f'/commits/{sha}/pulls?per_page=100'][0]['merge_commit_sha']
+        self.assertEqual(self.run_inventory()['plan'], {'kind': 'ready', 'sha': self.b, 'count': 1})
+
+    def test_missing_graphql_merge_commit_blocks(self):
+        self.graphql_override = {'data': {'repository': {'pullRequest': {'number': 1, 'merged': True, 'mergeCommit': None}}}}
+        with self.assertRaises(ValueError):
+            self.run_inventory()
+
+    def test_graphql_error_blocks(self):
+        self.graphql_override = {'errors': [{'message': 'unavailable'}], 'data': None}
+        with self.assertRaises(ValueError):
+            self.run_inventory()
 
     def test_missing_or_ambiguous_mapping_blocks(self):
         path = f'/commits/{self.b}/pulls?per_page=100'
