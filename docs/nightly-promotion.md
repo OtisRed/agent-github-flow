@@ -25,5 +25,6 @@ missing protection are recorded as `FLOW attention` in the service journal.
 GitHub cannot atomically condition a merge on the states of several issues or
 on an unchanged base branch. A reopen or base change in the small interval
 between the final read and GitHub's merge remains a race; branch protection
-still applies at merge time. Issue #24 covers validating the actual project CI
+still applies at merge time. The owner accepted the reopen risk on 5 November
+2026 and chose the final check followed by automatic promotion. Issue #24 covers validating the actual project CI
 and setting protection before production promotion. A merge is not a release.
