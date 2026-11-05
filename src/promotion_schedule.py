@@ -35,5 +35,8 @@ def run_promotions(stop, config, private_key, *, transport=request):
                           file=sys.stderr if alert else sys.stdout, flush=True)
                     previous[project['repository_id']] = result
         else:
+            for repository_id, result in previous.items():
+                if result in ('branch-created', 'pull-request-created', 'waiting-checks', 'changed'):
+                    print('FLOW attention: promotion-incomplete repo=' + str(repository_id), file=sys.stderr, flush=True)
             previous.clear()
         stop.wait(60)

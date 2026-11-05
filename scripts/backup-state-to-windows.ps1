@@ -37,7 +37,7 @@ function Get-ControllerWarnings {
         $health.service_active -isnot [bool] -or $health.nightly_scan_recent -isnot [bool]) {
       return 'Nie mozna potwierdzic stanu kontrolera.'
     }
-    foreach ($value in @($health.queue, $health.errors, $health.uncertain)) {
+    foreach ($value in @($health.queue, $health.errors, $health.uncertain, $health.promotion_errors, $health.promotion_missing)) {
       if (($value -isnot [int] -and $value -isnot [long]) -or $value -lt 0) {
         return 'Nie mozna potwierdzic stanu kontrolera.'
       }
@@ -47,6 +47,8 @@ function Get-ControllerWarnings {
     if ($health.errors -gt 0) { 'Kontroler zglosil blad wymagajacy sprawdzenia.' }
     if ($health.uncertain -gt 0) { 'Kontroler ma dlugo niepotwierdzony zapis.' }
     if ($health.queue -gt 0) { 'Nie mozna jeszcze potwierdzic oproznienia kolejki kontrolera.' }
+    if ($health.promotion_errors -gt 0) { 'Nocna promocja wymaga sprawdzenia.' }
+    if ($health.promotion_missing -gt 0) { 'Brak potwierdzenia nocnej promocji w ostatnich 48 godzinach.' }
   } catch {
     return 'Nie mozna potwierdzic stanu kontrolera.'
   }
@@ -124,19 +126,44 @@ try {
   # The source snapshot precedes the nightly scan, so inspect the live state
   # separately. Only aggregate, non-sensitive values cross SSH.
   $healthCode = @'
-import contextlib, json, sqlite3, subprocess, time
+import contextlib, json, os, re, sqlite3, subprocess, time
 try:
     active = subprocess.run(['systemctl', 'is-active', 'agent-github-flow-mvp.service'], capture_output=True, text=True, timeout=10).stdout.strip() == 'active'
     journal = subprocess.run(['journalctl', '-u', 'agent-github-flow-mvp.service', '--since', '48 hours ago', '--grep', 'FLOW scan: nightly candidates queued', '-n', '1', '--no-pager', '-o', 'cat'], capture_output=True, text=True, timeout=10)
     if journal.returncode != 0:
         raise RuntimeError('journal unavailable')
+    promotions = subprocess.run(['journalctl', '-u', 'agent-github-flow-mvp.service', '--since', '48 hours ago', '--grep', 'FLOW (promotion: |attention: promotion-)', '-n', '5000', '--no-pager', '-o', 'cat'], capture_output=True, text=True, timeout=10)
+    # journalctl returns 1 without stderr when a grep has no matches yet.
+    if promotions.returncode != 0 and not (promotions.returncode == 1 and not promotions.stdout and not promotions.stderr):
+        raise RuntimeError('promotion journal unavailable')
+    lines = promotions.stdout.splitlines()
+    if len(lines) >= 5000:
+        raise RuntimeError('promotion journal truncated')
+    states = {}
+    for line in lines:
+        match = re.fullmatch(r'FLOW (?:promotion: |attention: promotion-)([a-z-]+) repo=([0-9]+)', line)
+        if match:
+            states[match.group(2)] = match.group(1)
+    config_path = '/etc/agent-github-flow-mvp/config.json'
+    with open(config_path, encoding='utf-8') as config_file:
+        config = json.load(config_file)
+    enabled = set()
+    for project in config['projects']:
+        if project.get('promotion_enabled') is True:
+            if type(project.get('repository_id')) is not int or project['repository_id'] <= 0:
+                raise ValueError('invalid promotion configuration')
+            enabled.add(str(project['repository_id']))
+    # A newly enabled project has up to 48 hours to produce its first nightly entry.
+    missing = sum(repo not in states for repo in enabled) if time.time() - os.path.getmtime(config_path) >= 172800 else 0
     with contextlib.closing(sqlite3.connect('file:/var/lib/agent-github-flow-mvp/state.sqlite?mode=ro', uri=True, timeout=5)) as db:
         if db.execute('PRAGMA application_id').fetchone()[0] != 0x4147464D or db.execute('PRAGMA user_version').fetchone()[0] != 2:
             raise ValueError('unsupported schema')
         result = {'service_active': active, 'nightly_scan_recent': 'FLOW scan: nightly candidates queued' in journal.stdout,
                   'queue': db.execute('SELECT COUNT(*) FROM work_queue').fetchone()[0],
                   'errors': db.execute('SELECT COUNT(*) FROM issues WHERE error_code IS NOT NULL').fetchone()[0],
-                  'uncertain': db.execute('SELECT COUNT(*) FROM issues WHERE uncertain_since IS NOT NULL AND uncertain_since < ?', (time.time() - 180,)).fetchone()[0]}
+                  'uncertain': db.execute('SELECT COUNT(*) FROM issues WHERE uncertain_since IS NOT NULL AND uncertain_since < ?', (time.time() - 180,)).fetchone()[0],
+                  'promotion_errors': sum(states.get(repo) in ('failed', 'blocked', 'protection-required', 'incomplete') for repo in enabled),
+                  'promotion_missing': missing}
     print(json.dumps(result))
 except Exception:
     print(json.dumps({'read_error': True}))
