@@ -2,6 +2,22 @@ param(
   [string]$BackupDir = 'C:\Offline\Organizacja\agf-private-backups'
 )
 
+# The log contains only fixed phase names and timestamps. Keep it beside the
+# script so startup can be observed before the backup directory is checked.
+function Write-BackupPhase {
+  param([string]$Directory, [string]$RunStarted, [string]$Phase)
+  try {
+    $entry = @{ run_started_utc = $RunStarted; phase = $Phase; at_utc = [DateTime]::UtcNow.ToString('o') }
+    $line = ($entry | ConvertTo-Json -Compress) + [Environment]::NewLine
+    [System.IO.File]::AppendAllText((Join-Path $Directory 'backup-phases.log'), $line, [System.Text.UTF8Encoding]::new($false))
+  } catch {
+    # Missing diagnostics must never prevent a backup or its normal alert.
+  }
+}
+$ErrorActionPreference = 'Stop'
+$runStarted = [DateTime]::UtcNow.ToString('o')
+Write-BackupPhase -Directory $PSScriptRoot -RunStarted $runStarted -Phase 'script-started'
+
 # These functions keep the alert criteria independent of the actual backup and
 # SSH transport, so the decision can be checked without live credentials.
 function Get-PreviousRunWarning {
@@ -112,21 +128,6 @@ function Invoke-BoundedProcess {
   }
 }
 
-# Best-effort diagnostics only. The caller invokes this after checking the
-# private directory ACL; neither command arguments nor output are recorded.
-function Write-BackupPhase {
-  param([string]$Directory, [string]$RunStarted, [string]$Phase)
-  try {
-    $entry = @{ run_started_utc = $RunStarted; phase = $Phase; at_utc = [DateTime]::UtcNow.ToString('o') }
-    $line = ($entry | ConvertTo-Json -Compress) + [Environment]::NewLine
-    [System.IO.File]::AppendAllText((Join-Path $Directory 'backup-phases.log'), $line, [System.Text.UTF8Encoding]::new($false))
-  } catch {
-    # Missing diagnostics must never prevent a backup or its normal alert.
-  }
-}
-
-$ErrorActionPreference = 'Stop'
-$runStarted = [DateTime]::UtcNow.ToString('o')
 $result = 'failed'
 $reason = 'not-started'
 $checkedDir = $false
@@ -141,17 +142,20 @@ $scp = Join-Path $env:SystemRoot 'System32\OpenSSH\scp.exe'
 $options = @('-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2')
 
 try {
+  Write-BackupPhase -Directory $PSScriptRoot -RunStarted $runStarted -Phase 'before-directory'
   $dir = Get-Item -LiteralPath $BackupDir -Force
   if (-not $dir.PSIsContainer -or $dir.LinkType) { throw 'invalid-backup-directory' }
+  Write-BackupPhase -Directory $PSScriptRoot -RunStarted $runStarted -Phase 'before-acl'
   $acl = Get-Acl -LiteralPath $dir.FullName
   if (-not $acl.AreAccessRulesProtected) { throw 'inherited-backup-acl' }
+  Write-BackupPhase -Directory $PSScriptRoot -RunStarted $runStarted -Phase 'before-acl-identities'
   $allowed = @([System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544')
   foreach ($rule in $acl.Access) {
     $sid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
     if ($sid -notin $allowed) { throw 'unexpected-backup-acl' }
   }
   $checkedDir = $true
-  Write-BackupPhase -Directory $dir.FullName -RunStarted $runStarted -Phase 'preflight'
+  Write-BackupPhase -Directory $PSScriptRoot -RunStarted $runStarted -Phase 'preflight'
   if (-not (Test-Path -LiteralPath $python) -or -not (Test-Path -LiteralPath $ssh) -or -not (Test-Path -LiteralPath $scp)) { throw 'required-tool-unavailable' }
 
   $statusFile = Join-Path $dir.FullName 'last-run.json'
@@ -166,12 +170,12 @@ try {
   }
 
   $reason = 'source-unavailable'
-  Write-BackupPhase -Directory $dir.FullName -RunStarted $runStarted -Phase 'source-checksum'
+  Write-BackupPhase -Directory $PSScriptRoot -RunStarted $runStarted -Phase 'source-checksum'
   $before = Invoke-BoundedProcess -FilePath $ssh -ProcessArguments ($options + @('mikrus', "sha256sum -- $remotePath"))
   if ($before -notmatch '^([a-f0-9]{64})\s') { throw 'source-unavailable' }
   $expected = $Matches[1]
   $reason = 'source-stale'
-  Write-BackupPhase -Directory $dir.FullName -RunStarted $runStarted -Phase 'source-time'
+  Write-BackupPhase -Directory $PSScriptRoot -RunStarted $runStarted -Phase 'source-time'
   $sourceTime = Invoke-BoundedProcess -FilePath $ssh -ProcessArguments ($options + @('mikrus', "stat -c %Y -- $remotePath"))
   if ($sourceTime -notmatch '^\d+$') { throw $reason }
   $ageSeconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$sourceTime
@@ -181,18 +185,18 @@ try {
   $temporary = Join-Path $dir.FullName ('.state-' + $id + '.partial')
   $final = Join-Path $dir.FullName ('state-' + $id + '.sqlite')
   $reason = 'copy-failed'
-  Write-BackupPhase -Directory $dir.FullName -RunStarted $runStarted -Phase 'copy'
+  Write-BackupPhase -Directory $PSScriptRoot -RunStarted $runStarted -Phase 'copy'
   [void](Invoke-BoundedProcess -FilePath $scp -ProcessArguments ($options + @(('mikrus:' + $remotePath), $temporary)))
   if (-not (Test-Path -LiteralPath $temporary)) { throw 'copy-failed' }
 
   $reason = 'source-changed-or-checksum-mismatch'
-  Write-BackupPhase -Directory $dir.FullName -RunStarted $runStarted -Phase 'checksum-verification'
+  Write-BackupPhase -Directory $PSScriptRoot -RunStarted $runStarted -Phase 'checksum-verification'
   $after = Invoke-BoundedProcess -FilePath $ssh -ProcessArguments ($options + @('mikrus', "sha256sum -- $remotePath"))
   if ($after -notmatch '^([a-f0-9]{64})\s' -or $Matches[1] -ne $expected) { throw $reason }
   if ((Get-FileHash -Algorithm SHA256 -LiteralPath $temporary).Hash.ToLowerInvariant() -ne $expected) { throw $reason }
 
   $reason = 'integrity-check-failed'
-  Write-BackupPhase -Directory $dir.FullName -RunStarted $runStarted -Phase 'integrity-verification'
+  Write-BackupPhase -Directory $PSScriptRoot -RunStarted $runStarted -Phase 'integrity-verification'
   $pythonCode = 'import pathlib, sqlite3, sys; p=pathlib.Path(sys.argv[1]); c=sqlite3.connect(p.resolve().as_uri()+"?mode=ro",uri=True); ok=(c.execute("PRAGMA integrity_check").fetchone()[0]=="ok" and c.execute("PRAGMA application_id").fetchone()[0]==0x4147464D and c.execute("PRAGMA user_version").fetchone()[0] in (1,2)); c.close(); sys.exit(0 if ok else 1)'
   [void](Invoke-BoundedProcess -FilePath $python -ProcessArguments @('-', $temporary) -InputText $pythonCode)
   [System.IO.File]::Move($temporary, $final)
@@ -246,7 +250,7 @@ except Exception:
     print(json.dumps({'read_error': True}))
 '@
   try {
-    Write-BackupPhase -Directory $dir.FullName -RunStarted $runStarted -Phase 'controller-health'
+    Write-BackupPhase -Directory $PSScriptRoot -RunStarted $runStarted -Phase 'controller-health'
     $healthJson = Invoke-BoundedProcess -FilePath $ssh -ProcessArguments ($options + @('mikrus', 'python3 -')) -InputText $healthCode
     $healthWarnings = @(Get-ControllerWarnings -HealthJson $healthJson)
     # A queue may simply be processing a fresh event. Check once more before
@@ -269,7 +273,7 @@ except Exception:
   if ($reason -eq 'not-started') { $reason = 'preflight-failed' }
   if ($_.Exception.Message -in @('process-timeout', 'process-output-timeout', 'process-could-not-stop')) { $reason = 'process-timeout' }
 } finally {
-  if ($checkedDir) { Write-BackupPhase -Directory $dir.FullName -RunStarted $runStarted -Phase 'finalization' }
+  Write-BackupPhase -Directory $PSScriptRoot -RunStarted $runStarted -Phase 'finalization'
   if ($result -ne 'ok') { $warnings.Add('Nie udalo sie wykonac lub zweryfikowac kopii GitHub Flow.') }
   if ($checkedDir) {
     try {
@@ -287,7 +291,7 @@ except Exception:
     } catch { $warnings.Add('Nie mozna zapisac wyniku sprawdzenia kopii.') }
   }
   if ($warnings.Count -gt 0) {
-    if ($checkedDir) { Write-BackupPhase -Directory $dir.FullName -RunStarted $runStarted -Phase 'notification' }
+    Write-BackupPhase -Directory $PSScriptRoot -RunStarted $runStarted -Phase 'notification'
     try {
       # Reuse the installed Terminal app identity: the toast remains in the
       # user's notification center after its banner disappears. One fixed tag
@@ -317,7 +321,7 @@ except Exception:
       } catch { Write-Warning 'Nie mozna pokazac ostrzezenia Windows.' }
     }
   }
-  if ($checkedDir) { Write-BackupPhase -Directory $dir.FullName -RunStarted $runStarted -Phase 'finished' }
+  Write-BackupPhase -Directory $PSScriptRoot -RunStarted $runStarted -Phase 'finished'
 }
 if ($result -ne 'ok') { Write-Error ('Backup failed: ' + $reason); exit 1 }
 Write-Output 'Backup integrity and checksum verified.'

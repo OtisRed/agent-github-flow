@@ -95,4 +95,34 @@ try {
   Remove-Item -LiteralPath (Join-Path $diagnosticDir 'backup-phases.log') -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $diagnosticDir -Force -ErrorAction SilentlyContinue
 }
+
+# A failure before the backup directory can be checked must still leave an
+# early phase. The isolated fixture cannot show a notification or access SSH.
+$earlyDir = Join-Path ([IO.Path]::GetTempPath()) ('agf-early-phase-test-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $earlyDir | Out-Null
+try {
+  $earlyScript = Join-Path $earlyDir 'backup.ps1'
+  $earlyLog = Join-Path $earlyDir 'backup-phases.log'
+  $sourceText = [IO.File]::ReadAllText($source)
+  $fixture = $sourceText.Replace('if ($warnings.Count -gt 0) {', 'if ($false) {')
+  if ($fixture -eq $sourceText) { throw 'could not disable fixture notification' }
+  [IO.File]::WriteAllText($earlyScript, $fixture, [Text.UTF8Encoding]::new($false))
+  $shellPath = (Get-Process -Id $PID).Path
+  $previousPreference = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & $shellPath -NoProfile -NonInteractive -File $earlyScript -BackupDir (Join-Path $earlyDir 'missing') 2>&1 | Out-Null
+  } finally {
+    $ErrorActionPreference = $previousPreference
+  }
+  if ($LASTEXITCODE -eq 0) { throw 'missing backup directory unexpectedly succeeded' }
+  $global:LASTEXITCODE = 0
+  if (-not (Test-Path -LiteralPath $earlyLog)) { throw 'missing early phase log' }
+  $initial = (Get-Content -LiteralPath $earlyLog -TotalCount 1) | ConvertFrom-Json
+  Assert-Equal $initial.phase 'script-started' 'phase logged before preflight'
+} finally {
+  Remove-Item -LiteralPath (Join-Path $earlyDir 'backup-phases.log') -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath (Join-Path $earlyDir 'backup.ps1') -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $earlyDir -Force -ErrorAction SilentlyContinue
+}
 Write-Output 'Backup monitor decision tests passed.'
