@@ -14,7 +14,7 @@ class AdmissionTests(unittest.TestCase):
         self.trusted = frozenset({7})
 
     def review(self, cid, role="agent-prowadzacy", sha=None, result="pozytywny", author=7):
-        return {"id": cid, "author_id": author, "body": "\n".join([
+        return {"id": cid, "author_id": author, "updated_at": f"2026-11-07T00:00:{cid:02d}Z", "body": "\n".join([
             "[REVIEW]", "Rola: " + role, "Commit: " + (sha or self.sha), "Wynik: " + result,
             "Zakres: test", "DA: checked a failure path and found none"])}
 
@@ -38,6 +38,13 @@ class AdmissionTests(unittest.TestCase):
     def test_negative_newer_review_blocks_previous_positive(self):
         comments = [self.review(2, result="wymaga-poprawek"), self.review(1)]
         self.assertEqual(self.decision(comments), "review-requires-changes-agent-prowadzacy")
+
+    def test_edited_older_comment_is_not_hidden_by_later_comment_id(self):
+        old = self.review(1, result="wymaga-poprawek")
+        old["updated_at"] = "2026-11-07T00:00:03Z"
+        self.assertEqual(self.decision([old, self.review(2)]), "review-requires-changes-agent-prowadzacy")
+        old["updated_at"] = "2026-11-07T00:00:02Z"
+        self.assertEqual(self.decision([old, self.review(2)]), "ambiguous-review-agent-prowadzacy")
 
     def test_wrong_commit_untrusted_or_deleted_review_does_not_count(self):
         for comments in ([], [self.review(1, sha="b" * 40)], [self.review(1, author=8)]):

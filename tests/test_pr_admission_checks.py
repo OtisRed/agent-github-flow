@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from pr_admission_checks import protected_checks, tests_state
+from pr_admission_checks import protected_checks, rulesets_do_not_bypass_smoke, tests_state
 
 
 class CheckTests(unittest.TestCase):
@@ -37,6 +37,19 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(tests_state([dict(self.run, app={"id": 999})], self.sha, self.tests), "pending")
         self.assertEqual(tests_state([dict(self.run, head_sha="b" * 40)], self.sha, self.tests), "unknown")
         self.assertEqual(tests_state([], self.sha, self.tests), "pending")
+
+    def test_other_branch_ruleset_does_not_block_but_potential_bypass_does(self):
+        other = {"enforcement": "active", "target": "branch", "conditions": {"ref_name": {
+            "include": ["refs/heads/agent-github-flow/registry-anchor"], "exclude": []}},
+            "bypass_actors": [{"actor_type": "Integration", "actor_id": 10}]}
+        self.assertTrue(rulesets_do_not_bypass_smoke([other]))
+        other["conditions"]["ref_name"]["include"] = ["refs/heads/*"]
+        self.assertFalse(rulesets_do_not_bypass_smoke([other]))
+        other["bypass_actors"] = []
+        self.assertTrue(rulesets_do_not_bypass_smoke([other]))
+        other["conditions"]["ref_name"]["include"] = ["unknown-ref-format"]
+        other["bypass_actors"] = [{"actor_id": 10}]
+        self.assertFalse(rulesets_do_not_bypass_smoke([other]))
 
 
 if __name__ == "__main__":

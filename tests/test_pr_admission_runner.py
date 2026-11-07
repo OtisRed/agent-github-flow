@@ -36,7 +36,8 @@ class RunnerTests(unittest.TestCase):
                                 "body": "Refs #42", "base_ref": "smoke", "base_sha": "b" * 40, "same_repository": True,
                                 "auto_merge_enabled": False},
                          "issue": {"number": 42, "state": "open", "body": "Wymagane review: 1"},
-                         "comments": [{"id": 1, "author_id": 7, "body": comment}]}
+                         "comments": [{"id": 1, "author_id": 7, "body": comment,
+                                       "updated_at": "2026-11-07T00:00:00Z"}]}
 
     def run_step(self, first, second=None):
         gateway = Gateway([first] + ([second] if second is not None else []))

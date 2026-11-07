@@ -8,7 +8,7 @@ import re
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from pr_admission import SHA, pr_issue_number
-from pr_admission_checks import protected_checks, tests_state
+from pr_admission_checks import protected_checks, rulesets_do_not_bypass_smoke, tests_state
 
 MAX_PAGES = 10
 MERGE_PR = '''mutation($id:ID!,$sha:GitObjectID!){
@@ -19,6 +19,8 @@ MESSAGES = {
     "missing-review-subagent": "Brakuje aktualnego review wykonanego przez subagenta.",
     "review-requires-changes-agent-prowadzacy": "Review prowadzącego wymaga poprawek.",
     "review-requires-changes-subagent": "Review subagenta wymaga poprawek.",
+    "ambiguous-review-agent-prowadzacy": "Wyniki review prowadzącego mają niejednoznaczną kolejność.",
+    "ambiguous-review-subagent": "Wyniki review subagenta mają niejednoznaczną kolejność.",
     "invalid-review": "Komentarz review jest niepełny lub ma niepoprawny format, SHA albo DA.",
     "invalid-review-requirement": "Liczba wymaganych review w issue jest niejednoznaczna.",
     "invalid-issue-link": "PR musi wskazywać jedno otwarte issue przez samodzielne Refs #numer.",
@@ -61,7 +63,8 @@ class AdmissionReader:
                 author = item.get("user") if isinstance(item, dict) else None
                 if not isinstance(author, dict):
                     raise ValueError("Invalid comment author")
-                comments.append({"id": item.get("id"), "author_id": author.get("id"), "body": item.get("body")})
+                comments.append({"id": item.get("id"), "author_id": author.get("id"),
+                                 "body": item.get("body"), "updated_at": item.get("updated_at")})
             next_links = []
             if link:
                 if not isinstance(link, str):
@@ -100,6 +103,28 @@ class AdmissionReader:
             if len(result["check_runs"]) < 100:
                 raise ValueError("Incomplete check run listing")
         raise ValueError("Check run page limit")
+
+    def _rulesets(self, token):
+        result = []
+        for page in range(1, MAX_PAGES + 1):
+            path = "/rulesets?" + urlencode({"per_page": 100, "page": page, "includes_parents": "true"})
+            rows, link = self.transport(self.root + path, token)
+            if not isinstance(rows, list) or len(rows) > 100:
+                raise ValueError("Invalid ruleset listing")
+            # A partial page with another page advertised cannot prove the
+            # complete set of rules protecting this branch.
+            if link and len(rows) < 100 and 'rel="next"' in link:
+                raise ValueError("Incomplete ruleset listing")
+            for row in rows:
+                if not isinstance(row, dict) or type(row.get("id")) is not int or row["id"] <= 0:
+                    raise ValueError("Invalid ruleset identity")
+                detail = self._get(f"/rulesets/{row['id']}", token)
+                if not isinstance(detail, dict) or detail.get("id") != row["id"]:
+                    raise ValueError("Invalid ruleset detail")
+                result.append(detail)
+            if len(rows) < 100:
+                return result
+        raise ValueError("Ruleset page limit")
 
     def open_pr_numbers(self):
         token = self.token()
@@ -179,7 +204,8 @@ class AdmissionReader:
         protection, checks = False, "unknown"
         if self.admission is not None:
             rules = self._get("/branches/smoke/protection", token)
-            protection = protected_checks(rules, self.admission, self.required_tests)
+            protection = (protected_checks(rules, self.admission, self.required_tests)
+                          and rulesets_do_not_bypass_smoke(self._rulesets(token)))
             checks = tests_state(self._check_runs(sha, token), sha, self.required_tests)
             if pr.get("mergeable_state") != "clean" and checks == "success":
                 checks = "pending"

@@ -24,6 +24,34 @@ def protected_checks(protection, admission, tests):
     return all(actual.count(check) == 1 for check in configured)
 
 
+def rulesets_do_not_bypass_smoke(rulesets):
+    """Reject applicable rulesets with bypass actors or an unknown scope."""
+    if not isinstance(rulesets, list):
+        return False
+    for ruleset in rulesets:
+        if not isinstance(ruleset, dict) or ruleset.get("enforcement") not in ("active", "disabled", "evaluate"):
+            return False
+        if ruleset.get("target") not in ("branch", "tag", "push"):
+            return False
+        if ruleset["enforcement"] != "active" or ruleset["target"] != "branch":
+            continue
+        refs = (ruleset.get("conditions") or {}).get("ref_name")
+        if not isinstance(refs, dict) or not isinstance(refs.get("include"), list) or not isinstance(refs.get("exclude"), list):
+            return False
+        include, exclude = refs["include"], refs["exclude"]
+        if not include or any(not isinstance(x, str) for x in include + exclude):
+            return False
+        if "refs/heads/smoke" in exclude:
+            continue
+        # Exact unrelated branch names can be ignored. Special patterns and
+        # wildcards are conservatively treated as potentially matching smoke.
+        applies = any(x == "refs/heads/smoke" or not x.startswith("refs/heads/")
+                      or any(c in x for c in "*?[]{}") for x in include)
+        if applies and (not isinstance(ruleset.get("bypass_actors"), list) or ruleset["bypass_actors"]):
+            return False
+    return True
+
+
 def tests_state(runs, head, required):
     """Require latest check run for every explicit name/App pair on the head."""
     if not isinstance(runs, list) or not isinstance(head, str) or not isinstance(required, tuple) or not required:

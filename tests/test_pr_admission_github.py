@@ -63,6 +63,16 @@ class ReaderTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.reader.read_snapshot(4)
 
+    def test_ruleset_listing_rejects_incomplete_page(self):
+        self.rows["/rulesets?per_page=100&page=1&includes_parents=true"] = []
+        original = self.reader.transport
+        def partial(path, token, *, body=None):
+            result, _ = original(path, token, body=body)
+            return result, '<https://api.github.com/next>; rel="next"'
+        self.reader.transport = partial
+        with self.assertRaises(ValueError):
+            self.reader._rulesets("test-token")
+
     def test_detects_pr_changed_during_read(self):
         original = self.reader.transport
         count = 0
@@ -83,6 +93,7 @@ class ReaderTests(unittest.TestCase):
         self.rows["/branches/smoke/protection"] = {"enforce_admins": {"enabled": True},
             "required_status_checks": {"checks": [{"context": "flow-admission", "app_id": 10},
                                                  {"context": "verify", "app_id": 15368}]}}
+        self.rows["/rulesets?per_page=100&page=1&includes_parents=true"] = []
         self.rows[f"/commits/{self.sha}/check-runs?per_page=100&page=1"] = {"total_count": 1, "check_runs": [
             {"id": 5, "name": "verify", "app": {"id": 15368}, "head_sha": self.sha,
              "status": "completed", "conclusion": "success"}]}

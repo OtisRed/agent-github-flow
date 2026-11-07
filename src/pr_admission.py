@@ -1,6 +1,7 @@
 """Pure decision for the shared PR review contract; performs no GitHub writes."""
 
 import re
+from datetime import datetime
 
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -95,13 +96,26 @@ def evaluate(pr, issue, comments, trusted_author_ids):
             return "invalid-review"
         if review["Commit"] != head:
             continue
+        updated = comment.get("updated_at")
+        try:
+            stamp = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                return "invalid-review"
+            stamp = stamp.timestamp()
+        except (AttributeError, ValueError, TypeError, OverflowError, OSError):
+            return "invalid-review"
         role = review["Rola"]
-        if role not in latest or cid > latest[role][0]:
-            latest[role] = (cid, review)
+        prior = latest.get(role)
+        if prior is None or stamp > prior[0]:
+            latest[role] = (stamp, review, False)
+        elif stamp == prior[0] and review["Wynik"] != prior[1]["Wynik"]:
+            latest[role] = (stamp, prior[1], True)
     required_roles = ("agent-prowadzacy", "subagent") if required == 2 else ("agent-prowadzacy",)
     for role in required_roles:
         if role not in latest:
             return "missing-review-" + role
+        if latest[role][2]:
+            return "ambiguous-review-" + role
         if latest[role][1]["Wynik"] != "pozytywny":
             return "review-requires-changes-" + role
     return "ready"
