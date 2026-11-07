@@ -1,5 +1,7 @@
 # Mapa dokumentacji
 
+- [Admission PR na Mikrusie](docs/pr-admission.md) — przygotowywany check, testy, automatyczne scalanie i powrót.
+
 - [Ograniczona sonda atomowych refów przez App](docs/app-atomic-ref-probe.md) — zakres, wynik i odzyskiwanie.
 
 - [Standard i ustalone zasady](docs/standard.md) — uzgodnienia, zakres pierwszej wersji i otwarte decyzje.

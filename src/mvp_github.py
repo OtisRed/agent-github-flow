@@ -46,6 +46,8 @@ def request(path, token, *, body=None):
             raw = response.read(MAX_RESPONSE + 1)
             if len(raw) > MAX_RESPONSE:
                 raise ValueError("GitHub response too large")
+            if not raw and response.status in (201, 202, 204):
+                return None, response.headers.get("Link")
             return json.loads(raw), response.headers.get("Link")
     except (HTTPError, URLError, TimeoutError, OSError, ValueError, UnicodeError) as exc:
         raise RuntimeError("GitHub request failed") from None

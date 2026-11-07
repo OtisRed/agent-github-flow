@@ -57,6 +57,29 @@ class IntakeTests(unittest.TestCase):
         self.assertEqual(self.send(payload), "ignored")
         self.assertIsNone(self.store.next_pending())
 
+    def test_pr_comment_wakes_only_optional_admission_worker(self):
+        payload = self.payload()
+        payload["issue"]["pull_request"] = {}
+        body = json.dumps(payload).encode()
+        signature = "sha256=" + hmac.new(self.secret, body, hashlib.sha256).hexdigest()
+        signals = []
+        result = mvp_intake.receive(self.store, self.secret, self.registry, "issue_comment", signature, body,
+                                    wake_admission=lambda: signals.append(True))
+        self.assertEqual(result, "accepted")
+        self.assertEqual(signals, [True])
+        self.assertIsNone(self.store.next_pending())
+
+    def test_pr_event_is_only_a_wakeup_for_enrolled_installation(self):
+        payload = {"action": "ready_for_review", "repository": {"id": 20}, "installation": {"id": 10}}
+        body = json.dumps(payload).encode()
+        signature = "sha256=" + hmac.new(self.secret, body, hashlib.sha256).hexdigest()
+        signals = []
+        wake = lambda: signals.append(True)
+        self.assertEqual(mvp_intake.receive(self.store, self.secret, self.registry, "pull_request", signature,
+                                            body, wake_admission=wake), "accepted")
+        self.assertEqual(signals, [True])
+        self.assertIsNone(self.store.next_pending())
+
 
 if __name__ == "__main__":
     unittest.main()

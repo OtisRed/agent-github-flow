@@ -1,0 +1,182 @@
+import copy
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from pr_admission_github import AdmissionReader
+
+
+class ReaderTests(unittest.TestCase):
+    def setUp(self):
+        self.sha = "a" * 40
+        self.pr = {"number": 4, "state": "open", "draft": False, "body": "Refs #42", "auto_merge": None,
+                   "node_id": "PR_node", "mergeable_state": "clean",
+                   "head": {"sha": self.sha, "repo": {"id": 20}},
+                   "base": {"ref": "smoke", "sha": "b" * 40, "repo": {"id": 20}}}
+        self.rows = {"": {"id": 20, "full_name": "owner/repo"}, "/pulls/4": self.pr,
+                     "/issues/42": {"number": 42, "state": "open", "body": "Wymagane review: 1"},
+                     "/issues/4/comments?per_page=100&page=1": [{"id": 1, "user": {"id": 7}, "body": "test"}]}
+        self.calls = []
+        self.reader = AdmissionReader(owner="owner", repository="repo", repository_id=20,
+                                      token=lambda: "test-token", transport=self.transport)
+
+    def transport(self, path, _token, *, body=None):
+        self.assertIsNone(body)
+        self.calls.append(path)
+        return copy.deepcopy(self.rows[path.removeprefix("/repos/owner/repo")]), None
+
+    def test_reads_pr_issue_and_comments_without_using_pr_as_issue(self):
+        snapshot = self.reader.read_snapshot(4)
+        self.assertEqual(snapshot["issue"]["number"], 42)
+        self.assertEqual(snapshot["comments"][0]["author_id"], 7)
+        self.assertTrue(snapshot["pr"]["same_repository"])
+        self.assertEqual(self.calls.count("/repos/owner/repo/pulls/4"), 2)
+
+    def test_lists_only_ready_prs_and_rejects_bad_pagination(self):
+        path = "/pulls?state=open&base=smoke&per_page=100&page=1"
+        self.rows[path] = [{"number": 4, "draft": False}, {"number": 5, "draft": True}]
+        self.assertEqual(self.reader.open_pr_numbers(), [4])
+        original = self.reader.transport
+        def poisoned(path, token, *, body=None):
+            result, _ = original(path, token, body=body)
+            return result, '<https://elsewhere.invalid/pulls?page=2>; rel="next"'
+        self.reader.transport = poisoned
+        with self.assertRaises(ValueError):
+            self.reader.open_pr_numbers()
+
+    def test_fork_is_not_same_repository(self):
+        self.pr["head"]["repo"]["id"] = 99
+        self.assertFalse(self.reader.read_snapshot(4)["pr"]["same_repository"])
+
+    def test_wrong_repo_or_issue_that_is_a_pr_are_rejected(self):
+        self.rows[""]["id"] = 99
+        with self.assertRaises(ValueError):
+            self.reader.read_snapshot(4)
+        self.rows[""]["id"] = 20
+        self.rows["/issues/42"]["pull_request"] = {}
+        with self.assertRaises(ValueError):
+            self.reader.read_snapshot(4)
+
+    def test_no_auto_merge_field_is_not_inferred_as_disabled(self):
+        del self.pr["auto_merge"]
+        with self.assertRaises(ValueError):
+            self.reader.read_snapshot(4)
+
+    def test_ruleset_listing_rejects_incomplete_page(self):
+        self.rows["/rulesets?per_page=100&page=1&includes_parents=true"] = []
+        original = self.reader.transport
+        def partial(path, token, *, body=None):
+            result, _ = original(path, token, body=body)
+            return result, '<https://api.github.com/next>; rel="next"'
+        self.reader.transport = partial
+        with self.assertRaises(ValueError):
+            self.reader._rulesets("test-token")
+
+    def test_detects_pr_changed_during_read(self):
+        original = self.reader.transport
+        count = 0
+        def changed(path, token, *, body=None):
+            nonlocal count
+            result = original(path, token, body=body)
+            if path.endswith("/pulls/4"):
+                count += 1
+                if count == 2:
+                    result[0]["head"]["sha"] = "b" * 40
+            return result
+        self.reader.transport = changed
+        with self.assertRaises(ValueError):
+            self.reader.read_snapshot(4)
+
+    def test_check_protection_and_green_ci_are_read_from_expected_apps(self):
+        self.reader.admission, self.reader.required_tests = ("flow-admission", 10), (("verify", 15368),)
+        self.rows["/branches/smoke/protection"] = {"enforce_admins": {"enabled": True},
+            "required_status_checks": {"checks": [{"context": "flow-admission", "app_id": 10},
+                                                 {"context": "verify", "app_id": 15368}]}}
+        self.rows["/rulesets?per_page=100&page=1&includes_parents=true"] = []
+        self.rows[f"/commits/{self.sha}/check-runs?per_page=100&page=1"] = {"total_count": 1, "check_runs": [
+            {"id": 5, "name": "verify", "app": {"id": 15368}, "head_sha": self.sha,
+             "status": "completed", "conclusion": "success"}]}
+        snapshot = self.reader.read_snapshot(4)
+        self.assertTrue(snapshot["protection"])
+        self.assertEqual(snapshot["checks"], "success")
+
+    def test_merge_sends_only_one_expected_head_mutation(self):
+        writes = []
+        class Journal:
+            def begin(self, number, sha):
+                writes.append(("begin", number, sha))
+            def confirm_merged(self, number):
+                writes.append(("confirmed", number))
+        self.reader.journal = Journal()
+        def transport(path, token, *, body=None):
+            if path == "/graphql":
+                writes.append(body)
+                self.pr["state"] = "closed"
+                self.pr["merged"] = True
+                return {"data": {"mergePullRequest": {"pullRequest": {"merged": True}}}}, None
+            return self.transport(path, token, body=body)
+        self.reader.transport = transport
+        self.reader.merge(4, self.sha, "b" * 40)
+        self.assertEqual(len(writes), 3)
+        self.assertEqual(writes[0], ("begin", 4, self.sha))
+        self.assertEqual(writes[1]["variables"], {"id": "PR_node", "sha": self.sha})
+        self.assertEqual(writes[2], ("confirmed", 4))
+
+    def test_merge_refuses_changed_head(self):
+        with self.assertRaises(ValueError):
+            self.reader.merge(4, "b" * 40, "b" * 40)
+
+    def test_publishes_only_bounded_check_verdict_and_avoids_duplicate(self):
+        self.reader.admission = ("flow-admission", 10)
+        path = f"/commits/{self.sha}/check-runs?per_page=100&page=1"
+        self.rows[path] = {"total_count": 0, "check_runs": []}
+        writes = []
+        def transport(path, token, *, body=None):
+            if path == "/repos/owner/repo/check-runs":
+                writes.append(body)
+                return {"id": 21, "name": "flow-admission", "head_sha": self.sha, "app": {"id": 10}}, None
+            return self.transport(path, token, body=body)
+        self.reader.transport = transport
+        self.assertEqual(self.reader.publish(self.sha, "missing-review-subagent"), "published")
+        self.assertEqual(writes[0]["conclusion"], "failure")
+        self.assertIn("Brakuje aktualnego review wykonanego przez subagenta", writes[0]["output"]["summary"])
+        self.rows[path] = {"total_count": 1, "check_runs": [{"id": 21, "name": "flow-admission",
+            "head_sha": self.sha, "app": {"id": 10}, "status": "completed", "conclusion": "failure",
+            "output": {"summary": writes[0]["output"]["summary"]}}]}
+        self.assertEqual(self.reader.publish(self.sha, "missing-review-subagent"), "unchanged")
+        self.assertEqual(len(writes), 1)
+
+    def test_reruns_only_ci_failure_caused_by_admission_wait(self):
+        query = f"/actions/workflows/ci.yml/runs?event=pull_request&head_sha={self.sha}&per_page=100"
+        self.rows[query] = {"total_count": 1, "workflow_runs": [{"id": 19, "run_attempt": 1,
+            "status": "completed", "conclusion": "failure", "event": "pull_request", "head_sha": self.sha,
+            "head_repository": {"id": 20}, "pull_requests": [{"number": 4}]}]}
+        jobs_path = "/actions/runs/19/attempts/1/jobs?per_page=100"
+        self.rows[jobs_path] = {"total_count": 1, "jobs": [{"name": "verify", "conclusion": "failure",
+            "steps": [{"name": "Wait for flow admission", "conclusion": "failure"}]}]}
+        writes = []
+        def transport(path, token, *, body=None):
+            if path.endswith("/actions/runs/19/rerun-failed-jobs"):
+                writes.append(body)
+                return None, None
+            return self.transport(path, token, body=body)
+        self.reader.transport = transport
+        self.assertEqual(self.reader.rerun_blocked_ci(4), "rerun-requested")
+        self.assertEqual(self.reader.rerun_blocked_ci(4), "already-requested")
+        self.assertEqual(writes, [{}])
+
+    def test_failed_product_tests_are_not_automatically_rerun(self):
+        query = f"/actions/workflows/ci.yml/runs?event=pull_request&head_sha={self.sha}&per_page=100"
+        self.rows[query] = {"total_count": 1, "workflow_runs": [{"id": 19, "run_attempt": 1,
+            "status": "completed", "conclusion": "failure", "event": "pull_request", "head_sha": self.sha,
+            "head_repository": {"id": 20}, "pull_requests": [{"number": 4}]}]}
+        self.rows["/actions/runs/19/attempts/1/jobs?per_page=100"] = {"total_count": 1, "jobs": [
+            {"name": "verify", "conclusion": "failure", "steps": [
+                {"name": "Wait for flow admission", "conclusion": "success"},
+                {"name": "Verify Node tests", "conclusion": "failure"}]}]}
+        self.assertEqual(self.reader.rerun_blocked_ci(4), "not-gate-failure")
+
+
+if __name__ == "__main__":
+    unittest.main()
