@@ -1,7 +1,7 @@
 """Bounded PR admission orchestration; a supplied gateway owns GitHub IO.
 
-This module is not wired to the production controller. A gateway must return
-complete fresh snapshots, enforce repository/author identity, and ensure that
+The optional worker supplies a gateway that returns complete fresh snapshots,
+enforces repository/author identity, and ensures that
 the reported test evidence comes from the configured trusted CI. No mutation
 occurs on an exception, incomplete snapshot, or unconfirmed protection.
 """
