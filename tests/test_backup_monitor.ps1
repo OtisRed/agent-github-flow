@@ -115,6 +115,8 @@ try {
   } finally {
     $ErrorActionPreference = $previousPreference
   }
+  if ($LASTEXITCODE -eq 0) { throw 'missing backup directory unexpectedly succeeded' }
+  $global:LASTEXITCODE = 0
   if (-not (Test-Path -LiteralPath $earlyLog)) { throw 'missing early phase log' }
   $initial = (Get-Content -LiteralPath $earlyLog -TotalCount 1) | ConvertFrom-Json
   Assert-Equal $initial.phase 'script-started' 'phase logged before preflight'
