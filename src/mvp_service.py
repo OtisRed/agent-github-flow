@@ -62,6 +62,8 @@ def validate_config(config):
             raise ValueError("Invalid project")
         if 'promotion_enabled' in project and type(project['promotion_enabled']) is not bool:
             raise ValueError("Invalid promotion setting")
+        if 'status_enabled' in project and type(project['status_enabled']) is not bool:
+            raise ValueError("Invalid status setting")
         if 'admission_enabled' in project and type(project['admission_enabled']) is not bool:
             raise ValueError("Invalid admission setting")
         if project.get('admission_enabled') is True:
@@ -137,6 +139,8 @@ def run(config):
         clients = {}
         for project in config["projects"]:
             repository_id = project["repository_id"]
+            if project.get("status_enabled") is False:
+                continue
             store.register_boundary(repository_id, project["enrolled_at"])
             token = AppToken(config["app_id"], config["installation_id"], repository_id, private_key)
             client = GitHub(repository_id=repository_id, owner=project["owner"], repository=project["repository"],
@@ -145,7 +149,8 @@ def run(config):
             clients[repository_id] = (client, project["enrolled_at"], frozenset(project["trusted_author_ids"]))
         readers = build_readers(config, private_key)
         server = make_server(store, webhook_secret, registry, port=config["port"],
-                             wake_admission=wake_admission.set if readers else None)
+                             wake_admission=wake_admission.set if readers else None,
+                             status_repositories=frozenset(clients))
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         signal.signal(signal.SIGTERM, lambda *_: stop.set())

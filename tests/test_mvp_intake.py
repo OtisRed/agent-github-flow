@@ -80,6 +80,26 @@ class IntakeTests(unittest.TestCase):
         self.assertEqual(signals, [True])
         self.assertIsNone(self.store.next_pending())
 
+    def test_admission_only_repository_never_queues_issue_status(self):
+        signals = []
+        payload = self.payload()
+        body = json.dumps(payload).encode()
+        signature = "sha256=" + hmac.new(self.secret, body, hashlib.sha256).hexdigest()
+        result = mvp_intake.receive(self.store, self.secret, self.registry, "issue_comment", signature, body,
+                                    wake_admission=lambda: signals.append(True), status_repositories=frozenset())
+        self.assertEqual(result, "ignored")
+        self.assertEqual(signals, [True])
+        self.assertIsNone(self.store.next_pending())
+
+    def test_status_enabled_repository_still_queues_issue(self):
+        payload = self.payload()
+        body = json.dumps(payload).encode()
+        signature = "sha256=" + hmac.new(self.secret, body, hashlib.sha256).hexdigest()
+        result = mvp_intake.receive(self.store, self.secret, self.registry, "issue_comment", signature, body,
+                                    status_repositories=frozenset({20}))
+        self.assertEqual(result, "accepted")
+        self.assertEqual(self.store.next_pending()["repository_id"], 20)
+
 
 if __name__ == "__main__":
     unittest.main()

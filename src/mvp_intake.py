@@ -12,9 +12,12 @@ import sqlite3
 from webhook_ingress import ACTIONS, IGNORED_ISSUE_ACTIONS, MAX_BODY, SIGNATURE, positive_id
 
 
-def receive(store, secret, registry, event, signature, body, *, wake_admission=None):
+def receive(store, secret, registry, event, signature, body, *, wake_admission=None, status_repositories=None):
     """Return 'accepted' only after the store commits; never persist a payload."""
     if not isinstance(secret, bytes) or len(secret) < 32 or not isinstance(registry, frozenset) or not registry:
+        return "configuration_error"
+    if status_repositories is not None and (not isinstance(status_repositories, frozenset)
+            or any(not positive_id(value) for value in status_repositories)):
         return "configuration_error"
     if (not isinstance(body, bytes) or not 0 < len(body) <= MAX_BODY
             or not isinstance(signature, str) or not SIGNATURE.fullmatch(signature)):
@@ -70,6 +73,10 @@ def receive(store, secret, registry, event, signature, body, *, wake_admission=N
         comment = payload.get("comment")
         if not isinstance(comment, dict) or not positive_id(comment.get("id")):
             return "invalid"
+    if status_repositories is not None and repository_id not in status_repositories:
+        if callable(wake_admission):
+            wake_admission()
+        return "ignored"
     try:
         store.enqueue(repository_id, issue["number"])
     except (sqlite3.Error, OSError, ValueError):
