@@ -6,7 +6,7 @@ the reported test evidence comes from the configured trusted CI. No mutation
 occurs on an exception, incomplete snapshot, or unconfirmed protection.
 """
 
-from pr_admission import evaluate
+from pr_admission import SHA, evaluate
 
 
 def _decision(snapshot, trusted_authors):
@@ -16,7 +16,8 @@ def _decision(snapshot, trusted_authors):
     if not isinstance(pr, dict):
         return "incomplete-snapshot"
     if (pr.get("base_ref") != "smoke" or pr.get("same_repository") is not True
-            or pr.get("auto_merge_enabled") is not False):
+            or pr.get("auto_merge_enabled") is not False
+            or not isinstance(pr.get("base_sha"), str) or not SHA.fullmatch(pr["base_sha"])):
         return "unsupported-pr"
     return evaluate(pr, snapshot.get("issue"), snapshot.get("comments"), trusted_authors)
 
@@ -63,5 +64,5 @@ def admission_step(gateway, pr_number, trusted_authors):
         return "checks-or-protection-changed"
     # GitHub must enforce `head` as its expected head in the merge call.
     # A thrown error or timeout is propagated; no blind second write is made.
-    gateway.merge(pr_number, head)
+    gateway.merge(pr_number, head, second["pr"]["base_sha"])
     return "merge-requested"

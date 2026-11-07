@@ -27,7 +27,7 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(self.decision([self.review(1)]), "ready")
 
     def test_requirement_rejects_invalid_and_duplicate_values(self):
-        for body in ("Wymagane review: 0", "Wymagane review: 2\nWymagane review: 1", "Wymagane review: two", "Wymagane review - 2"):
+        for body in ("Wymagane review: 0", "Wymagane review: 2\nWymagane review: 1", "Wymagane review: two", "Wymagane review - 2", "Wymagane  review: 2", "**Wymagane review: 2**"):
             self.assertIsNone(issue_requirement(body))
 
     def test_two_reviews_require_subagent_not_duplicate(self):

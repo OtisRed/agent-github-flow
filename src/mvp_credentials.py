@@ -52,7 +52,7 @@ class AppToken:
         if not isinstance(self._key, RSAPrivateKey):
             raise ValueError("Invalid App key")
         permissions = {"status": {"issues": "read"},
-                       "admission": {"issues": "read", "contents": "read", "pull_requests": "write",
+                       "admission": {"issues": "read", "contents": "write", "pull_requests": "write",
                                      "checks": "write", "actions": "write", "administration": "read"},
                        "promotion": {"issues": "read", "contents": "write",
                                      "pull_requests": "write", "administration": "read"}}

@@ -13,21 +13,37 @@ from pr_admission_checks import protected_checks, tests_state
 MAX_PAGES = 10
 MERGE_PR = '''mutation($id:ID!,$sha:GitObjectID!){
  mergePullRequest(input:{pullRequestId:$id,mergeMethod:MERGE,expectedHeadOid:$sha}){pullRequest{merged}}}'''
+MESSAGES = {
+    "ready": "Wymagane review odpowiadają aktualnej wersji PR.",
+    "missing-review-agent-prowadzacy": "Brakuje aktualnego review agenta prowadzącego.",
+    "missing-review-subagent": "Brakuje aktualnego review wykonanego przez subagenta.",
+    "review-requires-changes-agent-prowadzacy": "Review prowadzącego wymaga poprawek.",
+    "review-requires-changes-subagent": "Review subagenta wymaga poprawek.",
+    "invalid-review": "Komentarz review jest niepełny lub ma niepoprawny format, SHA albo DA.",
+    "invalid-review-requirement": "Liczba wymaganych review w issue jest niejednoznaczna.",
+    "invalid-issue-link": "PR musi wskazywać jedno otwarte issue przez samodzielne Refs #numer.",
+    "review-input-changed": "Kontrakt lub review zmieniły się podczas sprawdzania; nastąpi ponowna ocena.",
+    "unsupported-pr": "PR musi dotyczyć tego repozytorium i gałęzi smoke, bez uzbrojonego auto-merge.",
+    "pr-not-ready": "PR nadal jest draftem lub nie jest otwarty.",
+}
 
 
 class AdmissionReader:
     def __init__(self, *, owner, repository, repository_id, token, transport,
-                 admission=None, required_tests=(), journal=None):
+                 admission=None, required_tests=(), journal=None, workflow="ci.yml", gate_job="verify"):
         if (not isinstance(owner, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", owner)
                 or not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", repository)
                 or repository in (".", "..") or type(repository_id) is not int or repository_id <= 0
-                or not callable(token) or not callable(transport)):
+                or not callable(token) or not callable(transport)
+                or not isinstance(workflow, str) or not re.fullmatch(r"[A-Za-z0-9_-]+\.ya?ml", workflow)
+                or not isinstance(gate_job, str) or not gate_job or len(gate_job) > 100):
             raise ValueError("Invalid admission reader configuration")
         self.root = f"/repos/{owner}/{repository}"
         self.full_name = f"{owner}/{repository}"
         self.repository_id, self.token, self.transport = repository_id, token, transport
         self.admission, self.required_tests = admission, required_tests
         self.journal = journal
+        self.workflow, self.gate_job = workflow, gate_job
         self._requested_ci_attempts = set()
 
     def _get(self, path, token):
@@ -89,7 +105,7 @@ class AdmissionReader:
         token = self.token()
         numbers = []
         for page in range(1, MAX_PAGES + 1):
-            rows = self._get("/pulls?" + urlencode({"state": "open", "base": "smoke", "per_page": 100, "page": page}), token)
+            rows, link = self.transport(self.root + "/pulls?" + urlencode({"state": "open", "base": "smoke", "per_page": 100, "page": page}), token)
             if not isinstance(rows, list) or len(rows) > 100:
                 raise ValueError("Invalid pull request listing")
             for row in rows:
@@ -99,7 +115,25 @@ class AdmissionReader:
                     numbers.append(row["number"])
                 elif row.get("draft") is not True:
                     raise ValueError("Unknown pull request draft state")
-            if len(rows) < 100:
+            next_links = []
+            if link:
+                if not isinstance(link, str):
+                    raise ValueError("Invalid PR pagination")
+                for part in re.split(r",\s*(?=<)", link):
+                    match = re.fullmatch(r'<([^>]+)>;\s*rel="([^"]+)"', part.strip())
+                    if not match:
+                        raise ValueError("Invalid PR pagination")
+                    if match.group(2) == "next":
+                        next_links.append(match.group(1))
+                if len(next_links) > 1:
+                    raise ValueError("Ambiguous PR pagination")
+                if next_links:
+                    parsed = urlparse(next_links[0])
+                    if (parsed.scheme != "https" or parsed.netloc != "api.github.com"
+                            or parsed.path not in (self.root + "/pulls", f"/repositories/{self.repository_id}/pulls")
+                            or parsed.fragment or parse_qs(parsed.query).get("page") != [str(page + 1)]):
+                        raise ValueError("Invalid next PR page")
+            if not next_links and len(rows) < 100:
                 if len(set(numbers)) != len(numbers):
                     raise ValueError("Duplicate pull request")
                 return numbers
@@ -122,8 +156,10 @@ class AdmissionReader:
             raise ValueError("Invalid PR references")
         head_repo, base_repo = head.get("repo"), base.get("repo")
         sha = head.get("sha")
-        if not isinstance(sha, str) or not SHA.fullmatch(sha):
-            raise ValueError("Invalid PR head")
+        base_sha = base.get("sha")
+        if (not isinstance(sha, str) or not SHA.fullmatch(sha)
+                or not isinstance(base_sha, str) or not SHA.fullmatch(base_sha)):
+            raise ValueError("Invalid PR head or base")
         same_repo = (isinstance(head_repo, dict) and isinstance(base_repo, dict)
                      and head_repo.get("id") == self.repository_id and base_repo.get("id") == self.repository_id)
         number_in_body = pr_issue_number(pr.get("body"))
@@ -150,13 +186,14 @@ class AdmissionReader:
         return {"complete": True, "protection": protection, "checks": checks,
                 "pr": {"number": number, "state": pr.get("state"),
                 "draft": pr.get("draft"), "head_sha": sha, "body": pr.get("body"),
-                "base_ref": base.get("ref"), "same_repository": same_repo,
+                "base_ref": base.get("ref"), "base_sha": base_sha, "same_repository": same_repo,
                 "auto_merge_enabled": pr.get("auto_merge") is not None, "node_id": pr.get("node_id")},
                 "issue": issue, "comments": comments}
 
-    def merge(self, number, expected_sha):
+    def merge(self, number, expected_sha, expected_base):
         """Guard the exact head via GitHub; a caller must freshly check all inputs."""
-        if type(number) is not int or number <= 0 or not isinstance(expected_sha, str) or not SHA.fullmatch(expected_sha):
+        if (type(number) is not int or number <= 0 or not isinstance(expected_sha, str) or not SHA.fullmatch(expected_sha)
+                or not isinstance(expected_base, str) or not SHA.fullmatch(expected_base)):
             raise ValueError("Invalid merge request")
         if self.journal is None:
             raise ValueError("Merge journal unavailable")
@@ -166,6 +203,7 @@ class AdmissionReader:
                 or pr.get("draft") is not False or (pr.get("head") or {}).get("sha") != expected_sha
                 or "auto_merge" not in pr or pr.get("auto_merge") is not None
                 or (pr.get("base") or {}).get("ref") != "smoke"
+                or (pr.get("base") or {}).get("sha") != expected_base
                 or ((pr.get("base") or {}).get("repo") or {}).get("id") != self.repository_id
                 or ((pr.get("head") or {}).get("repo") or {}).get("id") != self.repository_id
                 or not isinstance(pr.get("node_id"), str) or not pr["node_id"]):
@@ -181,6 +219,23 @@ class AdmissionReader:
                 or after.get("merged") is not True or (after.get("head") or {}).get("sha") != expected_sha):
             raise ValueError("Merge readback unavailable")
         self.journal.confirm_merged(number)
+
+    def reconcile_merges(self):
+        """Clear markers only after GitHub confirms the same PR head merged."""
+        if self.journal is None:
+            raise ValueError("Merge journal unavailable")
+        pending = self.journal.pending()
+        if not pending:
+            return 0
+        token, unresolved = self.token(), 0
+        for number, sha in pending:
+            pr = self._get(f"/pulls/{number}", token)
+            if (isinstance(pr, dict) and pr.get("number") == number and pr.get("state") == "closed"
+                    and pr.get("merged") is True and (pr.get("head") or {}).get("sha") == sha):
+                self.journal.confirm_merged(number)
+            else:
+                unresolved += 1
+        return unresolved
 
     def publish(self, sha, verdict):
         """Publish only a changed admission outcome; never include private data."""
@@ -199,11 +254,14 @@ class AdmissionReader:
             raise ValueError("Invalid admission check")
         latest = max(matching, key=lambda run: run["id"], default=None)
         conclusion = "success" if verdict == "ready" else "failure"
+        summary = verdict + "\n" + MESSAGES.get(verdict, "Nie można potwierdzić warunków admission.")
+        if verdict != "ready":
+            summary += " Sprawdź instrukcję skilla github-flow."
         if (latest is not None and latest.get("status") == "completed" and latest.get("conclusion") == conclusion
-                and isinstance(latest.get("output"), dict) and latest["output"].get("summary") == verdict):
+                and isinstance(latest.get("output"), dict) and latest["output"].get("summary") == summary):
             return "unchanged"
         payload = {"name": name, "head_sha": sha, "status": "completed", "conclusion": conclusion,
-                   "output": {"title": "Agent flow admission", "summary": verdict}}
+                   "output": {"title": "Agent flow admission", "summary": summary}}
         result, _ = self.transport(self.root + "/check-runs", token, body=payload)
         if (not isinstance(result, dict) or type(result.get("id")) is not int or result["id"] <= 0
                 or result.get("head_sha") != sha or result.get("name") != name
@@ -223,7 +281,7 @@ class AdmissionReader:
         if not isinstance(sha, str) or not SHA.fullmatch(sha):
             return "not-eligible"
         query = urlencode({"event": "pull_request", "head_sha": sha, "per_page": 100})
-        result = self._get("/actions/workflows/ci.yml/runs?" + query, token)
+        result = self._get("/actions/workflows/" + self.workflow + "/runs?" + query, token)
         if (not isinstance(result, dict) or type(result.get("total_count")) is not int
                 or not isinstance(result.get("workflow_runs"), list)
                 or result["total_count"] != len(result["workflow_runs"]) or result["total_count"] > 100):
@@ -253,7 +311,7 @@ class AdmissionReader:
                 or not isinstance(jobs.get("jobs"), list) or jobs["total_count"] != len(jobs["jobs"])
                 or jobs["total_count"] > 100):
             raise ValueError("Incomplete workflow jobs")
-        verify = [job for job in jobs["jobs"] if isinstance(job, dict) and job.get("name") == "verify"]
+        verify = [job for job in jobs["jobs"] if isinstance(job, dict) and job.get("name") == self.gate_job]
         if len(verify) != 1 or verify[0].get("conclusion") != "failure":
             return "not-gate-failure"
         steps = verify[0].get("steps")

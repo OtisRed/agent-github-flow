@@ -5,7 +5,7 @@ import re
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 REQUIREMENT = re.compile(r"^\s*Wymagane review\s*:(.*)$", re.IGNORECASE)
-REQUIREMENT_PREFIX = re.compile(r"^\s*Wymagane review\b", re.IGNORECASE)
+REQUIREMENT_PREFIX = re.compile(r"^\s*(?:[-*]\s*)?(?:\*{0,2})Wymagane\s+review\b", re.IGNORECASE)
 REF = re.compile(r"^\s*Refs\s+#([1-9][0-9]*)\s*$", re.IGNORECASE)
 FIELDS = ("Rola", "Commit", "Wynik", "Zakres", "DA")
 ROLES = frozenset(("agent-prowadzacy", "subagent"))
@@ -73,7 +73,8 @@ def evaluate(pr, issue, comments, trusted_author_ids):
     if not isinstance(head, str) or not SHA.fullmatch(head):
         return "invalid-head"
     number = pr_issue_number(pr.get("body"))
-    if number is None or issue.get("number") != number or issue.get("state") != "open":
+    if (number is None or type(issue.get("number")) is not int or issue.get("number") != number
+            or issue.get("state") != "open"):
         return "invalid-issue-link"
     required = issue_requirement(issue.get("body"))
     if required is None:

@@ -13,7 +13,7 @@ class ReaderTests(unittest.TestCase):
         self.pr = {"number": 4, "state": "open", "draft": False, "body": "Refs #42", "auto_merge": None,
                    "node_id": "PR_node", "mergeable_state": "clean",
                    "head": {"sha": self.sha, "repo": {"id": 20}},
-                   "base": {"ref": "smoke", "repo": {"id": 20}}}
+                   "base": {"ref": "smoke", "sha": "b" * 40, "repo": {"id": 20}}}
         self.rows = {"": {"id": 20, "full_name": "owner/repo"}, "/pulls/4": self.pr,
                      "/issues/42": {"number": 42, "state": "open", "body": "Wymagane review: 1"},
                      "/issues/4/comments?per_page=100&page=1": [{"id": 1, "user": {"id": 7}, "body": "test"}]}
@@ -32,6 +32,18 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(snapshot["comments"][0]["author_id"], 7)
         self.assertTrue(snapshot["pr"]["same_repository"])
         self.assertEqual(self.calls.count("/repos/owner/repo/pulls/4"), 2)
+
+    def test_lists_only_ready_prs_and_rejects_bad_pagination(self):
+        path = "/pulls?state=open&base=smoke&per_page=100&page=1"
+        self.rows[path] = [{"number": 4, "draft": False}, {"number": 5, "draft": True}]
+        self.assertEqual(self.reader.open_pr_numbers(), [4])
+        original = self.reader.transport
+        def poisoned(path, token, *, body=None):
+            result, _ = original(path, token, body=body)
+            return result, '<https://elsewhere.invalid/pulls?page=2>; rel="next"'
+        self.reader.transport = poisoned
+        with self.assertRaises(ValueError):
+            self.reader.open_pr_numbers()
 
     def test_fork_is_not_same_repository(self):
         self.pr["head"]["repo"]["id"] = 99
@@ -94,7 +106,7 @@ class ReaderTests(unittest.TestCase):
                 return {"data": {"mergePullRequest": {"pullRequest": {"merged": True}}}}, None
             return self.transport(path, token, body=body)
         self.reader.transport = transport
-        self.reader.merge(4, self.sha)
+        self.reader.merge(4, self.sha, "b" * 40)
         self.assertEqual(len(writes), 3)
         self.assertEqual(writes[0], ("begin", 4, self.sha))
         self.assertEqual(writes[1]["variables"], {"id": "PR_node", "sha": self.sha})
@@ -102,7 +114,7 @@ class ReaderTests(unittest.TestCase):
 
     def test_merge_refuses_changed_head(self):
         with self.assertRaises(ValueError):
-            self.reader.merge(4, "b" * 40)
+            self.reader.merge(4, "b" * 40, "b" * 40)
 
     def test_publishes_only_bounded_check_verdict_and_avoids_duplicate(self):
         self.reader.admission = ("flow-admission", 10)
@@ -117,10 +129,10 @@ class ReaderTests(unittest.TestCase):
         self.reader.transport = transport
         self.assertEqual(self.reader.publish(self.sha, "missing-review-subagent"), "published")
         self.assertEqual(writes[0]["conclusion"], "failure")
-        self.assertEqual(writes[0]["output"]["summary"], "missing-review-subagent")
+        self.assertIn("Brakuje aktualnego review wykonanego przez subagenta", writes[0]["output"]["summary"])
         self.rows[path] = {"total_count": 1, "check_runs": [{"id": 21, "name": "flow-admission",
             "head_sha": self.sha, "app": {"id": 10}, "status": "completed", "conclusion": "failure",
-            "output": {"summary": "missing-review-subagent"}}]}
+            "output": {"summary": writes[0]["output"]["summary"]}}]}
         self.assertEqual(self.reader.publish(self.sha, "missing-review-subagent"), "unchanged")
         self.assertEqual(len(writes), 1)
 

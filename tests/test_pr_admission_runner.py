@@ -17,8 +17,8 @@ class Gateway:
     def read_snapshot(self, _number):
         return self.snapshots.pop(0)
 
-    def merge(self, number, sha):
-        self.merges.append((number, sha))
+    def merge(self, number, sha, base):
+        self.merges.append((number, sha, base))
         if self.fail_merge:
             raise TimeoutError()
 
@@ -33,7 +33,7 @@ class RunnerTests(unittest.TestCase):
                              "Wynik: pozytywny", "Zakres: paths", "DA: checked missing data"))
         self.snapshot = {"complete": True, "protection": True, "checks": "success",
                          "pr": {"state": "open", "draft": False, "head_sha": self.sha,
-                                "body": "Refs #42", "base_ref": "smoke", "same_repository": True,
+                                "body": "Refs #42", "base_ref": "smoke", "base_sha": "b" * 40, "same_repository": True,
                                 "auto_merge_enabled": False},
                          "issue": {"number": 42, "state": "open", "body": "Wymagane review: 1"},
                          "comments": [{"id": 1, "author_id": 7, "body": comment}]}
@@ -45,7 +45,7 @@ class RunnerTests(unittest.TestCase):
     def test_merge_is_guarded_by_second_read_and_exact_head(self):
         result, merges = self.run_step(self.snapshot, copy.deepcopy(self.snapshot))
         self.assertEqual(result, "merge-requested")
-        self.assertEqual(merges, [(4, self.sha)])
+        self.assertEqual(merges, [(4, self.sha, "b" * 40)])
 
     def test_changed_or_deleted_review_between_reads_prevents_merge(self):
         later = copy.deepcopy(self.snapshot)
@@ -75,6 +75,13 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result, "missing-review-agent-prowadzacy")
         self.assertEqual(merges, [])
 
+    def test_base_change_between_reads_prevents_merge(self):
+        later = copy.deepcopy(self.snapshot)
+        later["pr"]["base_sha"] = "c" * 40
+        result, merges = self.run_step(self.snapshot, later)
+        self.assertEqual(result, "review-input-changed")
+        self.assertEqual(merges, [])
+
     def test_unprotected_pending_failed_or_unknown_checks_never_merge(self):
         for key, value in (("protection", False), ("checks", "pending"), ("checks", "failure"), ("checks", None)):
             snapshot = copy.deepcopy(self.snapshot)
@@ -93,7 +100,7 @@ class RunnerTests(unittest.TestCase):
         gateway = Gateway([self.snapshot, copy.deepcopy(self.snapshot)], fail_merge=True)
         with self.assertRaises(TimeoutError):
             admission_step(gateway, 4, frozenset({7}))
-        self.assertEqual(gateway.merges, [(4, self.sha)])
+        self.assertEqual(gateway.merges, [(4, self.sha, "b" * 40)])
 
 
 if __name__ == "__main__":

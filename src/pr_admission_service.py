@@ -22,18 +22,25 @@ def build_readers(config, private_key, *, transport=request):
         reader = AdmissionReader(owner=project["owner"], repository=project["repository"],
                                  repository_id=repository_id, token=token, transport=transport,
                                  admission=("flow-admission", config["app_id"]), required_tests=tests,
-                                 journal=MergeJournal(Path(config["state_path"]).parent, repository_id))
+                                 journal=MergeJournal(Path(config["state_path"]).parent, repository_id),
+                                 workflow=project.get("admission_workflow", "ci.yml"),
+                                 gate_job=project.get("admission_gate_job", "verify"))
         readers.append((reader, frozenset(project["trusted_author_ids"])))
     return readers
 
 
 def run_admission(stop, wake, readers):
     """Rescan open PRs on startup, wakeups and a bounded periodic fallback."""
+    reported = {}
     while not stop.is_set():
         for reader, authors in readers:
             if stop.is_set():
                 break
             try:
+                uncertain = reader.reconcile_merges()
+                if uncertain and not reported.get((reader.repository_id, "uncertain")):
+                    print("FLOW attention: admission-merge-uncertain", file=sys.stderr, flush=True)
+                reported[(reader.repository_id, "uncertain")] = bool(uncertain)
                 numbers = reader.open_pr_numbers()
             except Exception:
                 print("FLOW attention: admission-list-failed", file=sys.stderr, flush=True)
@@ -48,7 +55,9 @@ def run_admission(stop, wake, readers):
                     if result in ("protection-unverified", "checks-or-protection-changed"):
                         print("FLOW attention: admission-" + result, file=sys.stderr, flush=True)
                 except FileExistsError:
-                    print("FLOW attention: admission-merge-uncertain", file=sys.stderr, flush=True)
+                    if not reported.get((reader.repository_id, "uncertain")):
+                        print("FLOW attention: admission-merge-uncertain", file=sys.stderr, flush=True)
+                    reported[(reader.repository_id, "uncertain")] = True
                 except Exception:
                     print("FLOW attention: admission-failed", file=sys.stderr, flush=True)
         wake.wait(20)

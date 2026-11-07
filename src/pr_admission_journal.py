@@ -55,3 +55,32 @@ class MergeJournal:
             os.fsync(parent)
         finally:
             os.close(parent)
+
+    def pending(self):
+        """Read only markers owned by this repository from its private directory."""
+        info = os.stat(self.directory, follow_symlinks=False)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise ValueError("Unsafe state directory")
+        prefix = f"admission-merge-{self.repository_id}-"
+        result = []
+        for path in self.directory.glob(prefix + "*.json"):
+            number_text = path.name[len(prefix):-5]
+            if not number_text.isascii() or not number_text.isdigit() or int(number_text) <= 0:
+                raise ValueError("Invalid merge marker name")
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            try:
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                    raise ValueError("Unsafe merge marker")
+                with os.fdopen(fd, "rb", closefd=False) as data:
+                    raw = data.read(1025)
+                if len(raw) > 1024:
+                    raise ValueError("Invalid merge marker")
+                item = json.loads(raw)
+                if (not isinstance(item, dict) or item.get("pr") != int(number_text)
+                        or not isinstance(item.get("head"), str) or not SHA.fullmatch(item["head"])):
+                    raise ValueError("Invalid merge marker")
+                result.append((item["pr"], item["head"]))
+            finally:
+                os.close(fd)
+        return result
