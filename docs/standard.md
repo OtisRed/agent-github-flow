@@ -51,6 +51,21 @@ Dokładny [format maszynowy i parser](flow.md) dostarczono w tym repozytorium. P
 
 - `smoke` integruje zwykłe zmiany, `main` jest stabilną gałęzią. Zwykły PR do `smoke` zaczyna jako draft i ma jedno główne issue oraz jedną samodzielną linię `Refs #…`.
 - Agent prowadzący R&D odpowiada za decyzje i merytoryczny przegląd swojej pracy. Subagent daje niezależną drugą opinię wyłącznie w szczególnie złożonych przypadkach, gdy jest potrzebna; nie jest domyślną bramką każdego PR. Nie stosujemy formalnego GitHub Approve. Kontrole i review muszą odpowiadać właściwej wersji zmiany.
+- Kontrakt nowego issue zawiera `Wymagane review: 1` lub `Wymagane review: 2`; domyślnie jedno. Designer lub R&D może ustalić dwa dla szczególnie złożonej pracy, także po jej rozpoczęciu, a właściciel może tego zażądać. Starsze issue bez pola wymaga jednego review; niejednoznaczne albo powielone pole wymaga wyjaśnienia.
+- Opis PR przedstawia wykonanie i weryfikację. Każdy reviewer zapisuje osobny zwykły komentarz PR w poniższym formacie. `DA` jest obowiązkową próbą podważenia własnej oceny po pierwszym przeglądzie i zawiera konkretną próbę oraz jej rezultat. Wykryta wada oznacza wynik `wymaga-poprawek` do czasu poprawki i ponownego sprawdzenia.
+
+  ```text
+  [REVIEW]
+  Rola: agent-prowadzacy
+  Commit: pełny identyfikator sprawdzonego commita PR
+  Wynik: pozytywny
+  Zakres: co sprawdzono
+  DA: konkretna próba podważenia oceny i jej rezultat
+  ```
+
+  Druga rola to `subagent`, drugi wynik to `wymaga-poprawek`. Każde pole musi być wypełnione. Gdy wymagane są dwa review, drugie rzeczywiście wykonuje subagent; drugi komentarz prowadzącego go nie zastępuje. W razie niedostępności subagenta wynik pozostaje brakujący. Oba komentarze mogą powstać na jednym koncie, więc deklaracja roli nie jest dowodem niezależności.
+- Przed zdjęciem draftu agent sprawdza wymagane role, wyniki, DA i zgodność pełnego identyfikatora sprawdzonego commita z aktualnym head PR. Liczy się najnowszy wynik danej roli dla tej wersji; duplikaty nie zwiększają liczby reviewerów, a wynik negatywny, niepełny lub niejednoznaczny nie jest pozytywny. Po nowym commicie każdy wymagany reviewer sprawdza zmieniony zakres i potwierdza nową wersję; nie musi automatycznie powtarzać całego przeglądu. Data komentarza nie dowodzi, którą wersję sprawdzono.
+- Zasady review są instrukcją dla agenta, a nie gotową blokadą GitHuba. Techniczne admission jest odrębnym zadaniem [#107](https://github.com/OtisRed/agent-github-flow/issues/107). Automatyczny PR promocji wcześniej sprawdzonych zmian nie wymaga dodatkowego ręcznego review.
 - Smoke wykonuje właściciel wspólnie z agentem. Zamknięcie issue następuje po decyzji właściciela; samo przejście stanu lub zielone CI nie jest takim werdyktem.
 - Setup Projectu sprawdza wbudowane i inne istniejące automaty. Reguła zamykająca issue po przesunięciu karty do `done` jest wyłączona; synchronizacja statusu po zamknięciu ma jednoznacznego właściciela.
 - Kolejka promocji działa raz na dobę w nocy i promuje najdłuższy ciągły zamknięty prefiks `smoke`. Promocja do `main` przygotowuje wydanie; samo wydanie jest osobnym krokiem.

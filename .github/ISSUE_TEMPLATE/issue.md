@@ -25,6 +25,8 @@ Do ustalenia.
 
 ## Weryfikacja i wspólny smoke
 
+Wymagane review: 1
+
 Do ustalenia.
 
 ## Zależności i warunki rozpoczęcia
