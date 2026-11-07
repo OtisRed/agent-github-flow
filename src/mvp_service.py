@@ -65,6 +65,8 @@ def validate_config(config):
         if 'admission_enabled' in project and type(project['admission_enabled']) is not bool:
             raise ValueError("Invalid admission setting")
         if project.get('admission_enabled') is True:
+            if project.get('admission_workflow_event', 'pull_request') not in ('pull_request', 'pull_request_target'):
+                raise ValueError("Invalid admission workflow event")
             checks = project.get('admission_tests')
             if (not isinstance(checks, list) or not checks
                     or any(not isinstance(c, dict) or not isinstance(c.get('context'), str) or not c['context']

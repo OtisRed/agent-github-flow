@@ -177,6 +177,29 @@ class ReaderTests(unittest.TestCase):
                 {"name": "Verify Node tests", "conclusion": "failure"}]}]}
         self.assertEqual(self.reader.rerun_blocked_ci(4), "not-gate-failure")
 
+    def test_reruns_verified_pull_request_target_for_same_pr_and_head(self):
+        self.reader.workflow_event = "pull_request_target"
+        query = f"/actions/workflows/ci.yml/runs?event=pull_request_target&head_sha={self.sha}&per_page=100"
+        run = {"id": 19, "run_attempt": 1, "status": "completed", "conclusion": "failure",
+               "event": "pull_request_target", "head_sha": self.sha, "head_repository": {"id": 20},
+               "pull_requests": [{"number": 4}]}
+        self.rows[query] = {"total_count": 1, "workflow_runs": [run]}
+        self.rows["/actions/runs/19/attempts/1/jobs?per_page=100"] = {"total_count": 1, "jobs": [{
+            "name": "verify", "conclusion": "failure",
+            "steps": [{"name": "Wait for flow admission", "conclusion": "failure"}]}]}
+        writes = []
+        def transport(path, token, *, body=None):
+            if path.endswith("/actions/runs/19/rerun-failed-jobs"):
+                writes.append(body)
+                return None, None
+            return self.transport(path, token, body=body)
+        self.reader.transport = transport
+        run["pull_requests"] = []
+        self.assertEqual(self.reader.rerun_blocked_ci(4), "no-workflow")
+        run["pull_requests"] = [{"number": 4}]
+        self.assertEqual(self.reader.rerun_blocked_ci(4), "rerun-requested")
+        self.assertEqual(writes, [{}])
+
 
 if __name__ == "__main__":
     unittest.main()

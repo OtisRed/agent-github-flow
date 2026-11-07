@@ -24,7 +24,8 @@ def build_readers(config, private_key, *, transport=request):
                                  admission=("flow-admission", config["app_id"]), required_tests=tests,
                                  journal=MergeJournal(Path(config["state_path"]).parent, repository_id),
                                  workflow=project.get("admission_workflow", "ci.yml"),
-                                 gate_job=project.get("admission_gate_job", "verify"))
+                                 gate_job=project.get("admission_gate_job", "verify"),
+                                 workflow_event=project.get("admission_workflow_event", "pull_request"))
         readers.append((reader, frozenset(project["trusted_author_ids"])))
     return readers
 
