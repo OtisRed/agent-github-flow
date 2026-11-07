@@ -32,20 +32,22 @@ MESSAGES = {
 
 class AdmissionReader:
     def __init__(self, *, owner, repository, repository_id, token, transport,
-                 admission=None, required_tests=(), journal=None, workflow="ci.yml", gate_job="verify"):
+                 admission=None, required_tests=(), journal=None, workflow="ci.yml", gate_job="verify",
+                 workflow_event="pull_request"):
         if (not isinstance(owner, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", owner)
                 or not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", repository)
                 or repository in (".", "..") or type(repository_id) is not int or repository_id <= 0
                 or not callable(token) or not callable(transport)
                 or not isinstance(workflow, str) or not re.fullmatch(r"[A-Za-z0-9_-]+\.ya?ml", workflow)
-                or not isinstance(gate_job, str) or not gate_job or len(gate_job) > 100):
+                or not isinstance(gate_job, str) or not gate_job or len(gate_job) > 100
+                or workflow_event not in ("pull_request", "pull_request_target")):
             raise ValueError("Invalid admission reader configuration")
         self.root = f"/repos/{owner}/{repository}"
         self.full_name = f"{owner}/{repository}"
         self.repository_id, self.token, self.transport = repository_id, token, transport
         self.admission, self.required_tests = admission, required_tests
         self.journal = journal
-        self.workflow, self.gate_job = workflow, gate_job
+        self.workflow, self.gate_job, self.workflow_event = workflow, gate_job, workflow_event
         self._requested_ci_attempts = set()
 
     def _get(self, path, token):
@@ -306,7 +308,7 @@ class AdmissionReader:
         sha = (pr.get("head") or {}).get("sha")
         if not isinstance(sha, str) or not SHA.fullmatch(sha):
             return "not-eligible"
-        query = urlencode({"event": "pull_request", "head_sha": sha, "per_page": 100})
+        query = urlencode({"event": self.workflow_event, "head_sha": sha, "per_page": 100})
         result = self._get("/actions/workflows/" + self.workflow + "/runs?" + query, token)
         if (not isinstance(result, dict) or type(result.get("total_count")) is not int
                 or not isinstance(result.get("workflow_runs"), list)
@@ -317,7 +319,7 @@ class AdmissionReader:
             if not isinstance(run, dict):
                 raise ValueError("Invalid workflow run")
             prs = run.get("pull_requests")
-            if (run.get("event") == "pull_request" and run.get("head_sha") == sha
+            if (run.get("event") == self.workflow_event and run.get("head_sha") == sha
                     and (run.get("head_repository") or {}).get("id") == self.repository_id
                     and isinstance(prs, list) and any(isinstance(x, dict) and x.get("number") == number for x in prs)):
                 if type(run.get("id")) is not int or type(run.get("run_attempt")) is not int:
