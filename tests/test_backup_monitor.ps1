@@ -6,7 +6,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile($source, [ref]$
 if ($errors.Count) { throw 'Backup script does not parse' }
 
 # Load only the pure decision functions, never the backup, SSH or popup code.
-foreach ($name in @('Get-PreviousRunWarning', 'Get-ControllerWarnings', 'ConvertTo-ProcessArgument', 'Invoke-BoundedProcess')) {
+foreach ($name in @('Get-PreviousRunWarning', 'Get-ControllerWarnings', 'ConvertTo-ProcessArgument', 'Invoke-BoundedProcess', 'Write-BackupPhase')) {
   $function = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
   if (-not $function) { throw "Missing function: $name" }
   . ([scriptblock]::Create($function.Extent.Text))
@@ -73,4 +73,26 @@ $timedOut = $false
 try { [void](Invoke-BoundedProcess -FilePath $python -ProcessArguments @('-c', 'import time; time.sleep(30)') -InputText $blockedInput -TimeoutSeconds 3) }
 catch { if ($_.Exception.Message -notlike '*process-timeout*') { throw }; $timedOut = $true }
 if (-not $timedOut) { throw 'blocked input did not time out' }
+
+# Phase records from interrupted runs must remain available after a retry;
+# logging failures are observational and must not stop the actual backup.
+$diagnosticDir = Join-Path ([IO.Path]::GetTempPath()) ('agf-phase-test-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $diagnosticDir | Out-Null
+try {
+  Write-BackupPhase -Directory $diagnosticDir -RunStarted 'run-1' -Phase 'copy'
+  Write-BackupPhase -Directory $diagnosticDir -RunStarted 'run-2' -Phase 'preflight'
+  $lines = @(Get-Content -LiteralPath (Join-Path $diagnosticDir 'backup-phases.log'))
+  Assert-Equal $lines.Count 2 'phase log retains previous attempt'
+  $first = $lines[0] | ConvertFrom-Json
+  $second = $lines[1] | ConvertFrom-Json
+  Assert-Equal $first.run_started_utc 'run-1' 'first attempt identity'
+  Assert-Equal $first.phase 'copy' 'interrupted phase'
+  Assert-Equal $second.run_started_utc 'run-2' 'retry identity'
+  Assert-Equal $second.phase 'preflight' 'retry phase'
+  if (@($first.PSObject.Properties).Count -ne 3 -or -not $first.at_utc) { throw 'phase log includes unexpected fields' }
+  Write-BackupPhase -Directory (Join-Path $diagnosticDir 'missing') -RunStarted 'run-3' -Phase 'preflight'
+} finally {
+  Remove-Item -LiteralPath (Join-Path $diagnosticDir 'backup-phases.log') -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $diagnosticDir -Force -ErrorAction SilentlyContinue
+}
 Write-Output 'Backup monitor decision tests passed.'
