@@ -12,7 +12,7 @@ import sqlite3
 from webhook_ingress import ACTIONS, IGNORED_ISSUE_ACTIONS, MAX_BODY, SIGNATURE, positive_id
 
 
-def receive(store, secret, registry, event, signature, body):
+def receive(store, secret, registry, event, signature, body, *, wake_admission=None):
     """Return 'accepted' only after the store commits; never persist a payload."""
     if not isinstance(secret, bytes) or len(secret) < 32 or not isinstance(registry, frozenset) or not registry:
         return "configuration_error"
@@ -26,7 +26,8 @@ def receive(store, secret, registry, event, signature, body):
         return "ignored"
     if event in ("installation", "installation_repositories"):
         return "attention"
-    if not isinstance(event, str) or event not in ACTIONS:
+    admission_event = callable(wake_admission) and event in ("pull_request", "check_run")
+    if not isinstance(event, str) or (event not in ACTIONS and not admission_event):
         return "unsupported"
     try:
         payload = json.loads(body)
@@ -47,6 +48,13 @@ def receive(store, secret, registry, event, signature, body):
         # Acknowledge their signed events without queuing or processing them.
         return "ignored"
     action = payload.get("action")
+    if admission_event:
+        if not isinstance(action, str) or not action:
+            return "invalid"
+        # The event header is only a wakeup hint; the worker re-reads GitHub.
+        # A startup scan recovers a wakeup lost during restart.
+        wake_admission()
+        return "accepted"
     if event == "issues" and isinstance(action, str) and action in IGNORED_ISSUE_ACTIONS:
         return "ignored"
     if not isinstance(action, str) or action not in ACTIONS[event]:
@@ -54,6 +62,9 @@ def receive(store, secret, registry, event, signature, body):
     if not isinstance(issue, dict) or not positive_id(issue.get("number")):
         return "invalid"
     if "pull_request" in issue:
+        if event == "issue_comment" and callable(wake_admission):
+            wake_admission()
+            return "accepted"
         return "ignored"
     if event == "issue_comment":
         comment = payload.get("comment")
@@ -63,4 +74,6 @@ def receive(store, secret, registry, event, signature, body):
         store.enqueue(repository_id, issue["number"])
     except (sqlite3.Error, OSError, ValueError):
         return "storage_unavailable"
+    if callable(wake_admission) and event == "issues":
+        wake_admission()
     return "accepted"

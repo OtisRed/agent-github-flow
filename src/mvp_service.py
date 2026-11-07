@@ -19,6 +19,7 @@ from mvp_http import make_server
 from mvp_store import Store
 from mvp_worker import process_one
 from promotion_schedule import run_promotions
+from pr_admission_service import build_readers, run_admission
 from webhook_ingress import validate_registry
 
 
@@ -61,6 +62,15 @@ def validate_config(config):
             raise ValueError("Invalid project")
         if 'promotion_enabled' in project and type(project['promotion_enabled']) is not bool:
             raise ValueError("Invalid promotion setting")
+        if 'admission_enabled' in project and type(project['admission_enabled']) is not bool:
+            raise ValueError("Invalid admission setting")
+        if project.get('admission_enabled') is True:
+            checks = project.get('admission_tests')
+            if (not isinstance(checks, list) or not checks
+                    or any(not isinstance(c, dict) or not isinstance(c.get('context'), str) or not c['context']
+                           or type(c.get('app_id')) is not int or c['app_id'] <= 0 for c in checks)
+                    or len({(c['context'], c['app_id']) for c in checks}) != len(checks)):
+                raise ValueError("Invalid admission test checks")
         ids.append(project["repository_id"])
         authors = project.get("trusted_author_ids")
         if (not isinstance(authors, list) or not authors or any(type(value) is not int or value <= 0 for value in authors)
@@ -112,6 +122,9 @@ def run(config):
     server = None
     thread = None
     promotion_thread = None
+    admission_thread = None
+    stop = threading.Event()
+    wake_admission = threading.Event()
     try:
         store = Store(state)
         store.next_pending()  # fail closed on a missing or incompatible database
@@ -128,15 +141,19 @@ def run(config):
                             project_owner=project["project_owner"], project_number=project["project_number"],
                             app_token=token, project_token=project_token)
             clients[repository_id] = (client, project["enrolled_at"], frozenset(project["trusted_author_ids"]))
-        server = make_server(store, webhook_secret, registry, port=config["port"])
+        readers = build_readers(config, private_key)
+        server = make_server(store, webhook_secret, registry, port=config["port"],
+                             wake_admission=wake_admission.set if readers else None)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        stop = threading.Event()
         signal.signal(signal.SIGTERM, lambda *_: stop.set())
         signal.signal(signal.SIGINT, lambda *_: stop.set())
         if any(p.get('promotion_enabled') is True for p in config['projects']):
             promotion_thread = threading.Thread(target=run_promotions, args=(stop, config, private_key), daemon=True)
             promotion_thread.start()
+        if readers:
+            admission_thread = threading.Thread(target=run_admission, args=(stop, wake_admission, readers), daemon=True)
+            admission_thread.start()
         zone = ZoneInfo("Europe/Warsaw")
         today = datetime.now(zone)
         last_night = today.date() if today.hour >= 2 else today.date() - timedelta(days=1)
@@ -149,6 +166,8 @@ def run(config):
                 raise RuntimeError("Webhook listener stopped")
             if promotion_thread is not None and not promotion_thread.is_alive():
                 raise RuntimeError("Promotion worker stopped")
+            if admission_thread is not None and not admission_thread.is_alive():
+                raise RuntimeError("Admission worker stopped")
             now = datetime.now(zone)
             if now.hour >= 2 and now.date() != last_night:
                 pending_scans.update(clients)
@@ -191,8 +210,11 @@ def run(config):
             if result["kind"] in ("rescan", "read-failed", "waiting"):
                 stop.wait(1)
     finally:
+        stop.set()
+        wake_admission.set()
+        if admission_thread is not None:
+            admission_thread.join(timeout=30)
         if promotion_thread is not None:
-            stop.set()
             promotion_thread.join(timeout=10)
         if server is not None:
             if thread is not None and thread.is_alive():

@@ -7,6 +7,7 @@ on:
     branches: [main, smoke]
 permissions:
   contents: read
+  checks: read
 jobs:
   verify:
     name: verify
@@ -21,6 +22,13 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
+      - name: Wait for flow admission
+        if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'smoke' && vars.FLOW_ADMISSION_ENABLED == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FLOW_APP_ID: ${{ vars.FLOW_ADMISSION_APP_ID }}
+        run: python3 scripts/wait_admission.py
       - name: Check out pinned controller draft for integration fixture
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
