@@ -12,6 +12,12 @@ Jedna logika ocenia wymagane review z DA i sprawdzony commit. Po publikacji chec
 4. W prywatnej konfiguracji projektu ustaw `admission_enabled: true` i `admission_tests`, np. `[{"context":"verify","app_id":15368}]`. Opcjonalne `admission_workflow` i `admission_gate_job` wskazują workflow i job użyte do kontrolowanego wznowienia testów; wartości domyślne to `ci.yml` i `verify`. Ustaw dla objętego repozytorium zmienne Actions `FLOW_ADMISSION_ENABLED=true` i `FLOW_ADMISSION_APP_ID` na publiczny ID App. Nie ustawiaj ich przed gotowością odbiornika i odwracalnego planu.
 5. Sprawdź brak review, późniejsze uzupełnienie, uruchomienie CI, ponowną ocenę i merge na rzeczywistym PR. Migracja VSone wymaga osobnej zmiany jego workflow, zachowania dotychczasowego preflightu, Windows Canary oraz promocji i kontrolowanego testu; samo ustawienie opcji w tym repozytorium jej nie wykonuje.
 
+## Codzienna praca
+
+Agent zapisuje rzeczywisty wynik `[REVIEW]` dla aktualnego commita i zdejmuje draft. Jeśli check `flow-admission` jest czerwony, jego opis wskazuje brak w kontrakcie lub review. Po poprawieniu komentarza albo issue kontroler ponownie odczytuje dane. Gdy wcześniejszy przebieg CI zatrzymał się wyłącznie na oczekiwaniu na admission, kontroler może wznowić jego nieudane joby; błędu właściwych testów nie ponawia automatycznie. Nowy commit wymaga aktualnego review.
+
+Po pozytywnym admission i testach kontroler sprawdza dane jeszcze raz i scala gotowy PR do `smoke`. Wspólny smoke i decyzja właściciela o zamknięciu issue następują później. Jeżeli merge ma niepewny wynik, sprawdź stan PR i komunikat usługi przed dalszym działaniem; nie uznawaj samego checka za potwierdzenie scalenia.
+
 ## Ograniczenia i powrót
 
 GitHub nie łączy atomowo edytowalnego komentarza i opisu issue z merge. Po końcowym odczycie pozostaje krótki wyścig edycji; w tym czasie nie zmieniamy review ani kontraktu. Warunek head SHA nie chroni tych pól. Jeśli Mikrus jest niedostępny, sam nie uruchomi końcowego merge; ręczne scalenie poza tym procesem nie ma tej dodatkowej kontroli.
