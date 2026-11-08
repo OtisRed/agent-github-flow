@@ -18,6 +18,8 @@ Projekt zachowujący własny automat statusów można skonfigurować z `status_e
 
 Agent zapisuje rzeczywisty wynik `[REVIEW]` dla aktualnego commita i zdejmuje draft. Jeśli check `flow-admission` jest czerwony, jego opis wskazuje brak w kontrakcie lub review. Po poprawieniu komentarza albo issue kontroler ponownie odczytuje dane. Gdy wcześniejszy przebieg CI zatrzymał się wyłącznie na oczekiwaniu na admission, kontroler może wznowić jego nieudane joby; błędu właściwych testów nie ponawia automatycznie. Nowy commit wymaga aktualnego review.
 
+Przy `pull_request_target` GitHub może nie podać numeru PR w metadanych przebiegu. W takim przypadku wznowienie wymaga jednoznacznego powiązania gałęzi z jednym PR w historii repozytorium, zgodnego SHA i czasu utworzenia. Niepewność pozostawia przebieg bez automatycznego wznowienia.
+
 Po pozytywnym admission i testach kontroler sprawdza dane jeszcze raz i scala gotowy PR do `smoke`. Wspólny smoke i decyzja właściciela o zamknięciu issue następują później. Jeżeli merge ma niepewny wynik, sprawdź stan PR i komunikat usługi przed dalszym działaniem; nie uznawaj samego checka za potwierdzenie scalenia.
 
 ## Ograniczenia i powrót

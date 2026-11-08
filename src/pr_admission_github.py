@@ -5,6 +5,7 @@ The adapter is not connected to the production controller by itself.
 """
 
 import re
+from datetime import datetime
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from pr_admission import SHA, pr_issue_number
@@ -315,13 +316,37 @@ class AdmissionReader:
                 or result["total_count"] != len(result["workflow_runs"]) or result["total_count"] > 100):
             raise ValueError("Incomplete workflow runs")
         candidates = []
+        unique_branch_pr = None
         for run in result["workflow_runs"]:
             if not isinstance(run, dict):
                 raise ValueError("Invalid workflow run")
+            if (run.get("event") != self.workflow_event or run.get("head_sha") != sha
+                    or (run.get("head_repository") or {}).get("id") != self.repository_id):
+                continue
             prs = run.get("pull_requests")
-            if (run.get("event") == self.workflow_event and run.get("head_sha") == sha
-                    and (run.get("head_repository") or {}).get("id") == self.repository_id
-                    and isinstance(prs, list) and any(isinstance(x, dict) and x.get("number") == number for x in prs)):
+            linked = isinstance(prs, list) and any(isinstance(x, dict) and x.get("number") == number for x in prs)
+            head_ref = (pr.get("head") or {}).get("ref")
+            if (not linked and prs == [] and self.workflow_event == "pull_request_target"
+                    and isinstance(head_ref, str) and head_ref and run.get("head_branch") == head_ref):
+                try:
+                    run_created = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
+                    pr_created = datetime.fromisoformat(pr["created_at"].replace("Z", "+00:00"))
+                    after_creation = run_created.tzinfo is not None and pr_created.tzinfo is not None and run_created >= pr_created
+                except (KeyError, AttributeError, TypeError, ValueError):
+                    after_creation = False
+                if after_creation:
+                    if unique_branch_pr is None:
+                        query = urlencode({"state": "all", "head": self.full_name.split("/")[0] + ":" + head_ref, "per_page": 100})
+                        rows, link = self.transport(self.root + "/pulls?" + query, token)
+                        unique_branch_pr = (isinstance(rows, list) and len(rows) == 1 and not link
+                            and isinstance(rows[0], dict) and rows[0].get("number") == number
+                            and rows[0].get("state") == "open" and (rows[0].get("head") or {}).get("sha") == sha
+                            and (rows[0].get("head") or {}).get("ref") == head_ref
+                            and ((rows[0].get("head") or {}).get("repo") or {}).get("id") == self.repository_id
+                            and (rows[0].get("base") or {}).get("ref") == "smoke"
+                            and ((rows[0].get("base") or {}).get("repo") or {}).get("id") == self.repository_id)
+                    linked = unique_branch_pr
+            if linked:
                 if type(run.get("id")) is not int or type(run.get("run_attempt")) is not int:
                     raise ValueError("Invalid workflow identity")
                 candidates.append(run)
