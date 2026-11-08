@@ -66,6 +66,11 @@ def validate_config(config):
             raise ValueError("Invalid status setting")
         if 'admission_enabled' in project and type(project['admission_enabled']) is not bool:
             raise ValueError("Invalid admission setting")
+        if 'dependabot_enabled' in project and type(project['dependabot_enabled']) is not bool:
+            raise ValueError("Invalid Dependabot setting")
+        if project.get('dependabot_enabled') is True and (project.get('status_enabled') is False
+                or project.get('admission_enabled') is not True):
+            raise ValueError("Dependabot requires the central status and admission owners")
         if 'pr_flow_enabled' in project and type(project['pr_flow_enabled']) is not bool:
             raise ValueError("Invalid PR handoff setting")
         if project.get('admission_enabled') is True:
@@ -165,7 +170,7 @@ def run(config):
                             project_owner=project["project_owner"], project_number=project["project_number"],
                             app_token=token, project_token=project_token, pr_flow_token=pr_flow_token)
             clients[repository_id] = (client, project["enrolled_at"], frozenset(project["trusted_author_ids"]), pr_flow)
-        readers = build_readers(config, private_key)
+        readers = build_readers(config, private_key, store=store, clients=clients)
         server = make_server(store, webhook_secret, registry, port=config["port"],
                              wake_admission=wake_admission.set if readers else None,
                              status_repositories=frozenset(clients))
