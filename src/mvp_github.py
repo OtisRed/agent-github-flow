@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from mvp_decision import STATUSES, _date
+from mvp_errors import GitHubRequestError
 
 API = "https://api.github.com"
 MAX_RESPONSE = 8_000_000
@@ -56,8 +57,25 @@ def request(path, token, *, body=None):
             if not raw and response.status in (201, 202, 204):
                 return None, response.headers.get("Link")
             return json.loads(raw), response.headers.get("Link")
-    except (HTTPError, URLError, TimeoutError, OSError, ValueError, UnicodeError) as exc:
-        raise RuntimeError("GitHub request failed") from None
+    except HTTPError as exc:
+        code = exc.code
+        if code in (401, 403, 404, 429):
+            category = 'http-' + str(code)
+        elif type(code) is int and 400 <= code < 500:
+            category = 'http-4xx'
+        elif type(code) is int and 500 <= code < 600:
+            category = 'http-5xx'
+        else:
+            category = 'http-other'
+        raise GitHubRequestError(category) from None
+    except URLError as exc:
+        raise GitHubRequestError('timeout' if isinstance(exc.reason, TimeoutError) else 'network') from None
+    except TimeoutError:
+        raise GitHubRequestError('timeout') from None
+    except OSError:
+        raise GitHubRequestError('network') from None
+    except (ValueError, UnicodeError):
+        raise GitHubRequestError('invalid-data') from None
 
 
 def _node(value):

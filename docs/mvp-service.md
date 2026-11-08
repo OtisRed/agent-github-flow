@@ -34,4 +34,6 @@ Skan zbiorczo rozpoznaje niezmienione od podłączenia, zamknięte karty już w 
 
 Po zebraniu kandydatów usługa zapisuje w dzienniku systemowym `FLOW scan: startup candidates queued` albo `FLOW scan: nightly candidates queued`. Ten wpis potwierdza wyłącznie zakończenie skanowania i dodanie kandydatów do kolejki, nie wykonanie wszystkich zmian: trzeba osobno sprawdzić kolejkę i błędy. Wpisy `FLOW attention` sygnalizują problemy bez ujawniania treści issue ani poświadczeń.
 
+Przy `FLOW attention: read-failed` dopisane są tylko zamknięte kategorie `stage` i `cause`: etap odczytu lub przygotowania PR oraz rodzaj błędu HTTP, sieci, czasu, danych albo `other`. Nie zawierają numeru Issue, adresu, odpowiedzi ani tekstu wyjątku. Kategoria pomaga rozpoznać następne wystąpienie, ale sama nie ustala jego przyczyny; po błędzie nadal obowiązuje istniejące opóźnienie i ponowne sprawdzenie.
+
 Obecny algorytm porównuje tekst komentarza i jego czas aktualizacji. Jeśli treść zostanie zmieniona i przywrócona w granicach rozdzielczości czasu zwracanego przez API, bez zaobserwowania zmiany, historia takiej edycji może być niewidoczna. Rzeczywistą rozdzielczość i tę granicę trzeba uwzględnić w operacyjnej ocenie ryzyka.

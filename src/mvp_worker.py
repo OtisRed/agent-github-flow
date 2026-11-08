@@ -5,6 +5,7 @@ reopens and Project card, and bind the card to the configured repository. It
 must not retry status writes. Only a single worker may execute this function.
 """
 from mvp_decision import decide
+from mvp_errors import read_failure
 from mvp_store import checkpoint_status
 
 
@@ -37,9 +38,9 @@ def process_one(store, github, *, enrolled_at, trusted_authors, row=None, pr_flo
     repo, number, generation = row["repository_id"], row["issue_number"], row["generation"]
     try:
         current = github.read(repo, number)
-    except Exception:
+    except Exception as exc:
         store.defer(repo, number)
-        return {"kind": "read-failed"}
+        return read_failure('snapshot', exc)
 
     if isinstance(current, dict) and current.get("missing_card") is True:
         if row["uncertain_since"] is not None or row["completed_generation"] > 0:
@@ -70,9 +71,9 @@ def process_one(store, github, *, enrolled_at, trusted_authors, row=None, pr_flo
         try:
             handoff = process_pr_handoff(store, github, row, current, decision,
                                          trusted_authors=trusted_authors, **pr_flow)
-        except Exception:
+        except Exception as exc:
             store.defer(repo, number)
-            return {"kind": "read-failed"}
+            return read_failure('pr-handoff', exc)
         if handoff in ("rescan", "handoff-posted"):
             return {"kind": "rescan"}
         if handoff == "write-uncertain":
@@ -88,9 +89,9 @@ def process_one(store, github, *, enrolled_at, trusted_authors, row=None, pr_flo
     # status write, so the documented residual concurrent-write risk remains.
     try:
         fresh = github.read(repo, number)
-    except Exception:
+    except Exception as exc:
         store.defer(repo, number)
-        return {"kind": "read-failed"}
+        return read_failure('verify-snapshot', exc)
     latest = store.get(repo, number)
     if fresh != current or latest is None or latest["generation"] != generation:
         if latest is not None:

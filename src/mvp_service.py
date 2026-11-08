@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from mvp_credentials import AppToken, read_private_file
 from mvp_decision import _date
+from mvp_errors import format_read_failure
 from mvp_github import GitHub
 from mvp_http import make_server
 from mvp_scan import stage_one
@@ -250,7 +251,8 @@ def run(config):
                                  pr_flow=pr_flow)
             if result["kind"] in ("read-failed", "blocked", "write-uncertain", "awaiting-card"):
                 # No issue IDs, response bodies, tokens or comment contents.
-                print("FLOW attention: " + result["kind"], file=sys.stderr, flush=True)
+                message = format_read_failure(result) if result["kind"] == "read-failed" else "FLOW attention: " + result["kind"]
+                print(message, file=sys.stderr, flush=True)
             if result["kind"] in ("rescan", "read-failed", "waiting"):
                 stop.wait(1)
     finally:
