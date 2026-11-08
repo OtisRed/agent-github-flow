@@ -95,6 +95,44 @@ class PrFlowDecisionTests(unittest.TestCase):
         self.assertIsNone(select_pr_handoff([self.pr, other], self.issue, self.flow, **kwargs))
         self.assertEqual(select_pr_handoff([self.pr], self.issue, self.flow, **kwargs), draft_message(12))
 
+    def test_legacy_open_pr_needs_new_update_after_enrollment(self):
+        self.pr.update(created_at="2026-11-08T09:59:00Z", updated_at="2026-11-08T10:02:00Z")
+        args = {"enrolled_at": "2026-11-08T10:00:00Z", "app_author_id": 99}
+        self.assertEqual(decide_pr_handoff(self.pr, self.issue, None, **args), draft_message(12))
+        self.pr["updated_at"] = "2026-11-08T09:59:30Z"
+        self.assertIsNone(decide_pr_handoff(self.pr, self.issue, None, **args))
+
+    def test_legacy_review_only_advances_for_new_merge(self):
+        self.issue["status"] = "review"
+        self.pr.update(created_at="2026-11-08T09:59:00Z", state="closed", merged=True,
+                       merged_at="2026-11-08T10:04:00Z")
+        args = {"enrolled_at": "2026-11-08T10:00:00Z", "app_author_id": 99}
+        self.assertEqual(decide_pr_handoff(self.pr, self.issue, None, **args), merged_message(12))
+        self.pr["merged_at"] = "2026-11-08T09:59:59Z"
+        self.assertIsNone(decide_pr_handoff(self.pr, self.issue, None, **args))
+
+    def test_existing_card_can_start_new_pr_or_recover_a_merge(self):
+        args = {"enrolled_at": "2026-11-08T10:00:00Z", "app_author_id": 99}
+        self.pr["updated_at"] = "2026-11-08T10:02:00Z"
+        self.assertEqual(decide_pr_handoff(self.pr, self.issue, None, **args), draft_message(12))
+        self.pr.update(state="closed", merged=True, merged_at="2026-11-08T10:04:00Z")
+        self.assertEqual(decide_pr_handoff(self.pr, self.issue, None, **args), merged_message(12))
+
+    def test_legacy_pr_never_overrides_new_handoff_or_reopened_issue(self):
+        self.pr.update(created_at="2026-11-08T09:59:00Z", updated_at="2026-11-08T10:00:30Z")
+        args = {"enrolled_at": "2026-11-08T10:00:00Z", "app_author_id": 99}
+        self.assertIsNone(decide_pr_handoff(self.pr, self.issue, self.flow, **args))
+        self.issue["latest_reopen"] = {"created_at": "2026-11-08T09:59:30Z"}
+        self.assertIsNone(decide_pr_handoff(self.pr, self.issue, None, **args))
+        self.issue["latest_reopen"] = None
+        self.issue["state"] = "CLOSED"
+        self.assertIsNone(decide_pr_handoff(self.pr, self.issue, None, **args))
+
+    def test_legacy_multiple_prs_are_not_guessed(self):
+        self.pr.update(created_at="2026-11-08T09:59:00Z", updated_at="2026-11-08T10:02:00Z")
+        args = {"enrolled_at": "2026-11-08T10:00:00Z", "app_author_id": 99}
+        self.assertIsNone(select_pr_handoff([self.pr, {**self.pr, "number": 13}], self.issue, None, **args))
+
 
 if __name__ == "__main__":
     unittest.main()
