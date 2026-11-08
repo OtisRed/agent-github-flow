@@ -29,9 +29,10 @@ class BackupHealthProbeTests(unittest.TestCase):
             db.execute('CREATE TABLE issues (error_code TEXT, uncertain_since REAL)')
 
     def run_probe(self, *, active=True, scan=True, journal_error=False, promotion_log='', promotion_no_match=False,
-                  enabled=(10, 20), config_age=0):
+                  enabled=(10, 20), config_age=0, archive_enabled=False, archive_log=''):
         original_connect = sqlite3.connect
-        config = json.dumps({'projects': [{'repository_id': n, 'promotion_enabled': True} for n in enabled]})
+        config = json.dumps({'archive_enabled': archive_enabled,
+                             'projects': [{'repository_id': n, 'promotion_enabled': True} for n in enabled]})
 
         def fake_connect(_path, **_kwargs):
             return original_connect(self.path.resolve().as_uri() + '?mode=ro', uri=True)
@@ -40,6 +41,8 @@ class BackupHealthProbeTests(unittest.TestCase):
             if args[0] == 'systemctl':
                 return subprocess.CompletedProcess(args, 0 if active else 3, 'active\n' if active else 'inactive\n', '')
             if args[0] == 'journalctl':
+                if 'FLOW archive:' in args[args.index('--grep') + 1]:
+                    return subprocess.CompletedProcess(args, 0 if archive_log else 1, archive_log, '')
                 if 'promotion' in args[args.index('--grep') + 1]:
                     return subprocess.CompletedProcess(args, 1 if journal_error or promotion_no_match else 0, promotion_log, '')
                 return subprocess.CompletedProcess(args, 1 if journal_error else 0,
@@ -55,14 +58,21 @@ class BackupHealthProbeTests(unittest.TestCase):
 
     def test_healthy_controller(self):
         self.assertEqual(self.run_probe(), {'service_active': True, 'nightly_scan_recent': True,
-                                          'queue': 0, 'errors': 0, 'uncertain': 0, 'promotion_errors': 0, 'promotion_missing': 0})
+                                          'archive_state': 'off', 'queue': 0, 'errors': 0, 'uncertain': 0, 'promotion_errors': 0, 'promotion_missing': 0})
 
     def test_missing_scan_stopped_service_and_real_aggregate_state(self):
         with contextlib.closing(sqlite3.connect(self.path)) as db, db:
             db.execute('INSERT INTO work_queue VALUES (1)')
             db.executemany('INSERT INTO issues VALUES (?, ?)', [('blocked', None), (None, 800), (None, 900)])
         self.assertEqual(self.run_probe(active=False, scan=False), {'service_active': False,
-                         'nightly_scan_recent': False, 'queue': 1, 'errors': 1, 'uncertain': 1, 'promotion_errors': 0, 'promotion_missing': 0})
+                         'nightly_scan_recent': False, 'archive_state': 'off', 'queue': 1, 'errors': 1, 'uncertain': 1, 'promotion_errors': 0, 'promotion_missing': 0})
+
+    def test_archive_monitor_distinguishes_result_and_missing_run(self):
+        self.assertEqual(self.run_probe(archive_enabled=True, config_age=172799)['archive_state'], 'pending')
+        self.assertEqual(self.run_probe(archive_enabled=True, config_age=172800)['archive_state'], 'missing')
+        self.assertEqual(self.run_probe(archive_enabled=True, archive_log='FLOW archive: nightly complete\n')['archive_state'], 'ok')
+        self.assertEqual(self.run_probe(archive_enabled=True, archive_log='FLOW archive: nightly failed\n')['archive_state'], 'failed')
+        self.assertEqual(self.run_probe(archive_enabled=True, archive_log='unexpected\n'), {'read_error': True})
 
     def test_promotion_errors_use_latest_result_for_each_repository(self):
         logs = ('FLOW attention: promotion-failed repo=10\n'

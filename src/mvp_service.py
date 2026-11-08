@@ -14,6 +14,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from mvp_credentials import AppToken, read_private_file
+from mvp_archive import archive_candidates, archive_one
 from mvp_decision import _date
 from mvp_errors import format_read_failure
 from mvp_github import GitHub
@@ -48,6 +49,8 @@ def _lock(path):
 def validate_config(config):
     if not isinstance(config, dict):
         raise ValueError("Invalid config")
+    if 'archive_enabled' in config and type(config['archive_enabled']) is not bool:
+        raise ValueError("Invalid archive setting")
     for name in ("app_id", "installation_id", "port"):
         if type(config.get(name)) is not int or config[name] <= 0:
             raise ValueError("Invalid config")
@@ -194,6 +197,10 @@ def run(config):
         scan_backlog = deque()
         scan_in_progress = bool(pending_scans)
         scan_reason = "startup"
+        archive_pending = set()
+        archive_backlog = deque()
+        archive_in_progress = False
+        archive_failed = False
         backup_pending = True
         next_scan = time.monotonic()
         while not stop.is_set():
@@ -211,6 +218,10 @@ def run(config):
                 backup_pending = True
                 next_scan = time.monotonic()
                 last_night = now.date()
+                if config.get("archive_enabled") is True:
+                    archive_pending.update(clients)
+                    archive_in_progress = bool(archive_pending) or bool(archive_backlog)
+                    archive_failed = False
             if (pending_scans or backup_pending) and time.monotonic() >= next_scan:
                 if backup_pending:
                     try:
@@ -240,6 +251,32 @@ def run(config):
                 print("FLOW scan: " + scan_reason + " candidates queued", flush=True)
                 scan_in_progress = False
             if row is None:
+                # Project cards are archived only after reconciliation and
+                # only when there is no ready issue work. One card per turn.
+                if not pending_scans and not scan_backlog and not backup_pending:
+                    if archive_pending and not archive_backlog:
+                        repository_id = min(archive_pending)
+                        client = clients[repository_id][0]
+                        try:
+                            archive_backlog.extend((repository_id, candidate) for candidate in
+                                                   archive_candidates(client, datetime.now(zone)))
+                            archive_pending.remove(repository_id)
+                        except Exception:
+                            print("FLOW attention: archive-plan-failed", file=sys.stderr, flush=True)
+                            archive_failed = True
+                            archive_pending.remove(repository_id)  # retry on the next night
+                    if archive_backlog:
+                        repository_id, candidate = archive_backlog.popleft()
+                        try:
+                            outcome = archive_one(clients[repository_id][0], candidate, datetime.now(zone))
+                            if outcome == "changed":
+                                store.enqueue_now(repository_id, candidate[0])
+                        except Exception:
+                            print("FLOW attention: archive-write-unconfirmed", file=sys.stderr, flush=True)
+                            archive_failed = True
+                    if archive_in_progress and not archive_pending and not archive_backlog:
+                        print("FLOW archive: nightly " + ("failed" if archive_failed else "complete"), flush=True)
+                        archive_in_progress = False
                 stop.wait(1)
                 continue
             project = clients.get(row["repository_id"])
