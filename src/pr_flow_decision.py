@@ -4,8 +4,10 @@ This module is deliberately I/O free. Its caller must supply complete, fresh
 GitHub data and must verify the last handoff before publishing anything.
 """
 
+import re
+
 from mvp_decision import _date, parse_flow
-from pr_admission import SHA, pr_issue_number
+from pr_admission import pr_issue_number
 
 
 def draft_message(number):
@@ -20,12 +22,21 @@ def merged_message(number):
             "Następny krok: Wykonać wspólny smoke.")
 
 
+def _mentions_pr_in_review(body, number):
+    """Allow a trusted human handoff when its work field names one PR."""
+    lines = body.splitlines()
+    if len(lines) != 5 or lines[1].partition(":")[2].strip().casefold() == "automat":
+        return False
+    numbers = re.findall(r"\bPR\s+#([1-9][0-9]*)\b", lines[3], flags=re.IGNORECASE)
+    return numbers == [str(number)]
+
+
 def decide_pr_handoff(pr, issue, last_flow, *, enrolled_at, app_author_id):
     """Return the exact handoff, or None when there is no safe transition.
 
     The current status and last handoff must agree. A merge can advance only
-    the same PR that produced the App's review handoff, or a PR created after
-    the current agent-ready handoff if the service missed the whole PR cycle.
+    the PR named in the latest review handoff, or a PR created after the
+    current agent-ready handoff if the service missed the whole PR cycle.
     The caller must reject ambiguous or incomplete PR candidates.
     """
     try:
@@ -56,12 +67,14 @@ def decide_pr_handoff(pr, issue, last_flow, *, enrolled_at, app_author_id):
             if current == "agent-ready" and flow_time <= created:
                 return draft_message(pr["number"])
         elif pr.get("state") == "closed" and pr.get("merged") is True:
-            if not isinstance(pr.get("merge_commit_sha"), str) or not SHA.fullmatch(pr["merge_commit_sha"]):
-                return None
             merged_at = _date(pr.get("merged_at"))
             if (current == "review" and last_flow.get("author_id") == app_author_id
                     and body == draft_message(pr["number"])
                     and merged_at >= flow_time):
+                return merged_message(pr["number"])
+            if (current == "review" and last_flow.get("author_id") != app_author_id
+                    and _mentions_pr_in_review(body, pr["number"])
+                    and created <= flow_time <= merged_at):
                 return merged_message(pr["number"])
             if current == "agent-ready" and flow_time <= created <= merged_at:
                 return merged_message(pr["number"])

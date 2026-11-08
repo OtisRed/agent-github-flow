@@ -20,6 +20,8 @@ Wspólne przekazania do `review` i `smoke` można włączyć osobno dla projektu
 
 Webhooks tylko budzą istniejącą kolejkę issue. Kontroler odczytuje stan issue i powiązane PR, a przy jednym pasującym wyniku dodaje standardowy komentarz `[FLOW]`. Brak lub niejednoznaczność danych nie powoduje przejścia. Po niepewnym zapisie odczekuje 120 sekund, przed ponowieniem ponownie czyta GitHuba. Jak przy zapisach statusów, bardzo opóźnione żądanie może dotrzeć po tym czasie; GitHub nie oferuje warunkowego tworzenia komentarzy.
 
+Jeśli zaufany agent sam przekazał issue do `review`, w polu `Wykonano` podaje dokładnie jeden odnośnik w postaci `PR #numer`. Pozwala to po scaleniu rozpoznać ten sam cykl również wtedy, gdy przekazanie do review nie pochodziło od automatu.
+
 Próba jest ograniczona do PR i przekazań rozpoczętych po granicy. Istniejące karty i PR-y nie są automatycznie przemieszczane; starsze zadania wymagają nowego przekazania `agent-ready` w nowym cyklu. Odczyt kandydatów korzysta z osi czasu issue: jeśli GitHub nie zwróci powiązania, kontroler nie zgaduje; kolejny sygnał lub uzgadnianie ponowi sprawdzenie.
 
 Projekt korzystający z istniejącego automatycznego forward-sync może wskazać `admission_sync_bot_id`. Kontroler rozpoznaje tylko PR tej aplikacji, z jej auto-merge oraz dokładnymi rodzicami aktualnego `smoke` i `main`. Wystawia dla niego odrębny wynik `sync-verified`, bez tworzenia fikcyjnego review i bez samodzielnego merge; wymagane kontrole projektu nadal obowiązują. Brak tego ustawienia zachowuje zwykłą ścieżkę PR.
