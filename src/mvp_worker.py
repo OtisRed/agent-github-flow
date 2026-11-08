@@ -52,6 +52,33 @@ def process_one(store, github, *, enrolled_at, trusted_authors, row=None, pr_flo
         store.defer(repo, number)
         return {"kind": "awaiting-card"}
 
+    if isinstance(current, dict) and current.get("archived_card") is True:
+        if current.get("state") != "OPEN":
+            if current.get("state") == "CLOSED" and row["uncertain_since"] is None:
+                store.complete(repo, number, generation)
+                return {"kind": "completed"}
+            store.block(repo, number, generation, "archived-card-uncertain")
+            return {"kind": "blocked", "reason": "archived-card-uncertain"}
+        try:
+            fresh = github.read(repo, number)
+            latest = store.get(repo, number)
+            if fresh != current or latest is None or latest["generation"] != generation:
+                if latest is not None:
+                    store.yield_turn(repo, number)
+                return {"kind": "rescan"}
+            github.unarchive(repo, number)
+            observed = github.read(repo, number)
+        except Exception as exc:
+            store.defer(repo, number)
+            return read_failure('unarchive', exc)
+        if (observed.get("archived_card") is not False or observed.get("item_id") != current.get("item_id")
+                or observed.get("project_id") != current.get("project_id")):
+            store.defer(repo, number)
+            return {"kind": "read-failed", "stage": "unarchive", "cause": "invalid-data"}
+        # Re-read and apply the existing reopen logic on the next FIFO turn.
+        store.yield_turn(repo, number)
+        return {"kind": "rescan"}
+
     if row["uncertain_since"] is not None:
         if not _intent_intact(row, current, trusted_authors):
             store.block(repo, number, generation, "uncertain-intent-unverified")

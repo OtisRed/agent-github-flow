@@ -40,6 +40,9 @@ class FakeGithub:
         self.snapshot.pop("missing_card")
         self.snapshot["status"] = None
 
+    def unarchive(self, _repo, _number):
+        self.snapshot["archived_card"] = False
+
 
 class WorkerTests(unittest.TestCase):
     def setUp(self):
@@ -65,6 +68,39 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(result, {'kind': 'read-failed', 'stage': 'snapshot', 'cause': 'timeout'})
         self.assertEqual(self.store.get(20, 7)['retry_after'], self.now + 60)
         self.assertEqual(self.github.writes, [])
+
+    def test_reopened_archived_card_is_restored_then_projected_to_needs_design(self):
+        self.github.snapshot.update({"status": "done", "archived_card": True,
+                                     "item_id": "same-card", "project_id": "project",
+                                     "latest_reopen": {"id": 90, "created_at": "2026-11-02T00:00:00Z"}})
+        self.store.enqueue(20, 7)
+        self.assertEqual(self.run_worker()["kind"], "rescan")
+        self.assertFalse(self.github.snapshot["archived_card"])
+        self.assertEqual(self.run_worker()["kind"], "completed")
+        self.assertEqual(self.github.writes, ["needs-design"])
+        self.assertEqual(self.store.get(20, 7)["reopen_id"], 90)
+
+    def test_closed_archived_card_is_not_restored_or_blocked(self):
+        self.github.snapshot.update({"state": "CLOSED", "status": "done", "archived_card": True,
+                                     "item_id": "same-card", "project_id": "project"})
+        self.store.enqueue(20, 7)
+        self.assertEqual(self.run_worker()["kind"], "completed")
+        self.assertTrue(self.github.snapshot["archived_card"])
+        self.assertEqual(self.github.writes, [])
+
+    def test_uncertain_unarchive_response_is_resolved_by_later_read(self):
+        self.github.snapshot.update({"status": "done", "archived_card": True,
+                                     "item_id": "same-card", "project_id": "project",
+                                     "latest_reopen": {"id": 90, "created_at": "2026-11-02T00:00:00Z"}})
+        def after_unarchive(*_):
+            self.github.snapshot["archived_card"] = False
+            raise TimeoutError("synthetic")
+        self.github.unarchive = after_unarchive
+        self.store.enqueue(20, 7)
+        self.assertEqual(self.run_worker()["stage"], "unarchive")
+        self.now += 61
+        self.assertEqual(self.run_worker()["kind"], "completed")
+        self.assertEqual(self.github.writes, ["needs-design"])
 
     def test_second_read_failure_is_distinct_and_does_not_write(self):
         self.github.snapshot['comments'] = [self.handoff()]

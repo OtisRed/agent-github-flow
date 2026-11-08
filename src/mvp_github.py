@@ -33,6 +33,14 @@ PROJECT_BATCH_QUERY = """query($owner:String!,$number:Int!,$after:String){
 STATUS_MUTATION = """mutation($project:ID!,$item:ID!,$field:ID!,$value:ProjectV2FieldValue!){
  updateProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field,value:$value}){projectV2Item{id}}}
 """
+ARCHIVED_QUERY = """query($owner:String!,$number:Int!,$after:String,$query:String!){
+ user(login:$owner){projectV2(number:$number){id
+  items(first:100,after:$after,archivedStates:[ARCHIVED],query:$query){nodes{id fullDatabaseId isArchived}
+   pageInfo{hasNextPage endCursor}}}}}
+"""
+UNARCHIVE_MUTATION = """mutation($project:ID!,$item:ID!){
+ unarchiveProjectV2Item(input:{projectId:$project,itemId:$item}){item{id}}}
+"""
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -194,6 +202,48 @@ class GitHub:
             seen.add(cursor)
         raise ValueError("Project page limit")
 
+    def _archived_item(self, number, issue_id):
+        """Resolve a private archived item using Project search plus REST identity."""
+        if type(number) is not int or number <= 0 or not _node(issue_id):
+            raise ValueError("Invalid issue identity")
+        after, seen, matches, project_id = None, set(), [], None
+        for _ in range(MAX_PAGES):
+            data = self._graphql(ARCHIVED_QUERY, {"owner": self.project_owner, "number": self.project_number,
+                                                 "after": after, "query": "#" + str(number)})
+            project = (data.get("user") or {}).get("projectV2") or {}
+            if not _node(project.get("id")) or (project_id is not None and project_id != project["id"]):
+                raise ValueError("Unknown Project")
+            project_id = project["id"]
+            page = project.get("items") or {}
+            nodes, info = page.get("nodes"), page.get("pageInfo")
+            if not isinstance(nodes, list) or not isinstance(info, dict):
+                raise ValueError("Invalid archived Project page")
+            for node in nodes:
+                if (not isinstance(node, dict) or not _node(node.get("id")) or node.get("isArchived") is not True
+                        or not isinstance(node.get("fullDatabaseId"), str)
+                        or not re.fullmatch(r"[1-9][0-9]{0,19}", node["fullDatabaseId"])):
+                    raise ValueError("Invalid archived Project item")
+                path = f"/users/{self.project_owner}/projectsV2/{self.project_number}/items/{node['fullDatabaseId']}"
+                item, _ = self.transport(path, self.project_token)
+                if (not isinstance(item, dict) or item.get("node_id") != node["id"]
+                        or item.get("archived_at") is None):
+                    raise ValueError("Archived Project item changed")
+                content = item.get("content") or {}
+                if (item.get("content_type") == "Issue" and content.get("node_id") == issue_id
+                        and content.get("number") == number
+                        and str(content.get("repository_url", "")).casefold()
+                            == (API + f"/repos/{self.owner}/{self.repository}").casefold()):
+                    matches.append(item)
+            if info.get("hasNextPage") is False:
+                if len(matches) > 1:
+                    raise ValueError("Ambiguous archived Project item")
+                return matches[0] if matches else None
+            after = info.get("endCursor")
+            if info.get("hasNextPage") is not True or not isinstance(after, str) or not after or after in seen:
+                raise ValueError("Invalid archived Project cursor")
+            seen.add(after)
+        raise ValueError("Archived Project page limit")
+
     def _batch_done_items(self):
         """Return only fully identified done cards; reject incomplete inventories."""
         cursor, seen, values, project_id, field_spec = None, set(), {}, None, None
@@ -292,6 +342,22 @@ class GitHub:
                 raise ValueError("Invalid issue listing")
             if _date(issue.get("created_at")) >= boundary:
                 candidates.add(issue["number"])
+        # Also recover previously opened archived issues, including those last
+        # updated before enrollment. Do not enqueue unrelated missing cards.
+        open_issues = self._rest_pages(repo_path + "/issues", token, params={"state": "open"})
+        for issue in open_issues:
+            if not isinstance(issue, dict):
+                raise ValueError("Invalid issue listing")
+            if "pull_request" in issue:
+                continue
+            number = issue.get("number")
+            if type(number) is not int or number <= 0:
+                raise ValueError("Invalid issue listing")
+            if number not in card_numbers and number not in candidates:
+                if not _node(issue.get("node_id")):
+                    raise ValueError("Issue identity unavailable")
+                if self._archived_item(number, issue["node_id"]) is not None:
+                    candidates.add(number)
         if historical:
             try:
                 done_items = self._batch_done_items()
@@ -347,6 +413,10 @@ class GitHub:
                 matches.append(item)
         if len(matches) > 1:
             raise ValueError("Ambiguous Project card")
+        if not matches:
+            archived = self._archived_item(issue_number, issue["node_id"])
+            if archived is not None:
+                matches.append(archived)
         variables = {"owner": self.project_owner, "number": self.project_number}
         if not matches:
             data = self._graphql(PROJECT_ID_QUERY, variables)
@@ -364,7 +434,8 @@ class GitHub:
         field = (item.get("project") or {}).get("statusField") or {}
         value = item.get("status")
         options = field.get("options")
-        if (not _node(project.get("id")) or item.get("id") != item_id or item.get("isArchived") is not False
+        archived = matches[0].get("archived_at") is not None
+        if (not _node(project.get("id")) or item.get("id") != item_id or item.get("isArchived") is not archived
                 or (item.get("project") or {}).get("id") != project["id"] or not _node(field.get("id"))
                 or field.get("name") != "Status" or field.get("dataType") != "SINGLE_SELECT"
                 or not isinstance(options, list)):
@@ -381,15 +452,26 @@ class GitHub:
         if any(issue.get(key) != again.get(key) for key in ("node_id", "state", "created_at", "updated_at")):
             raise ValueError("Issue changed during read")
         self._last = {"repo": repository_id, "number": issue_number, "project": project["id"], "item": item_id,
-                      "field": field["id"], "options": mapping, "missing": False}
+                      "field": field["id"], "options": mapping, "missing": False, "archived": archived,
+                      "state": issue["state"]}
         return {"complete": True, "state": issue["state"].upper(), "status": value["name"] if value else None,
                 "created_at": issue.get("created_at"), "updated_at": issue.get("updated_at"),
                 "comments": records, "latest_reopen": reopens[-1] if reopens else None,
-                "project_id": project["id"], "item_id": item_id}
+                "project_id": project["id"], "item_id": item_id, "archived_card": archived}
+
+    def unarchive(self, repository_id, issue_number):
+        last = self._last
+        self._last = None
+        if (not isinstance(last, dict) or last.get("repo") != repository_id or last.get("number") != issue_number
+                or last.get("archived") is not True or last.get("state") != "open"):
+            raise ValueError("Unverified archived Project item")
+        data = self._graphql(UNARCHIVE_MUTATION, {"project": last["project"], "item": last["item"]})
+        if ((data.get("unarchiveProjectV2Item") or {}).get("item") or {}).get("id") != last["item"]:
+            raise ValueError("Invalid unarchive response")
 
     def set_status(self, repository_id, issue_number, status):
         last = self._last
-        if (not last or last.get("missing") or last["repo"] != repository_id or last["number"] != issue_number
+        if (not last or last.get("missing") or last.get("archived") or last["repo"] != repository_id or last["number"] != issue_number
                 or status not in STATUSES):
             raise ValueError("Unverified write target")
         result = self._graphql(STATUS_MUTATION, {"project": last["project"], "item": last["item"],
