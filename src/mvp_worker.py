@@ -22,7 +22,7 @@ def _intent_intact(row, snapshot, trusted_authors):
             and checkpoint_status(comment_id, row["uncertain_comment_digest"], matches[0]) == "unchanged")
 
 
-def process_one(store, github, *, enrolled_at, trusted_authors, row=None):
+def process_one(store, github, *, enrolled_at, trusted_authors, row=None, pr_flow=None):
     """Inspect and process one issue, recording intent before any status write.
 
     `github.read(repo_id, issue_number)` must supply the snapshot described by
@@ -69,6 +69,18 @@ def process_one(store, github, *, enrolled_at, trusted_authors, row=None):
         store.complete(repo, number, generation)
         return {"kind": "completed"}
 
+    if pr_flow is not None:
+        from pr_flow_runner import process_pr_handoff
+        try:
+            handoff = process_pr_handoff(store, github, row, current, decision, **pr_flow)
+        except Exception:
+            store.defer(repo, number)
+            return {"kind": "read-failed"}
+        if handoff in ("rescan", "handoff-posted"):
+            return {"kind": "rescan"}
+        if handoff == "write-uncertain":
+            return {"kind": "write-uncertain"}
+
     # Two complete reads reduce stale decisions; GitHub offers no conditional
     # status write, so the documented residual concurrent-write risk remains.
     try:
@@ -98,6 +110,9 @@ def process_one(store, github, *, enrolled_at, trusted_authors, row=None):
                 or observed.get("status") != target):
             return {"kind": "write-uncertain"}
         store.resolve_status_write(repo, number, target_observed=True)
+        if pr_flow is not None and target in ("agent-ready", "review"):
+            # The PR signal may have arrived before this status was projected.
+            store.enqueue_now(repo, number)
     store.complete(repo, number, generation, comment_id=decision.get("comment_id"),
                    comment_digest=decision.get("comment_digest"), reopen_id=decision.get("reopen_id"),
                    recheck=decision.get("recheck", False))

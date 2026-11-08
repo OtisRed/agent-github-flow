@@ -257,6 +257,17 @@ class Store:
             if result.rowcount != 1:
                 raise ValueError("Unknown issue")
 
+    def enqueue_now(self, repository_id, issue_number):
+        """Queue a confirmed local write and immediately re-read its outcome."""
+        key = (_positive(repository_id), _positive(issue_number))
+        with closing(self._connect()) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            result = db.execute("""UPDATE issues SET generation=generation+1, retry_after=NULL
+                                   WHERE repository_id=? AND issue_number=?""", key)
+            if result.rowcount != 1:
+                raise ValueError("Unknown issue")
+            db.execute("INSERT OR IGNORE INTO work_queue (repository_id, issue_number) VALUES (?, ?)", key)
+
     def block(self, repository_id, issue_number, generation, error_code):
         """Record a problem without starving other issues or hiding new events."""
         key = (_positive(repository_id), _positive(issue_number))

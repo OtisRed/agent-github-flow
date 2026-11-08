@@ -66,6 +66,8 @@ def validate_config(config):
             raise ValueError("Invalid status setting")
         if 'admission_enabled' in project and type(project['admission_enabled']) is not bool:
             raise ValueError("Invalid admission setting")
+        if 'pr_flow_enabled' in project and type(project['pr_flow_enabled']) is not bool:
+            raise ValueError("Invalid PR handoff setting")
         if project.get('admission_enabled') is True:
             bot = project.get('admission_sync_bot_id')
             if bot is not None and (type(bot) is not int or bot <= 0):
@@ -84,6 +86,12 @@ def validate_config(config):
                 or len(set(authors)) != len(authors)):
             raise ValueError("Invalid trusted authors")
         _date(project.get("enrolled_at"))
+        if project.get("pr_flow_enabled") is True:
+            if (project.get("status_enabled") is False
+                    or type(project.get("pr_flow_app_author_id")) is not int
+                    or project["pr_flow_app_author_id"] not in authors
+                    or _date(project.get("pr_flow_enrolled_at")) < _date(project["enrolled_at"])):
+                raise ValueError("Invalid PR handoff configuration")
     if len(set(ids)) != len(ids):
         raise ValueError("Duplicate project")
     return config
@@ -146,10 +154,17 @@ def run(config):
                 continue
             store.register_boundary(repository_id, project["enrolled_at"])
             token = AppToken(config["app_id"], config["installation_id"], repository_id, private_key)
+            pr_flow = None
+            pr_flow_token = None
+            if project.get("pr_flow_enabled") is True:
+                pr_flow_token = AppToken(config["app_id"], config["installation_id"], repository_id, private_key,
+                                         purpose="pr_handoff")
+                pr_flow = {"enrolled_at": project["pr_flow_enrolled_at"],
+                           "app_author_id": project["pr_flow_app_author_id"]}
             client = GitHub(repository_id=repository_id, owner=project["owner"], repository=project["repository"],
                             project_owner=project["project_owner"], project_number=project["project_number"],
-                            app_token=token, project_token=project_token)
-            clients[repository_id] = (client, project["enrolled_at"], frozenset(project["trusted_author_ids"]))
+                            app_token=token, project_token=project_token, pr_flow_token=pr_flow_token)
+            clients[repository_id] = (client, project["enrolled_at"], frozenset(project["trusted_author_ids"]), pr_flow)
         readers = build_readers(config, private_key)
         server = make_server(store, webhook_secret, registry, port=config["port"],
                              wake_admission=wake_admission.set if readers else None,
@@ -194,7 +209,7 @@ def run(config):
                         print("FLOW attention: backup-failed", file=sys.stderr, flush=True)
                 had_pending_scans = bool(pending_scans)
                 for repository_id in list(pending_scans):
-                    client, enrolled_at, _authors = clients[repository_id]
+                    client, enrolled_at, _authors, _pr_flow = clients[repository_id]
                     try:
                         for issue_number in client.reconciliation_candidates(enrolled_at):
                             store.enqueue(repository_id, issue_number)
@@ -212,8 +227,9 @@ def run(config):
             if project is None:
                 store.block(row["repository_id"], row["issue_number"], row["generation"], "unknown-project")
                 continue
-            client, enrolled_at, authors = project
-            result = process_one(store, client, enrolled_at=enrolled_at, trusted_authors=authors, row=row)
+            client, enrolled_at, authors, pr_flow = project
+            result = process_one(store, client, enrolled_at=enrolled_at, trusted_authors=authors, row=row,
+                                 pr_flow=pr_flow)
             if result["kind"] in ("read-failed", "blocked", "write-uncertain", "awaiting-card"):
                 # No issue IDs, response bodies, tokens or comment contents.
                 print("FLOW attention: " + result["kind"], file=sys.stderr, flush=True)
