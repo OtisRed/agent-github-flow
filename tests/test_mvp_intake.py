@@ -80,6 +80,48 @@ class IntakeTests(unittest.TestCase):
         self.assertEqual(signals, [True])
         self.assertIsNone(self.store.next_pending())
 
+    def test_pr_event_queues_linked_issue_for_enabled_status_project(self):
+        payload = {"action": "closed", "repository": {"id": 20}, "installation": {"id": 10},
+                   "pull_request": {"body": "Opis\n\nRefs #7"}}
+        body = json.dumps(payload).encode()
+        signature = "sha256=" + hmac.new(self.secret, body, hashlib.sha256).hexdigest()
+        signals = []
+        result = mvp_intake.receive(self.store, self.secret, self.registry, "pull_request", signature, body,
+                                    wake_admission=lambda: signals.append(True), status_repositories=frozenset({20}))
+        self.assertEqual(result, "accepted")
+        self.assertEqual(signals, [True])
+        self.assertEqual(self.store.next_pending()["issue_number"], 7)
+
+    def test_pr_hint_does_not_queue_disabled_or_ambiguous_project(self):
+        payload = {"action": "opened", "repository": {"id": 20}, "installation": {"id": 10},
+                   "pull_request": {"body": "Refs #7"}}
+        for repositories, body_text in ((frozenset(), "Refs #7"), (frozenset({20}), "Refs #7\nRefs #8"),
+                                        (frozenset({20}), "Refs #" + "9" * 5000)):
+            payload["pull_request"]["body"] = body_text
+            body = json.dumps(payload).encode()
+            signature = "sha256=" + hmac.new(self.secret, body, hashlib.sha256).hexdigest()
+            self.assertEqual(mvp_intake.receive(self.store, self.secret, self.registry, "pull_request", signature, body,
+                             wake_admission=lambda: None, status_repositories=repositories), "accepted")
+            self.assertIsNone(self.store.next_pending())
+
+    def test_pr_hint_reports_failed_queue_write(self):
+        payload = {"action": "closed", "repository": {"id": 20}, "installation": {"id": 10},
+                   "pull_request": {"body": "Refs #7"}}
+        body = json.dumps(payload).encode()
+        signature = "sha256=" + hmac.new(self.secret, body, hashlib.sha256).hexdigest()
+        missing = Store(Path(self.directory.name) / "missing.sqlite")
+        self.assertEqual(mvp_intake.receive(missing, self.secret, self.registry, "pull_request", signature, body,
+                         wake_admission=lambda: None, status_repositories=frozenset({20})), "storage_unavailable")
+
+    def test_status_project_receives_pr_without_admission_worker(self):
+        payload = {"action": "opened", "repository": {"id": 20}, "installation": {"id": 10},
+                   "pull_request": {"body": "Refs #7"}}
+        body = json.dumps(payload).encode()
+        signature = "sha256=" + hmac.new(self.secret, body, hashlib.sha256).hexdigest()
+        self.assertEqual(mvp_intake.receive(self.store, self.secret, self.registry, "pull_request", signature, body,
+                         status_repositories=frozenset({20})), "accepted")
+        self.assertEqual(self.store.next_pending()["issue_number"], 7)
+
     def test_admission_only_repository_never_queues_issue_status(self):
         signals = []
         payload = self.payload()

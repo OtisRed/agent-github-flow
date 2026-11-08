@@ -59,19 +59,40 @@ def _node(value):
 
 class GitHub:
     def __init__(self, *, repository_id, owner, repository, project_owner, project_number,
-                 app_token, project_token, transport=request):
+                 app_token, project_token, transport=request, pr_flow_token=None):
         if (type(repository_id) is not int or repository_id <= 0
                 or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", owner or "")
                 or not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", repository or "")
                 or repository in (".", "..")
                 or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", project_owner or "")
                 or type(project_number) is not int or project_number <= 0
-                or not callable(app_token) or not isinstance(project_token, str) or not callable(transport)):
+                or not callable(app_token) or not isinstance(project_token, str) or not callable(transport)
+                or (pr_flow_token is not None and not callable(pr_flow_token))):
             raise ValueError("Invalid project configuration")
         self.repository_id, self.owner, self.repository = repository_id, owner, repository
         self.project_owner, self.project_number = project_owner, project_number
         self.app_token, self.project_token, self.transport = app_token, project_token, transport
+        self.pr_flow_token = pr_flow_token
         self._last = None
+
+    def read_pr_candidates(self, issue_number):
+        if self.pr_flow_token is None:
+            raise ValueError("PR handoffs are not configured")
+        from pr_flow_github import read_candidates
+        return read_candidates(self, issue_number, token=self.pr_flow_token())
+
+    def post_flow(self, issue_number, text):
+        if (self.pr_flow_token is None or type(issue_number) is not int or issue_number <= 0
+                or not isinstance(text, str) or not text.startswith("[FLOW]\nRola: automat\n")
+                or len(text) > 1000):
+            raise ValueError("Invalid PR handoff")
+        from mvp_decision import parse_flow
+        if parse_flow(text) not in ("review", "smoke"):
+            raise ValueError("Invalid PR handoff")
+        result, _ = self.transport(f"/repos/{self.owner}/{self.repository}/issues/{issue_number}/comments",
+                                   self.pr_flow_token(), body={"body": text})
+        if not isinstance(result, dict) or type(result.get("id")) is not int or result["id"] <= 0:
+            raise ValueError("Unconfirmed handoff")
 
     def _graphql(self, query, variables):
         result, _ = self.transport("/graphql", self.project_token, body={"query": query, "variables": variables})

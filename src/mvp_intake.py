@@ -10,6 +10,7 @@ import json
 import sqlite3
 
 from webhook_ingress import ACTIONS, IGNORED_ISSUE_ACTIONS, MAX_BODY, SIGNATURE, positive_id
+from pr_admission import pr_issue_number
 
 
 def receive(store, secret, registry, event, signature, body, *, wake_admission=None, status_repositories=None):
@@ -30,7 +31,8 @@ def receive(store, secret, registry, event, signature, body, *, wake_admission=N
     if event in ("installation", "installation_repositories"):
         return "attention"
     admission_event = callable(wake_admission) and event in ("pull_request", "check_run")
-    if not isinstance(event, str) or (event not in ACTIONS and not admission_event):
+    status_pr_event = event == "pull_request" and status_repositories is not None
+    if not isinstance(event, str) or (event not in ACTIONS and not admission_event and not status_pr_event):
         return "unsupported"
     try:
         payload = json.loads(body)
@@ -51,12 +53,25 @@ def receive(store, secret, registry, event, signature, body, *, wake_admission=N
         # Acknowledge their signed events without queuing or processing them.
         return "ignored"
     action = payload.get("action")
-    if admission_event:
+    if admission_event or status_pr_event:
         if not isinstance(action, str) or not action:
             return "invalid"
         # The event header is only a wakeup hint; the worker re-reads GitHub.
         # A startup scan recovers a wakeup lost during restart.
-        wake_admission()
+        if admission_event:
+            wake_admission()
+        if event == "pull_request" and status_repositories is not None and repository_id in status_repositories:
+            pr = payload.get("pull_request")
+            if isinstance(pr, dict):
+                try:
+                    number = pr_issue_number(pr.get("body"))
+                except ValueError:
+                    number = None
+                if positive_id(number):
+                    try:
+                        store.enqueue(repository_id, number)
+                    except (sqlite3.Error, OSError, ValueError):
+                        return "storage_unavailable"
         return "accepted"
     if event == "issues" and isinstance(action, str) and action in IGNORED_ISSUE_ACTIONS:
         return "ignored"
