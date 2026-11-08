@@ -76,6 +76,18 @@ class PrFlowDecisionTests(unittest.TestCase):
         self.flow["body"] += "\nextra"
         self.assertIsNone(self.decide())
 
+    def test_trusted_manual_review_must_name_exactly_one_matching_pr(self):
+        self.pr.update(state="closed", merged=True, merged_at="2026-11-08T10:04:00Z")
+        self.issue["status"] = "review"
+        self.flow.update(body="[FLOW]\nRola: agent\nStan docelowy: review\n"
+                              "Wykonano: Przygotowano PR #12.\nNastępny krok: Review.",
+                         author_id=4, created_at="2026-11-08T10:03:00Z")
+        self.assertEqual(self.decide(), merged_message(12))
+        self.flow["body"] = self.flow["body"].replace("PR #12.", "PR #12 i PR #13.")
+        self.assertIsNone(self.decide())
+        self.flow["body"] = self.flow["body"].replace("PR #12 i PR #13.", "PR #120.")
+        self.assertIsNone(self.decide())
+
     def test_multiple_matching_prs_are_ambiguous(self):
         other = {**self.pr, "number": 13}
         kwargs = {"enrolled_at": "2026-11-08T10:00:00Z", "app_author_id": 99}
