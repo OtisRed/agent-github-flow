@@ -246,6 +246,13 @@ class Store:
             row = db.execute("SELECT * FROM issues WHERE repository_id=? AND issue_number=?", key).fetchone()
             return dict(row) if row else None
 
+    def known_issue_numbers(self, repository_id):
+        """Preserve every recorded issue during a bulk reconciliation scan."""
+        with closing(self._connect()) as db, db:
+            rows = db.execute("SELECT issue_number FROM issues WHERE repository_id=?",
+                              (_positive(repository_id),)).fetchall()
+            return {row[0] for row in rows}
+
     def defer(self, repository_id, issue_number, seconds=60):
         """Delay a transient failure so it cannot starve unrelated issues."""
         key = (_positive(repository_id), _positive(issue_number))

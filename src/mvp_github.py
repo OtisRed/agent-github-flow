@@ -22,6 +22,13 @@ PROJECT_QUERY = """query($owner:String!,$number:Int!,$item:ID!){
    status:fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name optionId field{... on ProjectV2SingleSelectField{id}}}}}}
 }"""
 PROJECT_ID_QUERY = "query($owner:String!,$number:Int!){user(login:$owner){projectV2(number:$number){id}}}"
+PROJECT_BATCH_QUERY = """query($owner:String!,$number:Int!,$after:String){
+ user(login:$owner){projectV2(number:$number){id
+   statusField:field(name:"Status"){... on ProjectV2SingleSelectField{id name dataType options{id name}}}
+   items(first:100,after:$after){nodes{id isArchived
+     status:fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name optionId field{... on ProjectV2SingleSelectField{id}}}}}
+     pageInfo{hasNextPage endCursor}}}}}
+"""
 STATUS_MUTATION = """mutation($project:ID!,$item:ID!,$field:ID!,$value:ProjectV2FieldValue!){
  updateProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field,value:$value}){projectV2Item{id}}}
 """
@@ -169,7 +176,53 @@ class GitHub:
             seen.add(cursor)
         raise ValueError("Project page limit")
 
-    def reconciliation_candidates(self, enrolled_at):
+    def _batch_done_items(self):
+        """Return only fully identified done cards; reject incomplete inventories."""
+        cursor, seen, values, project_id, field_spec = None, set(), {}, None, None
+        for _ in range(MAX_PAGES):
+            data = self._graphql(PROJECT_BATCH_QUERY, {"owner": self.project_owner,
+                                                       "number": self.project_number, "after": cursor})
+            project = (data.get("user") or {}).get("projectV2") or {}
+            field = project.get("statusField") or {}
+            options = field.get("options")
+            if (not _node(project.get("id")) or not _node(field.get("id"))
+                    or field.get("name") != "Status" or field.get("dataType") != "SINGLE_SELECT"
+                    or not isinstance(options, list)):
+                raise ValueError("Invalid batch Project field")
+            mapping = {option.get("name"): option.get("id") for option in options if isinstance(option, dict)}
+            if (len(mapping) != len(options) or not STATUSES.issubset(mapping)
+                    or any(not _node(value) for value in mapping.values())):
+                raise ValueError("Invalid batch Project options")
+            spec = (field["id"], tuple(sorted(mapping.items())))
+            if project_id is not None and (project["id"] != project_id or spec != field_spec):
+                raise ValueError("Batch Project changed")
+            project_id, field_spec = project["id"], spec
+            page = project.get("items") or {}
+            nodes, info = page.get("nodes"), page.get("pageInfo")
+            if not isinstance(nodes, list) or len(nodes) > 100 or not isinstance(info, dict):
+                raise ValueError("Invalid batch Project page")
+            for item in nodes:
+                if (not isinstance(item, dict) or not _node(item.get("id")) or item["id"] in values
+                        or type(item.get("isArchived")) is not bool):
+                    raise ValueError("Invalid batch Project item")
+                status = item.get("status")
+                if status is not None and (not isinstance(status, dict) or status.get("name") not in mapping
+                        or status.get("optionId") != mapping[status["name"]]
+                        or (status.get("field") or {}).get("id") != field["id"]):
+                    raise ValueError("Invalid batch Project status")
+                values[item["id"]] = not item["isArchived"] and status is not None and status["name"] == "done"
+            more, next_cursor = info.get("hasNextPage"), info.get("endCursor")
+            if type(more) is not bool:
+                raise ValueError("Invalid batch Project cursor")
+            if not more:
+                return {key for key, done in values.items() if done}
+            if not _node(next_cursor) or next_cursor in seen:
+                raise ValueError("Invalid batch Project cursor")
+            cursor = next_cursor
+            seen.add(cursor)
+        raise ValueError("Batch Project page limit")
+
+    def reconciliation_candidates(self, enrolled_at, known_issues=None):
         """Collect existing cards and issues created after enrollment, without writes."""
         boundary = _date(enrolled_at)
         token = self.app_token()
@@ -179,8 +232,10 @@ class GitHub:
                 or not isinstance(repo.get("full_name"), str)
                 or repo["full_name"].casefold() != f"{self.owner}/{self.repository}".casefold()):
             raise ValueError("Repository identity changed")
-        candidates, card_numbers = set(), set()
-        for item in self._project_items():
+        candidates, card_numbers, card_ids = set(), set(), set()
+        items = self._project_items()
+        historical = {}
+        for item in items:
             if (not isinstance(item, dict) or item.get("content_type") not in ("Issue", "PullRequest", "DraftIssue")
                     or "archived_at" not in item):
                 raise ValueError("Invalid Project item")
@@ -194,8 +249,21 @@ class GitHub:
                 number = content["number"]
                 if number in card_numbers:
                     raise ValueError("Ambiguous Project cards")
+                if _node(item.get("node_id")):
+                    if item["node_id"] in card_ids:
+                        raise ValueError("Ambiguous Project card identity")
+                    card_ids.add(item["node_id"])
                 card_numbers.add(number)
                 candidates.add(number)
+                if known_issues is not None and number not in known_issues and _node(item.get("node_id")):
+                    try:
+                        if (content.get("state") == "closed" and _node(content.get("node_id"))
+                                and _date(content.get("created_at")) < boundary
+                                and _date(content.get("updated_at")) < boundary
+                                and _date(content.get("closed_at")) < boundary):
+                            historical[number] = item["node_id"]
+                    except (TypeError, ValueError):
+                        pass  # Missing or unparseable evidence requires the full read.
         issues = self._rest_pages(repo_path + "/issues", token, params={"state": "all", "since": enrolled_at})
         for issue in issues:
             if not isinstance(issue, dict):
@@ -206,6 +274,12 @@ class GitHub:
                 raise ValueError("Invalid issue listing")
             if _date(issue.get("created_at")) >= boundary:
                 candidates.add(issue["number"])
+        if historical:
+            try:
+                done_items = self._batch_done_items()
+            except Exception:
+                done_items = set()  # Keep the original full scan on any uncertainty.
+            candidates.difference_update(number for number, item_id in historical.items() if item_id in done_items)
         return sorted(candidates)
 
     def read(self, repository_id, issue_number):
