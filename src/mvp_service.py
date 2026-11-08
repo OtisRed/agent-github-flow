@@ -67,6 +67,9 @@ def validate_config(config):
         if 'admission_enabled' in project and type(project['admission_enabled']) is not bool:
             raise ValueError("Invalid admission setting")
         if project.get('admission_enabled') is True:
+            bot = project.get('admission_sync_bot_id')
+            if bot is not None and (type(bot) is not int or bot <= 0):
+                raise ValueError("Invalid admission sync bot")
             if project.get('admission_workflow_event', 'pull_request') not in ('pull_request', 'pull_request_target'):
                 raise ValueError("Invalid admission workflow event")
             checks = project.get('admission_tests')

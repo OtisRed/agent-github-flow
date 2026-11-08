@@ -17,6 +17,9 @@ class Gateway:
     def read_snapshot(self, _number):
         return self.snapshots.pop(0)
 
+    def sync_status(self, _snapshot):
+        return None
+
     def merge(self, number, sha, base):
         self.merges.append((number, sha, base))
         if self.fail_merge:
@@ -96,6 +99,19 @@ class RunnerTests(unittest.TestCase):
         result, merges = self.run_step(snapshot)
         self.assertEqual(result, "unsupported-pr")
         self.assertFalse(merges)
+
+    def test_verified_sync_publishes_check_without_merging(self):
+        gateway = Gateway([self.snapshot])
+        gateway.sync_status = lambda _snapshot: "sync-verified"
+        self.assertEqual(admission_step(gateway, 4, frozenset({7})), "sync-verified")
+        self.assertEqual(gateway.published, [(self.sha, "sync-verified")])
+        self.assertEqual(gateway.merges, [])
+
+    def test_sync_wait_does_not_publish_a_premature_failure(self):
+        gateway = Gateway([self.snapshot])
+        gateway.sync_status = lambda _snapshot: "sync-wait"
+        self.assertEqual(admission_step(gateway, 4, frozenset({7})), "sync-wait")
+        self.assertEqual(gateway.published, [])
 
     def test_timeout_does_not_retry_merge(self):
         gateway = Gateway([self.snapshot, copy.deepcopy(self.snapshot)], fail_merge=True)

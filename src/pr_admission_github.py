@@ -16,6 +16,8 @@ MERGE_PR = '''mutation($id:ID!,$sha:GitObjectID!){
  mergePullRequest(input:{pullRequestId:$id,mergeMethod:MERGE,expectedHeadOid:$sha}){pullRequest{merged}}}'''
 MESSAGES = {
     "ready": "Wymagane review odpowiadają aktualnej wersji PR.",
+    "sync-verified": "Zweryfikowano automatyczny forward-sync tej samej aplikacji; kontrole projektu pozostają wymagane.",
+    "sync-invalid": "Nie potwierdzono tożsamości lub aktualnych rodziców forward-sync.",
     "missing-review-agent-prowadzacy": "Brakuje aktualnego review agenta prowadzącego.",
     "missing-review-subagent": "Brakuje aktualnego review wykonanego przez subagenta.",
     "review-requires-changes-agent-prowadzacy": "Review prowadzącego wymaga poprawek.",
@@ -34,14 +36,15 @@ MESSAGES = {
 class AdmissionReader:
     def __init__(self, *, owner, repository, repository_id, token, transport,
                  admission=None, required_tests=(), journal=None, workflow="ci.yml", gate_job="verify",
-                 workflow_event="pull_request"):
+                 workflow_event="pull_request", sync_bot_id=None):
         if (not isinstance(owner, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", owner)
                 or not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", repository)
                 or repository in (".", "..") or type(repository_id) is not int or repository_id <= 0
                 or not callable(token) or not callable(transport)
                 or not isinstance(workflow, str) or not re.fullmatch(r"[A-Za-z0-9_-]+\.ya?ml", workflow)
                 or not isinstance(gate_job, str) or not gate_job or len(gate_job) > 100
-                or workflow_event not in ("pull_request", "pull_request_target")):
+                or workflow_event not in ("pull_request", "pull_request_target")
+                or (sync_bot_id is not None and (type(sync_bot_id) is not int or sync_bot_id <= 0))):
             raise ValueError("Invalid admission reader configuration")
         self.root = f"/repos/{owner}/{repository}"
         self.full_name = f"{owner}/{repository}"
@@ -49,6 +52,7 @@ class AdmissionReader:
         self.admission, self.required_tests = admission, required_tests
         self.journal = journal
         self.workflow, self.gate_job, self.workflow_event = workflow, gate_job, workflow_event
+        self.sync_bot_id = sync_bot_id
         self._requested_ci_attempts = set()
 
     def _get(self, path, token):
@@ -215,9 +219,37 @@ class AdmissionReader:
         return {"complete": True, "protection": protection, "checks": checks,
                 "pr": {"number": number, "state": pr.get("state"),
                 "draft": pr.get("draft"), "head_sha": sha, "body": pr.get("body"),
+                "head_ref": head.get("ref"), "author_id": (pr.get("user") or {}).get("id"),
                 "base_ref": base.get("ref"), "base_sha": base_sha, "same_repository": same_repo,
-                "auto_merge_enabled": pr.get("auto_merge") is not None, "node_id": pr.get("node_id")},
+                "auto_merge_enabled": pr.get("auto_merge") is not None,
+                "auto_merge_actor_id": ((pr.get("auto_merge") or {}).get("enabled_by") or {}).get("id"),
+                "node_id": pr.get("node_id")},
                 "issue": issue, "comments": comments}
+
+    def sync_status(self, snapshot):
+        """Recognize only the configured App's exact main-to-smoke merge PR."""
+        pr = snapshot.get("pr") if isinstance(snapshot, dict) else None
+        if not isinstance(pr, dict) or self.sync_bot_id is None:
+            return None
+        ref = pr.get("head_ref")
+        match = re.fullmatch(r"sync-main/([0-9a-f]{40})", ref) if isinstance(ref, str) else None
+        if not match or pr.get("author_id") != self.sync_bot_id:
+            return None
+        if pr.get("auto_merge_enabled") is not True:
+            return "sync-wait"
+        if (snapshot.get("protection") is not True or pr.get("auto_merge_actor_id") != self.sync_bot_id or pr.get("state") != "open"
+                or pr.get("draft") is not False or pr.get("same_repository") is not True
+                or pr.get("base_ref") != "smoke"):
+            return "sync-invalid"
+        token = self.token()
+        main = self._get("/git/ref/heads/main", token)
+        commit = self._get("/git/commits/" + pr["head_sha"], token)
+        parents = commit.get("parents") if isinstance(commit, dict) else None
+        if ((main.get("object") or {}).get("sha") != match.group(1)
+                or not isinstance(parents, list) or [p.get("sha") for p in parents if isinstance(p, dict)]
+                != [pr.get("base_sha"), match.group(1)] or len(parents) != 2):
+            return "sync-invalid"
+        return "sync-verified"
 
     def merge(self, number, expected_sha, expected_base):
         """Guard the exact head via GitHub; a caller must freshly check all inputs."""
@@ -282,9 +314,9 @@ class AdmissionReader:
         if any(type(run.get("id")) is not int or run["id"] <= 0 or run.get("head_sha") != sha for run in matching):
             raise ValueError("Invalid admission check")
         latest = max(matching, key=lambda run: run["id"], default=None)
-        conclusion = "success" if verdict == "ready" else "failure"
+        conclusion = "success" if verdict in ("ready", "sync-verified") else "failure"
         summary = verdict + "\n" + MESSAGES.get(verdict, "Nie można potwierdzić warunków admission.")
-        if verdict != "ready":
+        if verdict not in ("ready", "sync-verified"):
             summary += " Sprawdź instrukcję skilla github-flow."
         if (latest is not None and latest.get("status") == "completed" and latest.get("conclusion") == conclusion
                 and isinstance(latest.get("output"), dict) and latest["output"].get("summary") == summary):

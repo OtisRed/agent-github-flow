@@ -36,9 +36,16 @@ def admission_step(gateway, pr_number, trusted_authors):
     if type(pr_number) is not int or pr_number <= 0:
         raise ValueError("Invalid pull request number")
     first = gateway.read_snapshot(pr_number)
-    verdict = _decision(first, trusted_authors)
     pr = first.get("pr") if isinstance(first, dict) else None
     head = pr.get("head_sha") if isinstance(pr, dict) else None
+    sync_status = gateway.sync_status(first)
+    if sync_status == "sync-wait":
+        return sync_status
+    if sync_status in ("sync-verified", "sync-invalid"):
+        if isinstance(head, str):
+            gateway.publish(head, sync_status)
+        return sync_status
+    verdict = _decision(first, trusted_authors)
     if isinstance(head, str):
         gateway.publish(head, verdict)
     if verdict != "ready":
