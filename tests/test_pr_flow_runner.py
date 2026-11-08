@@ -53,7 +53,7 @@ class RunnerTests(unittest.TestCase):
     def run_step(self):
         decision = decide(self.snapshot, self.row, enrolled_at=self.boundary, trusted_authors=frozenset({4, 99}))
         return process_pr_handoff(self.store, self.gateway, self.row, self.snapshot, decision,
-                                  enrolled_at=self.boundary, app_author_id=99)
+                                  enrolled_at=self.boundary, app_author_id=99, trusted_authors=frozenset({4, 99}))
 
     def test_posts_and_immediately_queues_status_read(self):
         self.assertEqual(self.run_step(), "handoff-posted")
@@ -144,6 +144,75 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(step(), "completed")
         self.assertEqual(self.snapshot["status"], "smoke")
         self.assertEqual(len(gateway.posted), 1)
+
+    def test_existing_issue_moves_to_smoke_after_new_merge_without_rewriting_history(self):
+        self.snapshot["status"] = "review"
+        self.comment.update(body="Historical workflow receipt", created_at="2026-11-08T09:30:00Z",
+                            updated_at="2026-11-08T09:30:00Z")
+        self.pr.update(created_at="2026-11-08T09:45:00Z", updated_at="2026-11-08T10:04:00Z",
+                       state="closed", merged=True, merged_at="2026-11-08T10:04:00Z")
+        gateway = self.gateway
+        gateway.read = lambda repo, number: deepcopy(self.snapshot)
+        def post(number, text):
+            gateway.posted.append((number, text))
+            self.snapshot["comments"].append({"id": 4, "author_id": 99, "body": text,
+                                              "created_at": "2026-11-08T10:05:00Z",
+                                              "updated_at": "2026-11-08T10:05:00Z"})
+        gateway.post_flow = post
+        gateway.set_status = lambda repo, number, status: self.snapshot.update(status=status)
+        def step():
+            return process_one(self.store, gateway, enrolled_at=self.boundary, trusted_authors=frozenset({4, 99}),
+                               pr_flow={"enrolled_at": self.boundary, "app_author_id": 99})["kind"]
+        self.assertEqual(step(), "rescan")
+        self.assertEqual(step(), "completed")
+        self.assertEqual(self.snapshot["status"], "smoke")
+        self.assertEqual(self.snapshot["comments"][0]["body"], "Historical workflow receipt")
+
+    def test_edited_legacy_comment_blocks_projection_of_new_merge(self):
+        self.snapshot["status"] = "review"
+        self.comment.update(body="Historical receipt", created_at="2026-11-08T09:30:00Z",
+                            updated_at="2026-11-08T10:03:00Z")
+        self.pr.update(created_at="2026-11-08T09:45:00Z", updated_at="2026-11-08T10:04:00Z",
+                       state="closed", merged=True, merged_at="2026-11-08T10:04:00Z")
+        result = process_one(self.store, self.gateway, enrolled_at=self.boundary, trusted_authors=frozenset({4, 99}),
+                             pr_flow={"enrolled_at": self.boundary, "app_author_id": 99})
+        self.assertEqual(result, {"kind": "blocked", "reason": "legacy-comment-edited"})
+        self.assertEqual(self.gateway.posted, [])
+        self.assertEqual(self.snapshot["status"], "review")
+
+    def test_existing_agent_ready_issue_moves_to_review_after_pr_update(self):
+        self.comment.update(body="Historical receipt", created_at="2026-11-08T09:30:00Z",
+                            updated_at="2026-11-08T09:30:00Z")
+        self.pr.update(created_at="2026-11-08T09:45:00Z", updated_at="2026-11-08T10:04:00Z")
+        gateway = self.gateway
+        gateway.read = lambda repo, number: deepcopy(self.snapshot)
+        def post(number, text):
+            gateway.posted.append((number, text))
+            self.snapshot["comments"].append({"id": 4, "author_id": 99, "body": text,
+                                              "created_at": "2026-11-08T10:05:00Z",
+                                              "updated_at": "2026-11-08T10:05:00Z"})
+        gateway.post_flow = post
+        gateway.set_status = lambda repo, number, status: self.snapshot.update(status=status)
+        def step():
+            return process_one(self.store, gateway, enrolled_at=self.boundary, trusted_authors=frozenset({4, 99}),
+                               pr_flow={"enrolled_at": self.boundary, "app_author_id": 99})["kind"]
+        self.assertEqual(step(), "rescan")
+        self.assertEqual(step(), "completed")
+        self.assertEqual(self.snapshot["status"], "review")
+        self.assertEqual(len(gateway.posted), 1)
+        # The same older PR can subsequently merge after the new review FLOW.
+        self.pr.update(state="closed", merged=True, merged_at="2026-11-08T10:06:00Z")
+        self.store.enqueue(20, 7)
+        def post_smoke(number, text):
+            gateway.posted.append((number, text))
+            self.snapshot["comments"].append({"id": 5, "author_id": 99, "body": text,
+                                              "created_at": "2026-11-08T10:07:00Z",
+                                              "updated_at": "2026-11-08T10:07:00Z"})
+        gateway.post_flow = post_smoke
+        self.assertEqual(step(), "rescan")
+        self.assertEqual(step(), "completed")
+        self.assertEqual(self.snapshot["status"], "smoke")
+        self.assertEqual(len(gateway.posted), 2)
 
 
 if __name__ == "__main__":

@@ -49,15 +49,18 @@ def read_candidates(client, issue_number, *, token=None):
                 or not isinstance(head.get("ref"), str) or not isinstance(base.get("ref"), str)
                 or pr.get("state") not in ("open", "closed") or type(pr.get("merged")) is not bool):
             raise ValueError("Invalid PR branches")
-        _date(pr.get("created_at"))
+        created = _date(pr.get("created_at"))
+        if _date(pr.get("updated_at")) < created:
+            raise ValueError("Invalid PR timeline")
         if pr["merged"]:
-            _date(pr.get("merged_at"))
+            if _date(pr.get("merged_at")) < created:
+                raise ValueError("Invalid PR timeline")
         head_repo, base_repo = head.get("repo"), base.get("repo")
         same = (isinstance(head_repo, dict) and isinstance(base_repo, dict)
                 and head_repo.get("id") == client.repository_id
                 and base_repo.get("id") == client.repository_id)
         results.append({"number": number, "body": pr.get("body"), "state": pr.get("state"),
                         "merged": pr.get("merged"), "created_at": pr.get("created_at"),
-                        "merged_at": pr.get("merged_at"), "head_ref": head.get("ref"),
+                        "updated_at": pr.get("updated_at"), "merged_at": pr.get("merged_at"), "head_ref": head.get("ref"),
                         "base_ref": base.get("ref"), "same_repository": same})
     return results

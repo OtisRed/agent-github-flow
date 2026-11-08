@@ -65,14 +65,11 @@ def process_one(store, github, *, enrolled_at, trusted_authors, row=None, pr_flo
     if decision["kind"] == "blocked":
         store.block(repo, number, generation, decision["reason"])
         return decision
-    if decision["kind"] == "no-change":
-        store.complete(repo, number, generation)
-        return {"kind": "completed"}
-
     if pr_flow is not None:
         from pr_flow_runner import process_pr_handoff
         try:
-            handoff = process_pr_handoff(store, github, row, current, decision, **pr_flow)
+            handoff = process_pr_handoff(store, github, row, current, decision,
+                                         trusted_authors=trusted_authors, **pr_flow)
         except Exception:
             store.defer(repo, number)
             return {"kind": "read-failed"}
@@ -80,6 +77,12 @@ def process_one(store, github, *, enrolled_at, trusted_authors, row=None, pr_flo
             return {"kind": "rescan"}
         if handoff == "write-uncertain":
             return {"kind": "write-uncertain"}
+        if handoff == "legacy-comment-edited":
+            return {"kind": "blocked", "reason": handoff}
+
+    if decision["kind"] == "no-change":
+        store.complete(repo, number, generation)
+        return {"kind": "completed"}
 
     # Two complete reads reduce stale decisions; GitHub offers no conditional
     # status write, so the documented residual concurrent-write risk remains.

@@ -26,7 +26,7 @@ class FakeClient:
         self.requests.append(path)
         number = int(path.rsplit("/", 1)[1])
         return ({"number": number, "body": "Refs #7", "state": "open", "merged": False,
-                 "created_at": "2026-11-08T10:02:00Z", "merged_at": None,
+                 "created_at": "2026-11-08T10:02:00Z", "updated_at": "2026-11-08T10:03:00Z", "merged_at": None,
                  "head": {"ref": "issue/7", "repo": {"id": 20}},
                  "base": {"ref": "smoke", "repo": {"id": 20}}}, None)
 

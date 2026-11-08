@@ -22,7 +22,9 @@ Webhooks tylko budzą istniejącą kolejkę issue. Kontroler odczytuje stan issu
 
 Jeśli zaufany agent sam przekazał issue do `review`, w polu `Wykonano` podaje dokładnie jeden odnośnik w postaci `PR #numer`. Pozwala to po scaleniu rozpoznać ten sam cykl również wtedy, gdy przekazanie do review nie pochodziło od automatu.
 
-Próba jest ograniczona do PR i przekazań rozpoczętych po granicy. Istniejące karty i PR-y nie są automatycznie przemieszczane; starsze zadania wymagają nowego przekazania `agent-ready` w nowym cyklu. Odczyt kandydatów korzysta z osi czasu issue: jeśli GitHub nie zwróci powiązania, kontroler nie zgaduje; kolejny sygnał lub uzgadnianie ponowi sprawdzenie.
+Istniejące karty zachowują stan i historię przy podłączeniu. Jeśli nie mają jeszcze nowego `[FLOW]`, dopiero późniejsza aktualizacja jednoznacznie powiązanego otwartego PR może przekazać `agent-ready` do `review`, a nowe scalenie — `review` albo `agent-ready` do `smoke`. Wcześniejsze scalenie nie uruchamia zmiany. Wznowienie issue po utworzeniu PR lub wielu pasujących kandydatów nie pozwala zgadywać. Nowsze `[FLOW]` wyłącza tę ścieżkę historyczną. Odczyt kandydatów korzysta z osi czasu issue: jeśli GitHub nie zwróci powiązania, kontroler nie zgaduje; kolejny sygnał lub uzgadnianie ponowi sprawdzenie.
+
+Jeśli zaufany historyczny komentarz został edytowany po granicy, kontroler blokuje taki automatyczny ruch i zgłasza `legacy-comment-edited`; aktualne przekazanie `[FLOW]` pozwala rozpocząć kolejny cykl po wyjaśnieniu stanu.
 
 Projekt korzystający z istniejącego automatycznego forward-sync może wskazać `admission_sync_bot_id`. Kontroler rozpoznaje tylko PR tej aplikacji, z jej auto-merge oraz dokładnymi rodzicami aktualnego `smoke` i `main`. Wystawia dla niego odrębny wynik `sync-verified`, bez tworzenia fikcyjnego review i bez samodzielnego merge; wymagane kontrole projektu nadal obowiązują. Brak tego ustawienia zachowuje zwykłą ścieżkę PR.
 

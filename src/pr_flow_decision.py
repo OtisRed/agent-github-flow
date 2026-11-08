@@ -41,7 +41,7 @@ def decide_pr_handoff(pr, issue, last_flow, *, enrolled_at, app_author_id):
     """
     try:
         if (not isinstance(pr, dict) or not isinstance(issue, dict)
-                or not isinstance(last_flow, dict) or issue.get("complete") is not True
+                or (last_flow is not None and not isinstance(last_flow, dict)) or issue.get("complete") is not True
                 or issue.get("state") != "OPEN" or type(issue.get("number")) is not int
                 or issue["number"] <= 0 or type(pr.get("number")) is not int
                 or pr["number"] <= 0 or type(app_author_id) is not int or app_author_id <= 0
@@ -51,20 +51,35 @@ def decide_pr_handoff(pr, issue, last_flow, *, enrolled_at, app_author_id):
             return None
         boundary = _date(enrolled_at)
         created = _date(pr.get("created_at"))
-        flow_time = _date(last_flow.get("created_at"))
-        if created <= boundary or flow_time <= boundary:
-            return None
         reopen = issue.get("latest_reopen")
         if reopen is not None and (not isinstance(reopen, dict)
-                or created <= _date(reopen.get("created_at"))
-                or flow_time <= _date(reopen.get("created_at"))):
+                or created <= _date(reopen.get("created_at"))):
+            return None
+        flow_time = _date(last_flow.get("created_at")) if last_flow is not None else None
+        if flow_time == boundary:
+            return None
+        # Cards carried across onboarding have no post-boundary handoff. Do
+        # not replay historical work: only a new PR update or merge can move
+        # one, and the caller must have checked all trusted comments first.
+        if flow_time is None or flow_time < boundary:
+            if (pr.get("state") == "open" and pr.get("merged") is False
+                    and issue.get("status") == "agent-ready"
+                    and _date(pr.get("updated_at")) > boundary):
+                return draft_message(pr["number"])
+            if (pr.get("state") == "closed" and pr.get("merged") is True
+                    and issue.get("status") in ("agent-ready", "review")
+                    and _date(pr.get("merged_at")) > boundary):
+                return merged_message(pr["number"])
+            return None
+        if reopen is not None and flow_time <= _date(reopen.get("created_at")):
             return None
         body = last_flow.get("body")
         current = parse_flow(body)
         if current != issue.get("status"):
             return None
         if pr.get("state") == "open" and pr.get("merged") is False:
-            if current == "agent-ready" and flow_time <= created:
+            if (current == "agent-ready" and (flow_time <= created
+                    or _date(pr.get("updated_at")) > flow_time)):
                 return draft_message(pr["number"])
         elif pr.get("state") == "closed" and pr.get("merged") is True:
             merged_at = _date(pr.get("merged_at"))
@@ -76,7 +91,7 @@ def decide_pr_handoff(pr, issue, last_flow, *, enrolled_at, app_author_id):
                     and _mentions_pr_in_review(body, pr["number"])
                     and created <= flow_time <= merged_at):
                 return merged_message(pr["number"])
-            if current == "agent-ready" and flow_time <= created <= merged_at:
+            if current == "agent-ready" and flow_time < merged_at:
                 return merged_message(pr["number"])
         return None
     except (ValueError, TypeError, OverflowError):
