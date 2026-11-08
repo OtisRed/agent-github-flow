@@ -84,6 +84,17 @@ class CandidateTests(unittest.TestCase):
         client.transport = merged
         self.assertTrue(read_candidates(client, 7)[0]["merged"])
 
+    def test_merged_pr_without_merge_time_is_rejected(self):
+        client = FakeClient([reference(12)])
+        old = client.transport
+        def merged(path, token):
+            value, link = old(path, token)
+            value.update(state="closed", merged=True, merged_at=None)
+            return value, link
+        client.transport = merged
+        with self.assertRaises(ValueError):
+            read_candidates(client, 7)
+
     def test_publishes_only_standard_handoff_to_configured_repo(self):
         calls = []
         def transport(path, token, *, body=None):
