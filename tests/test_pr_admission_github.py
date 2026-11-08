@@ -200,6 +200,35 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(self.reader.rerun_blocked_ci(4), "rerun-requested")
         self.assertEqual(writes, [{}])
 
+    def test_target_without_pr_metadata_requires_one_matching_branch_pr(self):
+        self.reader.workflow_event = "pull_request_target"
+        self.pr["created_at"] = "2026-11-07T09:00:00Z"
+        self.pr["head"]["ref"] = "codex/4-agent"
+        query = f"/actions/workflows/ci.yml/runs?event=pull_request_target&head_sha={self.sha}&per_page=100"
+        run = {"id": 19, "run_attempt": 1, "status": "completed", "conclusion": "failure",
+               "event": "pull_request_target", "head_sha": self.sha, "head_repository": {"id": 20},
+               "head_branch": "codex/4-agent", "created_at": "2026-11-07T09:01:00Z", "pull_requests": []}
+        self.rows[query] = {"total_count": 1, "workflow_runs": [run]}
+        lookup = "/pulls?state=all&head=owner%3Acodex%2F4-agent&per_page=100"
+        self.rows[lookup] = [copy.deepcopy(self.pr), copy.deepcopy(self.pr)]
+        self.rows["/actions/runs/19/attempts/1/jobs?per_page=100"] = {"total_count": 1, "jobs": [{
+            "name": "verify", "conclusion": "failure",
+            "steps": [{"name": "Wait for flow admission", "conclusion": "failure"}]}]}
+        writes = []
+        def transport(path, token, *, body=None):
+            if path.endswith("/actions/runs/19/rerun-failed-jobs"):
+                writes.append(body)
+                return None, None
+            return self.transport(path, token, body=body)
+        self.reader.transport = transport
+        self.assertEqual(self.reader.rerun_blocked_ci(4), "no-workflow")
+        self.rows[lookup].pop()
+        run["created_at"] = "2026-11-07T08:59:00Z"
+        self.assertEqual(self.reader.rerun_blocked_ci(4), "no-workflow")
+        run["created_at"] = "2026-11-07T09:01:00Z"
+        self.assertEqual(self.reader.rerun_blocked_ci(4), "rerun-requested")
+        self.assertEqual(writes, [{}])
+
 
 if __name__ == "__main__":
     unittest.main()
