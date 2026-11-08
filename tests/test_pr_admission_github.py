@@ -49,6 +49,28 @@ class ReaderTests(unittest.TestCase):
         self.pr["head"]["repo"]["id"] = 99
         self.assertFalse(self.reader.read_snapshot(4)["pr"]["same_repository"])
 
+    def test_forward_sync_requires_same_bot_and_exact_current_main_parents(self):
+        self.reader.sync_bot_id = 10
+        main = "c" * 40
+        snapshot = {"protection": True, "pr": {"head_ref": "sync-main/" + main, "author_id": 10,
+            "auto_merge_enabled": True, "auto_merge_actor_id": 10, "state": "open", "draft": False,
+            "same_repository": True, "base_ref": "smoke", "base_sha": "b" * 40, "head_sha": self.sha}}
+        self.rows["/git/ref/heads/main"] = {"object": {"sha": main}}
+        self.rows["/git/commits/" + self.sha] = {"parents": [{"sha": "b" * 40}, {"sha": main}]}
+        self.assertEqual(self.reader.sync_status(snapshot), "sync-verified")
+        snapshot["pr"]["auto_merge_actor_id"] = 11
+        self.assertEqual(self.reader.sync_status(snapshot), "sync-invalid")
+        snapshot["pr"]["auto_merge_actor_id"] = 10
+        self.rows["/git/ref/heads/main"]["object"]["sha"] = "d" * 40
+        self.assertEqual(self.reader.sync_status(snapshot), "sync-invalid")
+        self.rows["/git/ref/heads/main"]["object"]["sha"] = main
+        self.rows["/git/commits/" + self.sha]["parents"][0]["sha"] = "d" * 40
+        self.assertEqual(self.reader.sync_status(snapshot), "sync-invalid")
+        snapshot["pr"]["auto_merge_enabled"] = False
+        self.assertEqual(self.reader.sync_status(snapshot), "sync-wait")
+        snapshot["pr"]["author_id"] = 11
+        self.assertIsNone(self.reader.sync_status(snapshot))
+
     def test_wrong_repo_or_issue_that_is_a_pr_are_rejected(self):
         self.rows[""]["id"] = 99
         with self.assertRaises(ValueError):

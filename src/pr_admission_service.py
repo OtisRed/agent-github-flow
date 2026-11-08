@@ -25,7 +25,8 @@ def build_readers(config, private_key, *, transport=request):
                                  journal=MergeJournal(Path(config["state_path"]).parent, repository_id),
                                  workflow=project.get("admission_workflow", "ci.yml"),
                                  gate_job=project.get("admission_gate_job", "verify"),
-                                 workflow_event=project.get("admission_workflow_event", "pull_request"))
+                                 workflow_event=project.get("admission_workflow_event", "pull_request"),
+                                 sync_bot_id=project.get("admission_sync_bot_id"))
         readers.append((reader, frozenset(project["trusted_author_ids"])))
     return readers
 
@@ -51,7 +52,7 @@ def run_admission(stop, wake, readers):
                     break
                 try:
                     result = admission_step(reader, number, authors)
-                    if result == "tests-not-green":
+                    if result in ("tests-not-green", "sync-verified"):
                         reader.rerun_blocked_ci(number)
                     if result in ("protection-unverified", "checks-or-protection-changed"):
                         print("FLOW attention: admission-" + result, file=sys.stderr, flush=True)

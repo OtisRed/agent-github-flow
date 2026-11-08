@@ -14,6 +14,8 @@ Jedna logika ocenia wymagane review z DA i sprawdzony commit. Po publikacji chec
 
 Projekt zachowujący własny automat statusów można skonfigurować z `status_enabled: false`: kontroler przyjmuje sygnały potrzebne admission, ale nie dodaje jego issue do kolejki statusów ani nie wykonuje nocnego uzgadniania tablicy. Domyślne zachowanie istniejących projektów pozostaje bez zmian. To ustawienie nie włącza samo admission ani nie przenosi właściciela statusów.
 
+Projekt korzystający z istniejącego automatycznego forward-sync może wskazać `admission_sync_bot_id`. Kontroler rozpoznaje tylko PR tej aplikacji, z jej auto-merge oraz dokładnymi rodzicami aktualnego `smoke` i `main`. Wystawia dla niego odrębny wynik `sync-verified`, bez tworzenia fikcyjnego review i bez samodzielnego merge; wymagane kontrole projektu nadal obowiązują. Brak tego ustawienia zachowuje zwykłą ścieżkę PR.
+
 ## Codzienna praca
 
 Agent zapisuje rzeczywisty wynik `[REVIEW]` dla aktualnego commita i zdejmuje draft. Jeśli check `flow-admission` jest czerwony, jego opis wskazuje brak w kontrakcie lub review. Po poprawieniu komentarza albo issue kontroler ponownie odczytuje dane. Gdy wcześniejszy przebieg CI zatrzymał się wyłącznie na oczekiwaniu na admission, kontroler może wznowić jego nieudane joby; błędu właściwych testów nie ponawia automatycznie. Nowy commit wymaga aktualnego review.
