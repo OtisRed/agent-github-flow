@@ -26,7 +26,7 @@ def receive(store, secret, registry, event, signature, body, *, wake_admission=N
     expected = "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, signature):
         return "bad_signature"
-    if event == "ping":
+    if event in ("ping", "check_suite"):
         return "ignored"
     if event in ("installation", "installation_repositories"):
         return "attention"

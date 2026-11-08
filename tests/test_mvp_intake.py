@@ -46,6 +46,12 @@ class IntakeTests(unittest.TestCase):
         self.assertEqual(self.send(other), "unknown_project")
         self.assertIsNone(self.store.next_pending())
 
+    def test_check_suite_is_acknowledged_only_after_signature_verification(self):
+        payload = {"action": "requested", "repository": {"id": 20}, "installation": {"id": 10}}
+        self.assertEqual(self.send(payload, event="check_suite"), "ignored")
+        self.assertEqual(self.send(payload, event="check_suite", signature="sha256=" + "0" * 64), "bad_signature")
+        self.assertIsNone(self.store.next_pending())
+
     def test_missing_database_is_not_acknowledged(self):
         missing = Store(Path(self.directory.name) / "missing.sqlite")
         self.assertEqual(self.send(self.payload(), store=missing), "storage_unavailable")
