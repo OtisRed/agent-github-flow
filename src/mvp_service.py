@@ -8,6 +8,7 @@ import stat
 import sys
 import threading
 import time
+from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -16,6 +17,7 @@ from mvp_credentials import AppToken, read_private_file
 from mvp_decision import _date
 from mvp_github import GitHub
 from mvp_http import make_server
+from mvp_scan import stage_one
 from mvp_store import Store
 from mvp_worker import process_one
 from promotion_schedule import run_promotions
@@ -188,6 +190,8 @@ def run(config):
         today = datetime.now(zone)
         last_night = today.date() if today.hour >= 2 else today.date() - timedelta(days=1)
         pending_scans = set(clients)  # startup reconciliation
+        scan_backlog = deque()
+        scan_in_progress = bool(pending_scans)
         scan_reason = "startup"
         backup_pending = True
         next_scan = time.monotonic()
@@ -201,6 +205,7 @@ def run(config):
             now = datetime.now(zone)
             if now.hour >= 2 and now.date() != last_night:
                 pending_scans.update(clients)
+                scan_in_progress = bool(pending_scans) or bool(scan_backlog)
                 scan_reason = "nightly"
                 backup_pending = True
                 next_scan = time.monotonic()
@@ -212,19 +217,27 @@ def run(config):
                         backup_pending = False
                     except Exception:
                         print("FLOW attention: backup-failed", file=sys.stderr, flush=True)
-                had_pending_scans = bool(pending_scans)
                 for repository_id in list(pending_scans):
                     client, enrolled_at, _authors, _pr_flow = clients[repository_id]
                     try:
-                        for issue_number in client.reconciliation_candidates(enrolled_at):
-                            store.enqueue(repository_id, issue_number)
+                        known = store.known_issue_numbers(repository_id)
+                        candidates = client.reconciliation_candidates(enrolled_at, known)
+                        scan_backlog.extend((repository_id, number) for number in candidates)
                         pending_scans.remove(repository_id)
                     except Exception:
                         print("FLOW attention: reconciliation-failed", file=sys.stderr, flush=True)
-                if had_pending_scans and not pending_scans:
-                    print("FLOW scan: " + scan_reason + " candidates queued", flush=True)
                 next_scan = time.monotonic() + 60
             row = store.next_pending()
+            if row is None and scan_backlog:
+                try:
+                    stage_one(store, scan_backlog)
+                    row = store.next_pending()
+                except Exception:
+                    print("FLOW attention: reconciliation-failed", file=sys.stderr, flush=True)
+                    stop.wait(1)
+            if scan_in_progress and not pending_scans and not scan_backlog:
+                print("FLOW scan: " + scan_reason + " candidates queued", flush=True)
+                scan_in_progress = False
             if row is None:
                 stop.wait(1)
                 continue

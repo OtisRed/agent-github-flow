@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mvp_decision import STATUSES
-from mvp_github import PROJECT_ID_QUERY, PROJECT_QUERY, STATUS_MUTATION, GitHub
+from mvp_github import PROJECT_BATCH_QUERY, PROJECT_ID_QUERY, PROJECT_QUERY, STATUS_MUTATION, GitHub
 
 
 class FakeTransport:
@@ -17,6 +17,7 @@ class FakeTransport:
         self.items = [self.item]
         self.link = None
         self.status = "needs-design"
+        self.batch = None
 
     def __call__(self, path, token, *, body=None):
         self.calls.append((path, token, body))
@@ -38,6 +39,8 @@ class FakeTransport:
             query = body["query"]
             if query == PROJECT_ID_QUERY:
                 return {"data": {"user": {"projectV2": {"id": "project1"}}}}, None
+            if query == PROJECT_BATCH_QUERY and self.batch is not None:
+                return copy.deepcopy(self.batch), None
             if query == PROJECT_QUERY:
                 options = [{"name": name, "id": "option-" + name} for name in sorted(STATUSES)]
                 field = {"id": "field1", "name": "Status", "dataType": "SINGLE_SELECT", "options": options}
@@ -116,6 +119,68 @@ class GitHubTests(unittest.TestCase):
 
     def test_reconciliation_includes_existing_cards_and_new_issues_only(self):
         self.assertEqual(self.github.reconciliation_candidates("2026-11-01T00:00:00Z"), [7, 8, 11])
+
+    def _historical_done(self):
+        item = self.transport.item
+        item["content"].update({"state": "closed", "created_at": "2026-10-01T00:00:00Z",
+                                "updated_at": "2026-10-02T00:00:00Z", "closed_at": "2026-10-02T00:00:00Z"})
+        field = {"id": "field1", "name": "Status", "dataType": "SINGLE_SELECT",
+                 "options": [{"name": name, "id": "option-" + name} for name in sorted(STATUSES)]}
+        node = {"id": "item1", "isArchived": False,
+                "status": {"name": "done", "optionId": "option-done", "field": {"id": "field1"}}}
+        self.transport.batch = {"data": {"user": {"projectV2": {"id": "project1", "statusField": field,
+            "items": {"nodes": [node], "pageInfo": {"hasNextPage": False, "endCursor": "cursor1"}}}}}}
+        return node
+
+    def test_batch_skips_only_historical_done_without_checkpoint(self):
+        self._historical_done()
+        self.assertEqual(self.github.reconciliation_candidates("2026-11-01T00:00:00Z", set()), [8, 11])
+        self.assertEqual(self.github.reconciliation_candidates("2026-11-01T00:00:00Z", {7}), [7, 8, 11])
+        self.assertEqual(self.github.reconciliation_candidates("2026-11-01T00:00:00Z"), [7, 8, 11])
+
+    def test_batch_retains_reopened_recent_or_ambiguous_items(self):
+        node = self._historical_done()
+        content = self.transport.item["content"]
+        for key, value in (("state", "open"), ("updated_at", "2026-11-02T00:00:00Z"),
+                           ("closed_at", None), ("created_at", "invalid"), ("node_id", None)):
+            old = content[key]
+            content[key] = value
+            self.assertIn(7, self.github.reconciliation_candidates("2026-11-01T00:00:00Z", set()), key)
+            content[key] = old
+        node["status"]["name"] = "smoke"
+        node["status"]["optionId"] = "option-smoke"
+        self.assertIn(7, self.github.reconciliation_candidates("2026-11-01T00:00:00Z", set()))
+        node["status"]["name"] = "done"
+        node["status"]["optionId"] = "wrong"
+        self.assertIn(7, self.github.reconciliation_candidates("2026-11-01T00:00:00Z", set()))
+
+    def test_incomplete_or_duplicate_batch_falls_back_to_full_scan(self):
+        node = self._historical_done()
+        page = self.transport.batch["data"]["user"]["projectV2"]["items"]
+        page["nodes"].append(copy.deepcopy(node))
+        self.assertIn(7, self.github.reconciliation_candidates("2026-11-01T00:00:00Z", set()))
+        page["nodes"].pop()
+        page["pageInfo"] = {"hasNextPage": True, "endCursor": None}
+        self.assertIn(7, self.github.reconciliation_candidates("2026-11-01T00:00:00Z", set()))
+        self.transport.batch = None
+        self.assertIn(7, self.github.reconciliation_candidates("2026-11-01T00:00:00Z", set()))
+
+    def test_batch_consumes_every_page(self):
+        node = self._historical_done()
+        original = self.transport
+        def paginated(path, token, *, body=None):
+            if path == "/graphql" and body["query"] == PROJECT_BATCH_QUERY:
+                result = copy.deepcopy(original.batch)
+                page = result["data"]["user"]["projectV2"]["items"]
+                if body["variables"]["after"] is None:
+                    page["nodes"] = []
+                    page["pageInfo"] = {"hasNextPage": True, "endCursor": "next"}
+                else:
+                    page["nodes"] = [node]
+                return result, None
+            return original(path, token, body=body)
+        self.github.transport = paginated
+        self.assertEqual(self.github.reconciliation_candidates("2026-11-01T00:00:00Z", set()), [8, 11])
 
 
 if __name__ == "__main__":
