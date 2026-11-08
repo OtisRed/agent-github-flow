@@ -5,7 +5,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mvp_decision import STATUSES
-from mvp_github import PROJECT_BATCH_QUERY, PROJECT_ID_QUERY, PROJECT_QUERY, STATUS_MUTATION, GitHub
+from mvp_github import (PROJECT_BATCH_QUERY, PROJECT_ID_QUERY, PROJECT_QUERY, STATUS_MUTATION,
+                        ARCHIVED_QUERY, UNARCHIVE_MUTATION, GitHub)
 
 
 class FakeTransport:
@@ -18,6 +19,7 @@ class FakeTransport:
         self.link = None
         self.status = "needs-design"
         self.batch = None
+        self.archived = []
 
     def __call__(self, path, token, *, body=None):
         self.calls.append((path, token, body))
@@ -26,6 +28,8 @@ class FakeTransport:
         if path == "/repos/Owner/Project/issues/7":
             return {"number": 7, "node_id": "issue1", "state": "open", "created_at": "2026-11-02T00:00:00Z",
                     "updated_at": "2026-11-02T01:00:00Z"}, None
+        if path.startswith("/repos/Owner/Project/issues?") and "state=open" in path:
+            return [], None
         if path.startswith("/repos/Owner/Project/issues?"):
             return [{"number": 8, "created_at": "2026-11-02T00:00:00Z"},
                     {"number": 9, "created_at": "2026-10-02T00:00:00Z"},
@@ -35,10 +39,22 @@ class FakeTransport:
             return [], None
         if path.startswith("/users/Owner/projectsV2/3/items?"):
             return copy.deepcopy(self.items), self.link
+        if path == "/users/Owner/projectsV2/3/items/1" and self.archived:
+            return copy.deepcopy(self.archived[0]), None
         if path == "/graphql":
             query = body["query"]
             if query == PROJECT_ID_QUERY:
                 return {"data": {"user": {"projectV2": {"id": "project1"}}}}, None
+            if query == ARCHIVED_QUERY:
+                nodes = [{"id": item["node_id"], "fullDatabaseId": "1", "isArchived": True}
+                         for item in self.archived]
+                return {"data": {"user": {"projectV2": {"id": "project1", "items": {
+                    "nodes": nodes, "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}}, None
+            if query == UNARCHIVE_MUTATION:
+                item = self.archived.pop(0)
+                item["archived_at"] = None
+                self.items.append(item)
+                return {"data": {"unarchiveProjectV2Item": {"item": {"id": item["node_id"]}}}}, None
             if query == PROJECT_BATCH_QUERY and self.batch is not None:
                 return copy.deepcopy(self.batch), None
             if query == PROJECT_QUERY:
@@ -47,7 +63,7 @@ class FakeTransport:
                 value = None if self.status is None else {"name": self.status, "optionId": "option-" + self.status,
                                                          "field": {"id": "field1"}}
                 return {"data": {"user": {"projectV2": {"id": "project1"}},
-                                 "node": {"id": "item1", "isArchived": False,
+                                 "node": {"id": "item1", "isArchived": bool(self.archived),
                                           "project": {"id": "project1", "statusField": field}, "status": value}}}, None
             if query == STATUS_MUTATION:
                 return {"data": {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "item1"}}}}, None
@@ -81,6 +97,40 @@ class GitHubTests(unittest.TestCase):
     def test_missing_card_is_distinguished_without_adding_it(self):
         self.transport.items = []
         self.assertTrue(self.github.read(20, 7)["missing_card"])
+
+    def test_archived_private_item_is_matched_by_rest_and_restored_without_duplicate(self):
+        self.transport.items = []
+        self.transport.archived = [{**copy.deepcopy(self.transport.item), "archived_at": "2026-11-01T00:00:00Z"}]
+        snapshot = self.github.read(20, 7)
+        self.assertTrue(snapshot["archived_card"])
+        with self.assertRaises(ValueError):
+            self.github.set_status(20, 7, "needs-design")
+        self.github.unarchive(20, 7)
+        after = self.github.read(20, 7)
+        self.assertFalse(after["archived_card"])
+        self.assertEqual(after["item_id"], snapshot["item_id"])
+        with self.assertRaises(ValueError):
+            self.github.unarchive(20, 7)
+
+    def test_archived_search_collision_cannot_restore_other_issue(self):
+        self.transport.items = []
+        other = copy.deepcopy(self.transport.item)
+        other["archived_at"] = "2026-11-01T00:00:00Z"
+        other["content"]["node_id"] = "unrelated"
+        self.transport.archived = [other]
+        self.assertTrue(self.github.read(20, 7)["missing_card"])
+
+    def test_reconciliation_finds_archived_issue_reopened_since_enrollment(self):
+        original = self.transport
+        def reopened(path, token, *, body=None):
+            if path.startswith("/repos/Owner/Project/issues?"):
+                return [{"number": 7, "node_id": "issue1", "state": "open",
+                         "created_at": "2026-10-01T00:00:00Z"}], None
+            return original(path, token, body=body)
+        self.transport.items = []
+        self.transport.archived = [{**copy.deepcopy(self.transport.item), "archived_at": "2026-11-01T00:00:00Z"}]
+        self.github.transport = reopened
+        self.assertEqual(self.github.reconciliation_candidates("2026-11-01T00:00:00Z", set()), [7])
 
     def test_missing_issue_identity_or_duplicate_never_means_absent(self):
         self.transport.items = [{**self.transport.item, "content": None}]

@@ -2,7 +2,7 @@
 
 CAUSES = frozenset({'http-401', 'http-403', 'http-404', 'http-429', 'http-4xx', 'http-5xx',
                     'http-other', 'timeout', 'network', 'invalid-data', 'other'})
-STAGES = frozenset({'snapshot', 'pr-handoff', 'verify-snapshot'})
+STAGES = frozenset({'snapshot', 'pr-handoff', 'verify-snapshot', 'unarchive'})
 
 
 class GitHubRequestError(RuntimeError):
