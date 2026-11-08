@@ -2,7 +2,6 @@
 
 from mvp_decision import _date
 from mvp_github import API
-from pr_admission import SHA
 
 
 def read_candidates(client, issue_number, *, token=None):
@@ -53,15 +52,12 @@ def read_candidates(client, issue_number, *, token=None):
         _date(pr.get("created_at"))
         if pr["merged"]:
             _date(pr.get("merged_at"))
-            if not isinstance(pr.get("merge_commit_sha"), str) or not SHA.fullmatch(pr["merge_commit_sha"]):
-                raise ValueError("Incomplete merge")
         head_repo, base_repo = head.get("repo"), base.get("repo")
         same = (isinstance(head_repo, dict) and isinstance(base_repo, dict)
                 and head_repo.get("id") == client.repository_id
                 and base_repo.get("id") == client.repository_id)
         results.append({"number": number, "body": pr.get("body"), "state": pr.get("state"),
                         "merged": pr.get("merged"), "created_at": pr.get("created_at"),
-                        "merged_at": pr.get("merged_at"), "merge_commit_sha": pr.get("merge_commit_sha"),
-                        "head_ref": head.get("ref"),
+                        "merged_at": pr.get("merged_at"), "head_ref": head.get("ref"),
                         "base_ref": base.get("ref"), "same_repository": same})
     return results

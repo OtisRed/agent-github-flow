@@ -31,6 +31,7 @@ class PrFlowDecisionTests(unittest.TestCase):
         self.issue["status"] = "review"
         self.flow.update(body=draft_message(12), author_id=99, created_at="2026-11-08T10:03:00Z")
         self.pr.update(state="closed", merged=True, merged_at="2026-11-08T10:04:00Z")
+        self.pr.pop("merge_commit_sha")  # REST API version 2026-03-10 omits it.
         self.assertEqual(self.decide(), merged_message(12))
         self.flow.update(body=merged_message(12), created_at="2026-11-08T10:05:00Z")
         self.issue["status"] = "smoke"

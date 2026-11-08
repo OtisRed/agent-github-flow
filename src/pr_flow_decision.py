@@ -7,7 +7,7 @@ GitHub data and must verify the last handoff before publishing anything.
 import re
 
 from mvp_decision import _date, parse_flow
-from pr_admission import SHA, pr_issue_number
+from pr_admission import pr_issue_number
 
 
 def draft_message(number):
@@ -67,8 +67,6 @@ def decide_pr_handoff(pr, issue, last_flow, *, enrolled_at, app_author_id):
             if current == "agent-ready" and flow_time <= created:
                 return draft_message(pr["number"])
         elif pr.get("state") == "closed" and pr.get("merged") is True:
-            if not isinstance(pr.get("merge_commit_sha"), str) or not SHA.fullmatch(pr["merge_commit_sha"]):
-                return None
             merged_at = _date(pr.get("merged_at"))
             if (current == "review" and last_flow.get("author_id") == app_author_id
                     and body == draft_message(pr["number"])

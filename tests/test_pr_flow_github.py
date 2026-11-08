@@ -73,6 +73,17 @@ class CandidateTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             read_candidates(client, 7)
 
+    def test_merged_pr_does_not_require_removed_rest_sha_field(self):
+        client = FakeClient([reference(12)])
+        old = client.transport
+        def merged(path, token):
+            value, link = old(path, token)
+            value.update(state="closed", merged=True, merged_at="2026-11-08T10:04:00Z")
+            value.pop("merge_commit_sha", None)
+            return value, link
+        client.transport = merged
+        self.assertTrue(read_candidates(client, 7)[0]["merged"])
+
     def test_publishes_only_standard_handoff_to_configured_repo(self):
         calls = []
         def transport(path, token, *, body=None):
