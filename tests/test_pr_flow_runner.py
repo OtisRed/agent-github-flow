@@ -121,6 +121,30 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(self.snapshot["status"], "review")
         self.assertEqual(len(gateway.posted), 1)
 
+    def test_worker_accepts_trusted_manual_review_then_projects_smoke(self):
+        self.snapshot["status"] = "review"
+        self.comment.update(body="[FLOW]\nRola: agent\nStan docelowy: review\n"
+                                 "Wykonano: Przygotowano PR #12.\nNastępny krok: Review.",
+                            created_at="2026-11-08T10:03:00Z", updated_at="2026-11-08T10:03:00Z")
+        self.pr.update(state="closed", merged=True, merged_at="2026-11-08T10:04:00Z")
+        self.pr.pop("merge_commit_sha", None)
+        gateway = self.gateway
+        gateway.read = lambda repo, number: deepcopy(self.snapshot)
+        def post(number, text):
+            gateway.posted.append((number, text))
+            self.snapshot["comments"].append({"id": 4, "author_id": 99, "body": text,
+                                              "created_at": "2026-11-08T10:05:00Z",
+                                              "updated_at": "2026-11-08T10:05:00Z"})
+        gateway.post_flow = post
+        gateway.set_status = lambda repo, number, status: self.snapshot.update(status=status)
+        def step():
+            return process_one(self.store, gateway, enrolled_at=self.boundary, trusted_authors=frozenset({4, 99}),
+                               pr_flow={"enrolled_at": self.boundary, "app_author_id": 99})["kind"]
+        self.assertEqual(step(), "rescan")
+        self.assertEqual(step(), "completed")
+        self.assertEqual(self.snapshot["status"], "smoke")
+        self.assertEqual(len(gateway.posted), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
