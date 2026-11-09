@@ -1,5 +1,8 @@
 # Mapa dokumentacji
 
+- [Admission PR na Mikrusie](docs/pr-admission.md) — check, testy, automatyczne scalanie i powrót.
+- [Przyjmowanie Dependabota](docs/dependabot-intake.md) — wspólny intake, migracja i odzyskanie po przerwaniu.
+
 - [Ograniczona sonda atomowych refów przez App](docs/app-atomic-ref-probe.md) — zakres, wynik i odzyskiwanie.
 
 - [Standard i ustalone zasady](docs/standard.md) — uzgodnienia, zakres pierwszej wersji i otwarte decyzje.

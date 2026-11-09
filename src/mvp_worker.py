@@ -5,6 +5,7 @@ reopens and Project card, and bind the card to the configured repository. It
 must not retry status writes. Only a single worker may execute this function.
 """
 from mvp_decision import decide
+from mvp_errors import read_failure
 from mvp_store import checkpoint_status
 
 
@@ -22,7 +23,7 @@ def _intent_intact(row, snapshot, trusted_authors):
             and checkpoint_status(comment_id, row["uncertain_comment_digest"], matches[0]) == "unchanged")
 
 
-def process_one(store, github, *, enrolled_at, trusted_authors, row=None):
+def process_one(store, github, *, enrolled_at, trusted_authors, row=None, pr_flow=None):
     """Inspect and process one issue, recording intent before any status write.
 
     `github.read(repo_id, issue_number)` must supply the snapshot described by
@@ -37,9 +38,9 @@ def process_one(store, github, *, enrolled_at, trusted_authors, row=None):
     repo, number, generation = row["repository_id"], row["issue_number"], row["generation"]
     try:
         current = github.read(repo, number)
-    except Exception:
+    except Exception as exc:
         store.defer(repo, number)
-        return {"kind": "read-failed"}
+        return read_failure('snapshot', exc)
 
     if isinstance(current, dict) and current.get("missing_card") is True:
         if row["uncertain_since"] is not None or row["completed_generation"] > 0:
@@ -50,6 +51,33 @@ def process_one(store, github, *, enrolled_at, trusted_authors, row=None):
         # repository access or treating temporary absence as a missing issue.
         store.defer(repo, number)
         return {"kind": "awaiting-card"}
+
+    if isinstance(current, dict) and current.get("archived_card") is True:
+        if current.get("state") != "OPEN":
+            if current.get("state") == "CLOSED" and row["uncertain_since"] is None:
+                store.complete(repo, number, generation)
+                return {"kind": "completed"}
+            store.block(repo, number, generation, "archived-card-uncertain")
+            return {"kind": "blocked", "reason": "archived-card-uncertain"}
+        try:
+            fresh = github.read(repo, number)
+            latest = store.get(repo, number)
+            if fresh != current or latest is None or latest["generation"] != generation:
+                if latest is not None:
+                    store.yield_turn(repo, number)
+                return {"kind": "rescan"}
+            github.unarchive(repo, number)
+            observed = github.read(repo, number)
+        except Exception as exc:
+            store.defer(repo, number)
+            return read_failure('unarchive', exc)
+        if (observed.get("archived_card") is not False or observed.get("item_id") != current.get("item_id")
+                or observed.get("project_id") != current.get("project_id")):
+            store.defer(repo, number)
+            return {"kind": "read-failed", "stage": "unarchive", "cause": "invalid-data"}
+        # Re-read and apply the existing reopen logic on the next FIFO turn.
+        store.yield_turn(repo, number)
+        return {"kind": "rescan"}
 
     if row["uncertain_since"] is not None:
         if not _intent_intact(row, current, trusted_authors):
@@ -65,6 +93,21 @@ def process_one(store, github, *, enrolled_at, trusted_authors, row=None):
     if decision["kind"] == "blocked":
         store.block(repo, number, generation, decision["reason"])
         return decision
+    if pr_flow is not None:
+        from pr_flow_runner import process_pr_handoff
+        try:
+            handoff = process_pr_handoff(store, github, row, current, decision,
+                                         trusted_authors=trusted_authors, **pr_flow)
+        except Exception as exc:
+            store.defer(repo, number)
+            return read_failure('pr-handoff', exc)
+        if handoff in ("rescan", "handoff-posted"):
+            return {"kind": "rescan"}
+        if handoff == "write-uncertain":
+            return {"kind": "write-uncertain"}
+        if handoff == "legacy-comment-edited":
+            return {"kind": "blocked", "reason": handoff}
+
     if decision["kind"] == "no-change":
         store.complete(repo, number, generation)
         return {"kind": "completed"}
@@ -73,9 +116,9 @@ def process_one(store, github, *, enrolled_at, trusted_authors, row=None):
     # status write, so the documented residual concurrent-write risk remains.
     try:
         fresh = github.read(repo, number)
-    except Exception:
+    except Exception as exc:
         store.defer(repo, number)
-        return {"kind": "read-failed"}
+        return read_failure('verify-snapshot', exc)
     latest = store.get(repo, number)
     if fresh != current or latest is None or latest["generation"] != generation:
         if latest is not None:
@@ -98,6 +141,9 @@ def process_one(store, github, *, enrolled_at, trusted_authors, row=None):
                 or observed.get("status") != target):
             return {"kind": "write-uncertain"}
         store.resolve_status_write(repo, number, target_observed=True)
+        if pr_flow is not None and target in ("agent-ready", "review"):
+            # The PR signal may have arrived before this status was projected.
+            store.enqueue_now(repo, number)
     store.complete(repo, number, generation, comment_id=decision.get("comment_id"),
                    comment_digest=decision.get("comment_digest"), reopen_id=decision.get("reopen_id"),
                    recheck=decision.get("recheck", False))

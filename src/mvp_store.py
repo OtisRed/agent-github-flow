@@ -246,6 +246,13 @@ class Store:
             row = db.execute("SELECT * FROM issues WHERE repository_id=? AND issue_number=?", key).fetchone()
             return dict(row) if row else None
 
+    def known_issue_numbers(self, repository_id):
+        """Preserve every recorded issue during a bulk reconciliation scan."""
+        with closing(self._connect()) as db, db:
+            rows = db.execute("SELECT issue_number FROM issues WHERE repository_id=?",
+                              (_positive(repository_id),)).fetchall()
+            return {row[0] for row in rows}
+
     def defer(self, repository_id, issue_number, seconds=60):
         """Delay a transient failure so it cannot starve unrelated issues."""
         key = (_positive(repository_id), _positive(issue_number))
@@ -256,6 +263,17 @@ class Store:
                                 (self.clock() + seconds, *key))
             if result.rowcount != 1:
                 raise ValueError("Unknown issue")
+
+    def enqueue_now(self, repository_id, issue_number):
+        """Queue a confirmed local write and immediately re-read its outcome."""
+        key = (_positive(repository_id), _positive(issue_number))
+        with closing(self._connect()) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            result = db.execute("""UPDATE issues SET generation=generation+1, retry_after=NULL
+                                   WHERE repository_id=? AND issue_number=?""", key)
+            if result.rowcount != 1:
+                raise ValueError("Unknown issue")
+            db.execute("INSERT OR IGNORE INTO work_queue (repository_id, issue_number) VALUES (?, ?)", key)
 
     def block(self, repository_id, issue_number, generation, error_code):
         """Record a problem without starving other issues or hiding new events."""

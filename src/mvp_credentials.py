@@ -52,6 +52,10 @@ class AppToken:
         if not isinstance(self._key, RSAPrivateKey):
             raise ValueError("Invalid App key")
         permissions = {"status": {"issues": "read"},
+                       "dependabot": {"issues": "write", "pull_requests": "write"},
+                       "pr_handoff": {"issues": "write", "pull_requests": "read"},
+                       "admission": {"issues": "read", "contents": "write", "pull_requests": "write",
+                                     "checks": "write", "actions": "write", "administration": "read"},
                        "promotion": {"issues": "read", "contents": "write",
                                      "pull_requests": "write", "administration": "read"}}
         if purpose not in permissions:

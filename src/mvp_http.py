@@ -7,7 +7,7 @@ from webhook_ingress import MAX_BODY
 PATH = "/agent-github-flow/webhook"
 
 
-def make_server(store, secret, registry, *, port=0):
+def make_server(store, secret, registry, *, port=0, wake_admission=None, status_repositories=None):
     """Create a server but do not start it or load any secret from disk."""
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -39,7 +39,8 @@ def make_server(store, secret, registry, *, port=0):
                 return self.respond(400)
             if self.path != PATH:
                 return self.respond(404)
-            result = receive(store, secret, registry, events[0], signatures[0], body)
+            result = receive(store, secret, registry, events[0], signatures[0], body,
+                             wake_admission=wake_admission, status_repositories=status_repositories)
             statuses = {"accepted": 202, "ignored": 204, "invalid": 400,
                         "bad_signature": 401, "unknown_project": 403,
                         "unsupported": 400, "configuration_error": 503,

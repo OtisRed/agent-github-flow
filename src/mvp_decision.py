@@ -115,6 +115,11 @@ def decide(snapshot, checkpoint, *, enrolled_at, trusted_authors):
                 return {"kind": "target", "status": "needs-design", "reopen_id": reopen_id, "recheck": True}
             boundary = max(boundary, reopen_time)
 
+        if snapshot.get("status") == "done":
+            # An open issue cannot remain done, including legacy reopened cards
+            # whose most recent reopen predates controller enrollment.
+            return {"kind": "target", "status": "needs-design", "recheck": True}
+
         if any(entry[0] == boundary and entry[2]["author_id"] in trusted_authors for entry in ordered):
             return blocked("ambiguous-comment-boundary")
         eligible = [entry for entry in ordered if entry[0] > boundary and entry[2]["author_id"] in trusted_authors]

@@ -50,7 +50,8 @@ function Get-ControllerWarnings {
   try {
     $health = $HealthJson | ConvertFrom-Json -ErrorAction Stop
     if ($null -eq $health -or $health.read_error -eq $true -or
-        $health.service_active -isnot [bool] -or $health.nightly_scan_recent -isnot [bool]) {
+        $health.service_active -isnot [bool] -or $health.nightly_scan_recent -isnot [bool] -or
+        $health.archive_state -notin @('off','pending','ok','failed','missing')) {
       return 'Nie mozna potwierdzic stanu kontrolera.'
     }
     foreach ($value in @($health.queue, $health.errors, $health.uncertain, $health.promotion_errors, $health.promotion_missing)) {
@@ -65,6 +66,8 @@ function Get-ControllerWarnings {
     if ($health.queue -gt 0) { 'Nie mozna jeszcze potwierdzic oproznienia kolejki kontrolera.' }
     if ($health.promotion_errors -gt 0) { 'Nocna promocja wymaga sprawdzenia.' }
     if ($health.promotion_missing -gt 0) { 'Brak potwierdzenia nocnej promocji w ostatnich 48 godzinach.' }
+    if ($health.archive_state -eq 'failed') { 'Nocna archiwizacja kart wymaga sprawdzenia.' }
+    if ($health.archive_state -eq 'missing') { 'Brak potwierdzenia nocnej archiwizacji kart w ostatnich 48 godzinach.' }
   } catch {
     return 'Nie mozna potwierdzic stanu kontrolera.'
   }
@@ -228,6 +231,20 @@ try:
     config_path = '/etc/agent-github-flow-mvp/config.json'
     with open(config_path, encoding='utf-8') as config_file:
         config = json.load(config_file)
+    archive_state = 'off'
+    if config.get('archive_enabled') is True:
+        archives = subprocess.run(['journalctl', '-u', 'agent-github-flow-mvp.service', '--since', '48 hours ago', '--grep', 'FLOW archive: nightly (complete|failed)', '-n', '1', '--no-pager', '-o', 'cat'], capture_output=True, text=True, timeout=10)
+        if archives.returncode != 0 and not (archives.returncode == 1 and not archives.stdout and not archives.stderr):
+            raise RuntimeError('archive journal unavailable')
+        value = archives.stdout.strip()
+        if value == 'FLOW archive: nightly complete':
+            archive_state = 'ok'
+        elif value == 'FLOW archive: nightly failed':
+            archive_state = 'failed'
+        elif not value:
+            archive_state = 'missing' if time.time() - os.path.getmtime(config_path) >= 172800 else 'pending'
+        else:
+            raise RuntimeError('invalid archive journal')
     enabled = set()
     for project in config['projects']:
         if project.get('promotion_enabled') is True:
@@ -240,6 +257,7 @@ try:
         if db.execute('PRAGMA application_id').fetchone()[0] != 0x4147464D or db.execute('PRAGMA user_version').fetchone()[0] != 2:
             raise ValueError('unsupported schema')
         result = {'service_active': active, 'nightly_scan_recent': 'FLOW scan: nightly candidates queued' in journal.stdout,
+                  'archive_state': archive_state,
                   'queue': db.execute('SELECT COUNT(*) FROM work_queue').fetchone()[0],
                   'errors': db.execute('SELECT COUNT(*) FROM issues WHERE error_code IS NOT NULL').fetchone()[0],
                   'uncertain': db.execute('SELECT COUNT(*) FROM issues WHERE uncertain_since IS NOT NULL AND uncertain_since < ?', (time.time() - 180,)).fetchone()[0],
