@@ -7,7 +7,7 @@ description: Apply and diagnose Krzysztof's GitHub issue-to-delivery workflow ac
 
 Apply the common delivery model in `references/contract.md`. The VSone model is the target for other projects, not permission to replace their existing workflow. Existing repository instructions and automation remain authoritative until an agreed migration. Respect higher-priority instructions and the user's current scope.
 
-The current MVP uses one GitHub App webhook and one controller on Mikrus with a private SQLite checkpoint; it does not require a relay token in each new project. For onboarding or migration, read `references/mvp-onboarding.md`. Treat existing relay configuration as historical until its replacement is verified; use `references/relay-credentials.md` only when maintaining such an existing sender.
+The current MVP uses one GitHub App webhook and one controller on Mikrus with a private SQLite checkpoint; it does not require a relay token in each new project. One shared controller release serves enrolled projects; there are no separate project-selected flow versions. For onboarding or migration, read `references/mvp-onboarding.md`. Treat existing relay configuration as historical until its replacement is verified; use `references/relay-credentials.md` only when maintaining such an existing sender.
 
 At the start of relevant work, identify the repository and read applicable `AGENTS.md`, `CLAUDE.md`, `docs.md`, nested instructions, and the project's workflow instructions when present. Use local skills and read-only facades where required. Refresh the specific issue, PR, Project status, branches, and checks when they matter; do not infer readiness from stale notes, a green check, or a role view alone.
 
