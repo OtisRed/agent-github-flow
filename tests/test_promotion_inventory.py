@@ -82,6 +82,31 @@ class InventoryTests(unittest.TestCase):
             self.fail(f'Expected a safe blocked result: {exc}')
         self.assertEqual(plan, {'kind': 'blocked', 'reason': 'candidate-missing-main'})
 
+    def test_promotes_when_diverged_main_has_same_tree_as_common_base(self):
+        # main=a and candidate=b descend from x through different commits.
+        # main changes only ancestry; its complete tree is unchanged from x.
+        x, tree = 'd' * 40, 'e' * 40
+        self.values[f'/commits/{self.b}']['parents'] = [{'sha': x}]
+        self.values[f'/compare/{self.a}...{self.b}?per_page=1'] = {
+            'status': 'diverged',
+            'base_commit': {'sha': self.a, 'commit': {'tree': {'sha': tree}}},
+            'merge_base_commit': {'sha': x, 'commit': {'tree': {'sha': tree}}},
+        }
+        self.assertEqual(self.run_inventory()['plan'], {'kind': 'ready', 'sha': self.b, 'count': 1})
+
+    def test_diverged_main_with_different_or_incomplete_trees_stays_blocked(self):
+        x, tree = 'd' * 40, 'e' * 40
+        self.values[f'/commits/{self.b}']['parents'] = [{'sha': x}]
+        key = f'/compare/{self.a}...{self.b}?per_page=1'
+        for base, other in [({'sha': self.a, 'commit': {'tree': {'sha': tree}}},
+                             {'sha': x, 'commit': {'tree': {'sha': 'f' * 40}}}),
+                            ({'sha': self.a, 'commit': {'tree': {'sha': tree}}}, {'sha': x}),
+                            ({'sha': self.c, 'commit': {'tree': {'sha': tree}}},
+                             {'sha': x, 'commit': {'tree': {'sha': tree}}})]:
+            with self.subTest(base=base, merge_base=other):
+                self.values[key] = {'status': 'diverged', 'base_commit': base, 'merge_base_commit': other}
+                self.assertEqual(self.run_inventory()['plan'], {'kind': 'blocked', 'reason': 'candidate-missing-main'})
+
     def test_incomplete_compare_blocks_promotion(self):
         compare = self.values[f'/compare/{self.a}...{self.c}?per_page=100&page=1']
         compare['commits'].pop()

@@ -114,5 +114,20 @@ def inventory(transport, token, owner, repository):
                 or not SHA.fullmatch(candidate['merge_base_commit']['sha'])):
             raise ValueError('Invalid candidate comparison')
         if candidate['merge_base_commit']['sha'] != main:
-            result = {'kind': 'blocked', 'reason': 'candidate-missing-main'}
+            # A prior promotion can add only a merge commit to main. Permit
+            # that history difference only when both complete trees match.
+            def tree_id(entry):
+                if not isinstance(entry, dict):
+                    return None
+                commit = entry.get('commit')
+                tree = commit.get('tree') if isinstance(commit, dict) else None
+                value = tree.get('sha') if isinstance(tree, dict) else None
+                return value if isinstance(value, str) and SHA.fullmatch(value) else None
+
+            base_commit = candidate.get('base_commit')
+            main_tree = tree_id(base_commit)
+            common_tree = tree_id(candidate['merge_base_commit'])
+            if (not isinstance(base_commit, dict) or base_commit.get('sha') != main
+                    or main_tree is None or main_tree != common_tree):
+                result = {'kind': 'blocked', 'reason': 'candidate-missing-main'}
     return {'main': main, 'smoke': smoke, 'base': base, 'plan': result}

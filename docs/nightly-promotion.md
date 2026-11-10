@@ -13,9 +13,10 @@ and a standalone `Refs #N`, and selects the longest prefix whose issues were
 closed after their latest merge in that queue. Missing or ambiguous data blocks
 the attempt. It finds the queue boundary using the complete set of commits in
 `smoke` but not `main`, so a merge of `main` through a side parent is supported.
-The selected candidate must also contain the current `main`; otherwise promotion
-stops until a safe closed prefix exists. Incomplete or oversized comparison data
-stops the attempt. Deterministic promotion branches and PRs let a later attempt
+The selected candidate must contain the current `main`, or the complete trees of
+`main` and the candidate's common base must match exactly. Missing or differing
+trees block promotion; this permits a prior promotion merge with unchanged files.
+Incomplete or oversized comparison data stops the attempt. Deterministic promotion branches and PRs let a later attempt
 recover after an uncertain response or restart, without guessing whether a
 previous write succeeded.
 
