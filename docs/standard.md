@@ -79,7 +79,10 @@ Dokładny [format maszynowy i parser](flow.md) dostarczono w tym repozytorium. P
 
 - Po spike można kontynuować pracę na tej samej gałęzi i worktree, dostosowując wynik do aktualnego kontraktu i zachowując potrzebne dowody. Sama zmiana etapu nie wymaga nowej gałęzi ani utraty pracy.
 - W nowym projekcie skill ma wymagać wspólnego setupu przed pierwszym commitem produktu; commity samego setupu i migracja istniejącego repozytorium wymagają zaprojektowania.
-- Projekty przyjmują nowe wersje wspólnego flow stopniowo. Skill rozpoznaje rzeczywiście przyjętą wersję i lokalne instrukcje. Format wersji, sposób dystrybucji oraz powrót po błędzie są do dopracowania.
+- Wszystkie podłączone projekty korzystają z jednej wersji centralnego kontrolera. Zmiany i ewentualny powrót wykonujemy dla wspólnego wydania, bez oddzielnego wyboru wersji w projektach. Lokalnie pozostają kontekst, niezbędna konfiguracja i testy projektu; przejściowe różnice podczas migracji nie są odrębnymi wersjami flow.
+- Kod w repozytorium, faktyczne wydanie na Mikrusie i aktywna kopia skilla to osobne rzeczy do sprawdzenia. Commit identyfikuje źródło; nazwa katalogu lub sam `main` nie dowodzą zgodności działającego wydania. Odczytaj aktywną usługę i jej katalog, porównaj pełny zestaw uruchamianych plików z wybranym commitem (także brakujące i dodatkowe pliki) oraz sprawdź, czy pliki zmieniano po starcie usługi. Uwzględnij różnicę końców linii; taka kontrola nadal nie dowodzi konfiguracji ani zawartości pamięci procesu. Przy niepełnym odczycie podaj wynik jako niepotwierdzony. Testy CI pozostają częścią repozytoriów projektów.
+- Przed wspólnym wdrożeniem lub powrotem sprawdź wydanie, wpływ na podłączone projekty i zgodność konfiguracji oraz stanu SQLite. Zachowaj możliwość powrotu do sprawdzonego wydania; nie przywracaj starej bazy w ciemno, bo może nie zawierać późniejszych checkpointów i pracy. Po zmianie sprawdź uruchomioną usługę oraz przepływ w objętych nią projektach. Repozytoryjna promocja na `main` i wdrożenie na Mikrusie są osobnymi krokami.
+- Wspólny skill aktualizujemy jako jedną instrukcję. Sprawdź zawartość aktywnej kopii względem dostarczonego źródła; sesja, która wcześniej wczytała instrukcje, może zachować starszą treść do końca rozmowy. Sam zapis w repozytorium nie dowodzi aktualizacji aktywnego skilla ani otwartych sesji.
 - Role są globalne; agent może wykonywać kilka ról, a rozmowy mogą być osobne dla poszczególnych ról. Osobny globalny skill `expert-panel` ma obsługiwać perspektywy w osobnych plikach, dobierane do problemu. Wybór i szczegóły poszczególnych ról i soczewek odłożono do osobnej rozmowy.
 
 ## Potwierdzony stan tego repozytorium
@@ -90,7 +93,7 @@ Dokumentacyjny bootstrap i parser `[FLOW]` zostały dostarczone oraz sprawdzone 
 
 1. Dokończenie bootstrapu tego repozytorium: rzeczywiste wdrożenie i sprawdzenie brakujących automatów oraz ścieżki promocji.
 2. Uprawnienia GitHub App, przechowywanie klucza, wyzwalanie Actions, rozpoznawanie komentarzy i nocnych przebiegów oraz obsługa konfliktów.
-3. Wersjonowanie i sposób przyjmowania wspólnego flow przez poszczególne projekty.
+3. Powtarzalne podłączanie kolejnych projektów oraz sprawdzanie wspólnego wydania, konfiguracji i odzyskiwania.
 4. Szczegółowe reguły PR i review, zapis smoke i wykonanie zamknięcia po decyzji właściciela; release i odzyskiwanie promocji.
 5. Wdrożenie szablonu issue, usunięcie starych szablonów VSone i rzeczywiste przełączenie jego automatów na wspólny proces.
 6. Osobne omówienie ról i soczewek, struktury `expert-panel` oraz bezpiecznego podłączenia skilla do Codexa.
