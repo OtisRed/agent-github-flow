@@ -24,12 +24,36 @@ def inventory(transport, token, owner, repository):
     smoke = read('/branches/smoke')['commit']['sha']
     if not all(isinstance(x, str) and SHA.fullmatch(x) for x in (main, smoke)):
         raise ValueError('Invalid branch head')
-    compare = read(f'/compare/{main}...{smoke}?per_page=1')
-    base = compare['merge_base_commit']['sha']
-    if not isinstance(base, str) or not SHA.fullmatch(base):
-        raise ValueError('Invalid merge base')
+    # Compare returns all commits reachable from smoke but not main. Its
+    # merge base need not lie on smoke's first-parent history after a forward
+    # merge, so use the complete difference to find the actual queue boundary.
+    ahead, base, expected, page = set(), None, None, 1
+    while True:
+        compare = read(f'/compare/{main}...{smoke}?per_page=100&page={page}')
+        if not isinstance(compare, dict):
+            raise ValueError('Invalid comparison')
+        current_base = (compare.get('merge_base_commit') or {}).get('sha')
+        count, total, commits = compare.get('ahead_by'), compare.get('total_commits'), compare.get('commits')
+        if (not isinstance(current_base, str) or not SHA.fullmatch(current_base)
+                or type(count) is not int or count < 0 or count > MAX_COMMITS
+                or type(total) is not int or total != count or not isinstance(commits, list)):
+            raise ValueError('Invalid comparison')
+        if expected is None:
+            base, expected = current_base, count
+        if current_base != base or count != expected or len(commits) != min(100, expected - len(ahead)):
+            raise ValueError('Incomplete comparison')
+        for item in commits:
+            sha = item.get('sha') if isinstance(item, dict) else None
+            if not isinstance(sha, str) or not SHA.fullmatch(sha) or sha in ahead:
+                raise ValueError('Invalid comparison commit')
+            ahead.add(sha)
+        if len(ahead) == expected:
+            break
+        page += 1
+    if expected and smoke not in ahead:
+        raise ValueError('Incomplete comparison')
     chain, cursor = [], smoke
-    while cursor != base:
+    while cursor in ahead:
         if len(chain) >= MAX_COMMITS or cursor in chain:
             raise ValueError('Incomplete first-parent history')
         commit = read('/commits/' + cursor)
@@ -83,4 +107,12 @@ def inventory(transport, token, owner, repository):
                 raise ValueError('Invalid issue')
             issues[number] = {'state': issue.get('state'), 'closed_at': issue.get('closed_at')}
     result = closed_prefix(entries, issues)
+    if result.get('kind') == 'ready' and result['sha'] != main:
+        candidate = read(f"/compare/{main}...{result['sha']}?per_page=1")
+        if (not isinstance(candidate, dict) or not isinstance(candidate.get('merge_base_commit'), dict)
+                or not isinstance(candidate['merge_base_commit'].get('sha'), str)
+                or not SHA.fullmatch(candidate['merge_base_commit']['sha'])):
+            raise ValueError('Invalid candidate comparison')
+        if candidate['merge_base_commit']['sha'] != main:
+            result = {'kind': 'blocked', 'reason': 'candidate-missing-main'}
     return {'main': main, 'smoke': smoke, 'base': base, 'plan': result}
