@@ -64,6 +64,12 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(self.run_step(), 'waiting')
         self.assertFalse(self.mutations)
 
+    def test_candidate_without_current_main_never_creates_branch_or_pr(self):
+        blocked = dict(self.plan, plan={'kind': 'blocked', 'reason': 'candidate-missing-main'})
+        with patch('promotion_runner.inventory', return_value=blocked):
+            self.assertEqual(self.run_step(), 'blocked')
+        self.assertFalse(self.mutations)
+
     def test_existing_branch_with_wrong_tip_is_blocked(self):
         self.rows['/git/matching-refs/heads/' + self.branch][0]['object']['sha'] = 'c' * 40
         with patch('promotion_runner.inventory', return_value=self.plan):
