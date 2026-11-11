@@ -3,9 +3,34 @@
 import json
 import os
 import stat
+from contextlib import closing
 from pathlib import Path
 
 from pr_admission import SHA
+from mvp_store import _positive
+
+
+class CiRetryJournal:
+    """Persist an individual rerun intent in the existing controller database."""
+
+    def __init__(self, store):
+        self.store = store
+
+    def initialize(self):
+        with closing(self.store._connect()) as db, db:
+            db.execute("""CREATE TABLE IF NOT EXISTS admission_ci_retry (
+                repository_id INTEGER NOT NULL,
+                pr_number INTEGER NOT NULL,
+                run_id INTEGER NOT NULL,
+                run_attempt INTEGER NOT NULL,
+                PRIMARY KEY (repository_id, run_id, run_attempt)
+            )""")
+
+    def reserve(self, repository_id, pr_number, run_id, attempt):
+        key = tuple(_positive(value) for value in (repository_id, pr_number, run_id, attempt))
+        with closing(self.store._connect()) as db, db:
+            result = db.execute("INSERT OR IGNORE INTO admission_ci_retry VALUES (?, ?, ?, ?)", key)
+            return result.rowcount == 1
 
 
 class MergeJournal:

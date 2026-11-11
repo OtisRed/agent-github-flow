@@ -36,7 +36,7 @@ MESSAGES = {
 class AdmissionReader:
     def __init__(self, *, owner, repository, repository_id, token, transport,
                  admission=None, required_tests=(), journal=None, workflow="ci.yml", gate_job="verify",
-                 workflow_event="pull_request", sync_bot_id=None):
+                 workflow_event="pull_request", sync_bot_id=None, ci_retry_journal=None):
         if (not isinstance(owner, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", owner)
                 or not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", repository)
                 or repository in (".", "..") or type(repository_id) is not int or repository_id <= 0
@@ -53,6 +53,7 @@ class AdmissionReader:
         self.journal = journal
         self.workflow, self.gate_job, self.workflow_event = workflow, gate_job, workflow_event
         self.sync_bot_id = sync_bot_id
+        self.ci_retry_journal = ci_retry_journal
         self._requested_ci_attempts = set()
 
     def _get(self, path, token):
@@ -336,6 +337,7 @@ class AdmissionReader:
         pr = self._get(f"/pulls/{number}", token)
         if (not isinstance(pr, dict) or pr.get("number") != number or pr.get("state") != "open"
                 or pr.get("draft") is not False or (pr.get("base") or {}).get("ref") != "smoke"
+                or ((pr.get("base") or {}).get("repo") or {}).get("id") != self.repository_id
                 or ((pr.get("head") or {}).get("repo") or {}).get("id") != self.repository_id):
             return "not-eligible"
         sha = (pr.get("head") or {}).get("sha")
@@ -356,9 +358,10 @@ class AdmissionReader:
                     or (run.get("head_repository") or {}).get("id") != self.repository_id):
                 continue
             prs = run.get("pull_requests")
-            linked = isinstance(prs, list) and any(isinstance(x, dict) and x.get("number") == number for x in prs)
+            linked = (isinstance(prs, list) and len(prs) == 1
+                      and isinstance(prs[0], dict) and prs[0].get("number") == number)
             head_ref = (pr.get("head") or {}).get("ref")
-            if (not linked and prs == [] and self.workflow_event == "pull_request_target"
+            if (not linked and prs == []
                     and isinstance(head_ref, str) and head_ref and run.get("head_branch") == head_ref):
                 try:
                     run_created = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
@@ -385,6 +388,8 @@ class AdmissionReader:
         if not candidates:
             return "no-workflow"
         run = max(candidates, key=lambda x: (x["id"], x["run_attempt"]))
+        if run.get("status") == "completed" and run.get("conclusion") == "skipped":
+            return self._rerun_shadowed_ci(number, pr, sha, candidates, token)
         if run.get("status") != "completed" or run.get("conclusion") != "failure":
             return "not-a-failed-run"
         run_id, attempt = run["id"], run["run_attempt"]
@@ -409,4 +414,107 @@ class AdmissionReader:
         # retried in this process. A later scan re-reads the run and attempt.
         self._requested_ci_attempts.add(key)
         self.transport(self.root + f"/actions/runs/{run_id}/rerun-failed-jobs", token, body={})
+        return "rerun-requested"
+
+    def _rerun_shadowed_ci(self, number, pr, sha, candidates, token):
+        """Rerun a verified green workflow shadowed by a later skipped check.
+
+        A skipped result is never accepted as successful CI. Both checks must
+        resolve to jobs in this configured workflow, on this exact PR and head.
+        """
+        pairs = [pair for pair in self.required_tests if pair[0] == self.gate_job]
+        if len(pairs) != 1:
+            return "shadow-unverified"
+        pair = pairs[0]
+        runs = self._check_runs(sha, token)
+        relevant = [run for run in runs if isinstance(run, dict)
+                    and (run.get("name"), (run.get("app") or {}).get("id")) == pair]
+        if (len(relevant) < 2 or any(type(run.get("id")) is not int or run["id"] <= 0
+                                    or run.get("head_sha") != sha for run in relevant)
+                or len({run["id"] for run in relevant}) != len(relevant)):
+            return "shadow-unverified"
+        relevant.sort(key=lambda run: run["id"], reverse=True)
+        skipped, green = relevant[:2]
+        if (skipped.get("status") != "completed" or skipped.get("conclusion") != "skipped"
+                or green.get("status") != "completed" or green.get("conclusion") != "success"):
+            return "shadow-unverified"
+        def workflow_id(check):
+            url = check.get("details_url")
+            if not isinstance(url, str):
+                return None
+            match = re.fullmatch(r"https://github\.com/" + re.escape(self.full_name)
+                                 + r"/actions/runs/([1-9][0-9]*)/job/([1-9][0-9]*)", url,
+                                 flags=re.IGNORECASE)
+            if match is None or int(match.group(2)) != check["id"]:
+                return None
+            return int(match.group(1))
+
+        skipped_id, green_id = workflow_id(skipped), workflow_id(green)
+        if skipped_id is None or green_id is None or skipped_id == green_id:
+            return "shadow-unverified"
+        selected = [(skipped, skipped_id), (green, green_id)]
+        for other in self.required_tests:
+            if other == pair:
+                continue
+            checks = [item for item in runs if isinstance(item, dict)
+                      and (item.get("name"), (item.get("app") or {}).get("id")) == other]
+            if (not checks or any(type(item.get("id")) is not int or item["id"] <= 0
+                                  or item.get("head_sha") != sha for item in checks)
+                    or len({item["id"] for item in checks}) != len(checks)):
+                return "shadow-unverified"
+            checks.sort(key=lambda item: item["id"], reverse=True)
+            latest = checks[0]
+            if latest.get("status") != "completed":
+                return "shadow-unverified"
+            if latest.get("conclusion") == "skipped":
+                if len(checks) < 2 or workflow_id(latest) != skipped_id:
+                    return "shadow-unverified"
+                selected.append((latest, skipped_id))
+                latest = checks[1]
+            if (latest.get("status") != "completed" or latest.get("conclusion") != "success"
+                    or workflow_id(latest) != green_id):
+                return "shadow-unverified"
+            selected.append((latest, green_id))
+        by_id = {run["id"]: run for run in candidates}
+        skipped_run, green_run = by_id.get(skipped_id), by_id.get(green_id)
+        if (not skipped_run or not green_run or skipped_run.get("status") != "completed"
+                or skipped_run.get("conclusion") != "skipped" or green_run.get("status") != "completed"
+                or green_run.get("conclusion") != "success"):
+            return "shadow-unverified"
+        if any(run.get("status") != "completed" for run in candidates):
+            return "shadow-ci-in-progress"
+        for workflow in (skipped_run, green_run):
+            path = f"/actions/runs/{workflow['id']}/attempts/{workflow['run_attempt']}/jobs?per_page=100"
+            jobs = self._get(path, token)
+            if (not isinstance(jobs, dict) or type(jobs.get("total_count")) is not int
+                    or not isinstance(jobs.get("jobs"), list) or jobs["total_count"] != len(jobs["jobs"])
+                    or jobs["total_count"] > 100):
+                raise ValueError("Incomplete workflow jobs")
+            for check, workflow_run_id in selected:
+                if workflow_run_id != workflow["id"]:
+                    continue
+                matches = [job for job in jobs["jobs"] if isinstance(job, dict) and job.get("name") == check["name"]]
+                if (len(matches) != 1 or matches[0].get("id") != check["id"]
+                        or matches[0].get("status") != "completed"
+                        or matches[0].get("conclusion") != check["conclusion"]):
+                    return "shadow-unverified"
+                if check["conclusion"] == "success" and (not isinstance(matches[0].get("steps"), list)
+                                                          or not matches[0]["steps"]):
+                    return "shadow-unverified"
+
+        key = (green_id, green_run["run_attempt"])
+        if key in self._requested_ci_attempts:
+            return "already-requested"
+        after = self._get(f"/pulls/{number}", token)
+        if not isinstance(after, dict) or any(after.get(k) != pr.get(k) for k in ("number", "state", "draft", "head", "base")):
+            return "pr-changed"
+        if self._check_runs(sha, token) != runs:
+            return "checks-changed"
+        if self.ci_retry_journal is None:
+            return "shadow-journal-unavailable"
+        # Persist before POST, including across a process restart or lost response.
+        if not self.ci_retry_journal.reserve(self.repository_id, number, green_id, green_run["run_attempt"]):
+            return "already-requested"
+        self._requested_ci_attempts.add(key)
+        self.transport(self.root + f"/actions/runs/{green_id}/rerun", token, body={})
         return "rerun-requested"

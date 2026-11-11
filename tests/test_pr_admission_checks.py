@@ -33,6 +33,11 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(tests_state([failed, self.run], self.sha, self.tests), "failure")
         self.assertEqual(tests_state([self.run], self.sha, self.tests), "success")
 
+    def test_newer_skipped_check_never_counts_as_green(self):
+        skipped = dict(self.run, id=2, conclusion="skipped")
+        self.assertEqual(tests_state([self.run, skipped], self.sha, self.tests), "failure")
+        self.assertEqual(tests_state([self.run, skipped, dict(self.run, id=3)], self.sha, self.tests), "success")
+
     def test_wrong_app_sha_or_missing_check_is_not_success(self):
         self.assertEqual(tests_state([dict(self.run, app={"id": 999})], self.sha, self.tests), "pending")
         self.assertEqual(tests_state([dict(self.run, head_sha="b" * 40)], self.sha, self.tests), "unknown")

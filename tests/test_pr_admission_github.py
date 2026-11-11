@@ -251,6 +251,146 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(self.reader.rerun_blocked_ci(4), "rerun-requested")
         self.assertEqual(writes, [{}])
 
+    def prepare_shadowed_ci(self):
+        """A newer skipped draft check hides an older successful ready run."""
+        self.reader.required_tests = (("verify", 15368),)
+        self.pr["created_at"] = "2026-11-07T09:00:00Z"
+        self.pr["head"]["ref"] = "codex/4-agent"
+        query = f"/actions/workflows/ci.yml/runs?event=pull_request&head_sha={self.sha}&per_page=100"
+        def workflow(run_id, outcome):
+            return {"id": run_id, "run_attempt": 1, "status": "completed", "conclusion": outcome,
+                    "event": "pull_request", "head_sha": self.sha, "head_repository": {"id": 20},
+                    "head_branch": "codex/4-agent", "created_at": "2026-11-07T09:01:00Z", "pull_requests": []}
+        self.rows[query] = {"total_count": 2, "workflow_runs": [workflow(19, "success"), workflow(20, "skipped")]}
+        lookup = "/pulls?state=all&head=owner%3Acodex%2F4-agent&per_page=100"
+        self.rows[lookup] = [copy.deepcopy(self.pr)]
+        def check(check_id, run_id, outcome):
+            return {"id": check_id, "name": "verify", "app": {"id": 15368}, "head_sha": self.sha,
+                    "status": "completed", "conclusion": outcome,
+                    "details_url": f"https://github.com/owner/repo/actions/runs/{run_id}/job/{check_id}"}
+        path = f"/commits/{self.sha}/check-runs?per_page=100&page=1"
+        self.rows[path] = {"total_count": 2, "check_runs": [check(101, 20, "skipped"), check(100, 19, "success")]}
+        for run_id, check_id, outcome in ((19, 100, "success"), (20, 101, "skipped")):
+            self.rows[f"/actions/runs/{run_id}/attempts/1/jobs?per_page=100"] = {"total_count": 1, "jobs": [{
+                "id": check_id, "name": "verify", "status": "completed", "conclusion": outcome,
+                "steps": [{"name": "Verify", "conclusion": "success"}] if outcome == "success" else []}]}
+        class Journal:
+            def __init__(self): self.keys = set()
+            def reserve(self, repo, number, run, attempt):
+                key = (repo, run, attempt)
+                if key in self.keys: return False
+                self.keys.add(key)
+                return True
+        self.reader.ci_retry_journal = Journal()
+        writes = []
+        def transport(path, token, *, body=None):
+            if path.endswith("/actions/runs/19/rerun"):
+                writes.append(body)
+                return None, None
+            return self.transport(path, token, body=body)
+        self.reader.transport = transport
+        return writes
+
+    def test_reruns_verified_green_run_shadowed_by_skipped_draft(self):
+        writes = self.prepare_shadowed_ci()
+        self.assertEqual(self.reader.rerun_blocked_ci(4), "rerun-requested")
+        self.assertEqual(writes, [{}])
+        # A restarted reader shares the durable journal and must not repeat an
+        # uncertain POST for the same workflow attempt.
+        self.reader._requested_ci_attempts.clear()
+        self.assertEqual(self.reader.rerun_blocked_ci(4), "already-requested")
+        self.assertEqual(writes, [{}])
+
+    def test_shadowed_ci_handles_two_required_jobs_in_the_same_workflows(self):
+        writes = self.prepare_shadowed_ci()
+        self.reader.required_tests += (("canary", 15368),)
+        path = f"/commits/{self.sha}/check-runs?per_page=100&page=1"
+        for check_id, run_id, result in ((99, 19, "success"), (102, 20, "skipped")):
+            self.rows[path]["check_runs"].append({"id": check_id, "name": "canary", "app": {"id": 15368},
+                "head_sha": self.sha, "status": "completed", "conclusion": result,
+                "details_url": f"https://github.com/owner/repo/actions/runs/{run_id}/job/{check_id}"})
+            jobs = self.rows[f"/actions/runs/{run_id}/attempts/1/jobs?per_page=100"]
+            jobs["jobs"].append({"id": check_id, "name": "canary", "status": "completed", "conclusion": result,
+                                 "steps": [{"name": "Run tests", "conclusion": "success"}] if result == "success" else []})
+            jobs["total_count"] += 1
+        self.rows[path]["total_count"] += 2
+        self.assertEqual(self.reader.rerun_blocked_ci(4), "rerun-requested")
+        self.assertEqual(writes, [{}])
+
+    def test_shadowed_ci_also_handles_explicit_single_pr_metadata(self):
+        writes = self.prepare_shadowed_ci()
+        query = f"/actions/workflows/ci.yml/runs?event=pull_request&head_sha={self.sha}&per_page=100"
+        for run in self.rows[query]["workflow_runs"]:
+            run["pull_requests"] = [{"number": 4}]
+        self.assertEqual(self.reader.rerun_blocked_ci(4), "rerun-requested")
+        self.assertEqual(writes, [{}])
+
+    def test_shadowed_ci_rejects_multiple_explicit_pr_associations(self):
+        writes = self.prepare_shadowed_ci()
+        query = f"/actions/workflows/ci.yml/runs?event=pull_request&head_sha={self.sha}&per_page=100"
+        for run in self.rows[query]["workflow_runs"]:
+            run["pull_requests"] = [{"number": 4}, {"number": 5}]
+        self.assertEqual(self.reader.rerun_blocked_ci(4), "no-workflow")
+        self.assertEqual(writes, [])
+
+    def test_shadowed_ci_does_not_retry_after_lost_response_or_pr_change(self):
+        self.prepare_shadowed_ci()
+        calls = []
+        previous = self.reader.transport
+        def lost(path, token, *, body=None):
+            if path.endswith("/actions/runs/19/rerun"):
+                calls.append(path)
+                raise TimeoutError("uncertain response")
+            return previous(path, token, body=body)
+        self.reader.transport = lost
+        with self.assertRaises(TimeoutError):
+            self.reader.rerun_blocked_ci(4)
+        self.reader._requested_ci_attempts.clear()
+        self.assertEqual(self.reader.rerun_blocked_ci(4), "already-requested")
+        self.assertEqual(len(calls), 1)
+
+        self.setUp()
+        writes = self.prepare_shadowed_ci()
+        previous = self.reader.transport
+        count = 0
+        def changed(path, token, *, body=None):
+            nonlocal count
+            result, link = previous(path, token, body=body)
+            if path.endswith("/pulls/4"):
+                count += 1
+                if count == 2:
+                    result["head"]["sha"] = "b" * 40
+            return result, link
+        self.reader.transport = changed
+        self.assertEqual(self.reader.rerun_blocked_ci(4), "pr-changed")
+        self.assertEqual(writes, [])
+
+    def test_shadowed_ci_rejects_unverified_or_ambiguous_evidence(self):
+        cases = ("wrong-sha", "wrong-app", "bad-url", "failed-tests", "wrong-job",
+                 "empty-green-steps", "multiple-prs", "other-red-check", "in-progress", "no-journal")
+        for case in cases:
+            with self.subTest(case=case):
+                self.setUp()
+                writes = self.prepare_shadowed_ci()
+                checks = self.rows[f"/commits/{self.sha}/check-runs?per_page=100&page=1"]["check_runs"]
+                workflows = self.rows[f"/actions/workflows/ci.yml/runs?event=pull_request&head_sha={self.sha}&per_page=100"]["workflow_runs"]
+                if case == "wrong-sha": checks[0]["head_sha"] = "b" * 40
+                if case == "wrong-app": checks[0]["app"]["id"] = 999
+                if case == "bad-url": checks[0]["details_url"] = "https://elsewhere.invalid/runs/20/job/101"
+                if case == "failed-tests": checks[1]["conclusion"] = "failure"
+                if case == "wrong-job": self.rows["/actions/runs/20/attempts/1/jobs?per_page=100"]["jobs"][0]["id"] = 102
+                if case == "empty-green-steps": self.rows["/actions/runs/19/attempts/1/jobs?per_page=100"]["jobs"][0]["steps"] = []
+                if case == "multiple-prs": self.rows["/pulls?state=all&head=owner%3Acodex%2F4-agent&per_page=100"].append(copy.deepcopy(self.pr))
+                if case == "other-red-check":
+                    self.reader.required_tests += (("other", 15368),)
+                    checks.append({"id": 102, "name": "other", "app": {"id": 15368}, "head_sha": self.sha,
+                                   "status": "completed", "conclusion": "failure"})
+                    self.rows[f"/commits/{self.sha}/check-runs?per_page=100&page=1"]["total_count"] += 1
+                if case == "in-progress": workflows[0]["status"] = "in_progress"
+                if case == "no-journal": self.reader.ci_retry_journal = None
+                self.assertNotEqual(self.reader.rerun_blocked_ci(4), "rerun-requested")
+                self.assertEqual(writes, [])
+
 
 if __name__ == "__main__":
     unittest.main()
