@@ -3,6 +3,7 @@ import argparse
 import fcntl
 import json
 import os
+import queue
 import signal
 import stat
 import sys
@@ -19,7 +20,7 @@ from mvp_decision import _date
 from mvp_errors import format_read_failure
 from mvp_github import GitHub
 from mvp_http import make_server
-from mvp_scan import stage_one
+from mvp_scan import collect_in_background, stage_one
 from mvp_store import Store
 from mvp_worker import process_one
 from promotion_schedule import run_promotions
@@ -159,6 +160,7 @@ def run(config):
         private_key = read_private_file(config["app_key_path"])
         registry = validate_registry([(config["installation_id"], p["repository_id"]) for p in config["projects"]])
         clients = {}
+        scan_clients = {}
         for project in config["projects"]:
             repository_id = project["repository_id"]
             if project.get("status_enabled") is False:
@@ -176,6 +178,13 @@ def run(config):
                             project_owner=project["project_owner"], project_number=project["project_number"],
                             app_token=token, project_token=project_token, pr_flow_token=pr_flow_token)
             clients[repository_id] = (client, project["enrolled_at"], frozenset(project["trusted_author_ids"]), pr_flow)
+            # A separate read-only client avoids sharing the worker's mutable
+            # snapshot and token cache with the background collector.
+            scan_token = AppToken(config["app_id"], config["installation_id"], repository_id, private_key)
+            scan_client = GitHub(repository_id=repository_id, owner=project["owner"], repository=project["repository"],
+                                 project_owner=project["project_owner"], project_number=project["project_number"],
+                                 app_token=scan_token, project_token=project_token)
+            scan_clients[repository_id] = (scan_client, project["enrolled_at"])
         readers = build_readers(config, private_key, store=store, clients=clients)
         server = make_server(store, webhook_secret, registry, port=config["port"],
                              wake_admission=wake_admission.set if readers else None,
@@ -197,6 +206,9 @@ def run(config):
         scan_backlog = deque()
         scan_in_progress = bool(pending_scans)
         scan_reason = "startup"
+        scan_epoch = 0
+        scan_results = None
+        scan_results_epoch = None
         archive_pending = set()
         archive_backlog = deque()
         archive_in_progress = False
@@ -212,6 +224,7 @@ def run(config):
                 raise RuntimeError("Admission worker stopped")
             now = datetime.now(zone)
             if now.hour >= 2 and now.date() != last_night:
+                scan_epoch += 1
                 pending_scans.update(clients)
                 scan_in_progress = bool(pending_scans) or bool(scan_backlog)
                 scan_reason = "nightly"
@@ -229,16 +242,29 @@ def run(config):
                         backup_pending = False
                     except Exception:
                         print("FLOW attention: backup-failed", file=sys.stderr, flush=True)
-                for repository_id in list(pending_scans):
-                    client, enrolled_at, _authors, _pr_flow = clients[repository_id]
+                if pending_scans and scan_results is None:
+                    scan_results = collect_in_background(store, scan_clients, sorted(pending_scans), stop)
+                    scan_results_epoch = scan_epoch
+                    next_scan = time.monotonic() + 60
+                elif not pending_scans:
+                    next_scan = time.monotonic() + 60
+            if scan_results is not None:
+                while True:
                     try:
-                        known = store.known_issue_numbers(repository_id)
-                        candidates = client.reconciliation_candidates(enrolled_at, known)
-                        scan_backlog.extend((repository_id, number) for number in candidates)
-                        pending_scans.remove(repository_id)
-                    except Exception:
+                        result = scan_results.get_nowait()
+                    except queue.Empty:
+                        break
+                    if result is None:
+                        scan_results = None
+                        break
+                    repository_id, candidates, elapsed = result
+                    if candidates is None:
                         print("FLOW attention: reconciliation-failed", file=sys.stderr, flush=True)
-                next_scan = time.monotonic() + 60
+                    else:
+                        scan_backlog.extend((repository_id, number) for number in candidates)
+                        if scan_results_epoch == scan_epoch:
+                            pending_scans.discard(repository_id)
+                    print("FLOW scan: collection seconds=" + str(round(elapsed, 1)), file=sys.stderr, flush=True)
             row = store.next_pending()
             if row is None and scan_backlog:
                 try:
@@ -247,13 +273,13 @@ def run(config):
                 except Exception:
                     print("FLOW attention: reconciliation-failed", file=sys.stderr, flush=True)
                     stop.wait(1)
-            if scan_in_progress and not pending_scans and not scan_backlog:
+            if scan_in_progress and not pending_scans and not scan_backlog and scan_results is None:
                 print("FLOW scan: " + scan_reason + " candidates queued", flush=True)
                 scan_in_progress = False
             if row is None:
                 # Project cards are archived only after reconciliation and
                 # only when there is no ready issue work. One card per turn.
-                if not pending_scans and not scan_backlog and not backup_pending:
+                if not pending_scans and not scan_backlog and not backup_pending and scan_results is None:
                     if archive_pending and not archive_backlog:
                         repository_id = min(archive_pending)
                         client = clients[repository_id][0]
@@ -284,8 +310,11 @@ def run(config):
                 store.block(row["repository_id"], row["issue_number"], row["generation"], "unknown-project")
                 continue
             client, enrolled_at, authors, pr_flow = project
+            print("FLOW worker: step started", flush=True)
+            step_started = time.monotonic()
             result = process_one(store, client, enrolled_at=enrolled_at, trusted_authors=authors, row=row,
                                  pr_flow=pr_flow)
+            print("FLOW worker: step seconds=" + str(round(time.monotonic() - step_started, 1)), flush=True)
             if result["kind"] in ("read-failed", "blocked", "write-uncertain", "awaiting-card"):
                 # No issue IDs, response bodies, tokens or comment contents.
                 message = format_read_failure(result) if result["kind"] == "read-failed" else "FLOW attention: " + result["kind"]
