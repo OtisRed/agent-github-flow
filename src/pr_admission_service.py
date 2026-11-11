@@ -7,7 +7,7 @@ from pathlib import Path
 from mvp_credentials import AppToken
 from mvp_github import request
 from pr_admission_github import AdmissionReader
-from pr_admission_journal import MergeJournal
+from pr_admission_journal import CiRetryJournal, MergeJournal
 from pr_admission_runner import admission_step
 from dependabot_github import DependabotGitHub
 from dependabot_intake import intake_step
@@ -16,6 +16,9 @@ from dependabot_journal import DependabotJournal
 
 def build_readers(config, private_key, *, transport=request, store=None, clients=None):
     readers = []
+    ci_retry_journal = CiRetryJournal(store) if store is not None else None
+    if ci_retry_journal is not None:
+        ci_retry_journal.initialize()
     for project in config["projects"]:
         if project.get("admission_enabled") is not True:
             continue
@@ -30,7 +33,8 @@ def build_readers(config, private_key, *, transport=request, store=None, clients
                                  workflow=project.get("admission_workflow", "ci.yml"),
                                  gate_job=project.get("admission_gate_job", "verify"),
                                  workflow_event=project.get("admission_workflow_event", "pull_request"),
-                                 sync_bot_id=project.get("admission_sync_bot_id"))
+                                 sync_bot_id=project.get("admission_sync_bot_id"),
+                                 ci_retry_journal=ci_retry_journal)
         if project.get("dependabot_enabled") is True:
             if store is None or clients is None or repository_id not in clients:
                 raise ValueError("Dependabot requires the status owner and journal")
