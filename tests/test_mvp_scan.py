@@ -1,15 +1,38 @@
 import sys
 import tempfile
+import threading
 import unittest
 from collections import deque
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from mvp_scan import stage_one
+from mvp_scan import collect_in_background, stage_one
 from mvp_store import Store
 
 
 class ScanQueueTests(unittest.TestCase):
+    def test_collection_failure_does_not_prevent_next_project(self):
+        class Client:
+            def __init__(self, result):
+                self.result = result
+
+            def reconciliation_candidates(self, *_args):
+                if isinstance(self.result, Exception):
+                    raise self.result
+                return self.result
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "state.sqlite")
+            store.initialize()
+            clients = {1: (Client(ValueError("private detail")), "boundary"),
+                       2: (Client([8]), "boundary")}
+            results = collect_in_background(store, clients, [1, 2], threading.Event())
+            first = results.get(timeout=2)
+            second = results.get(timeout=2)
+            self.assertEqual(first[:2], (1, None))
+            self.assertEqual(second[:2], (2, [8]))
+            self.assertIsNone(results.get(timeout=2))
+
     def test_live_event_keeps_fifo_position_ahead_of_unstaged_scan(self):
         with tempfile.TemporaryDirectory() as directory:
             store = Store(Path(directory) / "state.sqlite")
