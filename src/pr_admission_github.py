@@ -387,9 +387,12 @@ class AdmissionReader:
                 candidates.append(run)
         if not candidates:
             return "no-workflow"
+        shadow = self._rerun_shadowed_ci(number, pr, sha, candidates, token)
+        if shadow != "shadow-unverified":
+            return shadow
         run = max(candidates, key=lambda x: (x["id"], x["run_attempt"]))
         if run.get("status") == "completed" and run.get("conclusion") == "skipped":
-            return self._rerun_shadowed_ci(number, pr, sha, candidates, token)
+            return shadow
         if run.get("status") != "completed" or run.get("conclusion") != "failure":
             return "not-a-failed-run"
         run_id, attempt = run["id"], run["run_attempt"]
@@ -483,6 +486,8 @@ class AdmissionReader:
             return "shadow-unverified"
         if any(run.get("status") != "completed" for run in candidates):
             return "shadow-ci-in-progress"
+        if any(run["id"] > green_id and run.get("conclusion") not in ("success", "skipped") for run in candidates):
+            return "shadow-unverified"
         for workflow in (skipped_run, green_run):
             path = f"/actions/runs/{workflow['id']}/attempts/{workflow['run_attempt']}/jobs?per_page=100"
             jobs = self._get(path, token)

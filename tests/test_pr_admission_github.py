@@ -325,6 +325,31 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(self.reader.rerun_blocked_ci(4), "rerun-requested")
         self.assertEqual(writes, [{}])
 
+    def test_late_skipped_attempt_of_older_workflow_is_still_recognized(self):
+        writes = self.prepare_shadowed_ci()
+        query = f"/actions/workflows/ci.yml/runs?event=pull_request&head_sha={self.sha}&per_page=100"
+        skipped = self.rows[query]["workflow_runs"][1]
+        skipped["id"] = 18  # An older workflow can create a newer check on rerun.
+        checks = self.rows[f"/commits/{self.sha}/check-runs?per_page=100&page=1"]["check_runs"]
+        checks[0]["details_url"] = "https://github.com/owner/repo/actions/runs/18/job/101"
+        self.rows["/actions/runs/18/attempts/1/jobs?per_page=100"] = self.rows.pop(
+            "/actions/runs/20/attempts/1/jobs?per_page=100")
+        self.assertEqual(self.reader.rerun_blocked_ci(4), "rerun-requested")
+        self.assertEqual(writes, [{}])
+
+    def test_newer_failed_workflow_is_not_hidden_by_skipped_check(self):
+        writes = self.prepare_shadowed_ci()
+        query = f"/actions/workflows/ci.yml/runs?event=pull_request&head_sha={self.sha}&per_page=100"
+        runs = self.rows[query]["workflow_runs"]
+        failed = dict(runs[0], id=21, conclusion="failure")
+        runs.append(failed)
+        self.rows[query]["total_count"] += 1
+        self.rows["/actions/runs/21/attempts/1/jobs?per_page=100"] = {"total_count": 1, "jobs": [{
+            "name": "verify", "conclusion": "failure",
+            "steps": [{"name": "Verify Node tests", "conclusion": "failure"}]}]}
+        self.assertNotEqual(self.reader.rerun_blocked_ci(4), "rerun-requested")
+        self.assertEqual(writes, [])
+
     def test_shadowed_ci_rejects_multiple_explicit_pr_associations(self):
         writes = self.prepare_shadowed_ci()
         query = f"/actions/workflows/ci.yml/runs?event=pull_request&head_sha={self.sha}&per_page=100"
