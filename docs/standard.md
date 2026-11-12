@@ -75,6 +75,13 @@ Dokładny [format maszynowy i parser](flow.md) dostarczono w tym repozytorium. P
 - Wspólna reguła porządkowania tablic: nocny kontroler ma archiwizować kartę `done` po co najmniej 14 pełnych dobach od zamknięcia issue, bez wyjątków dla `NOT_PLANNED` i `handed-off`. Archiwizacja nie usuwa issue, jego historii ani karty i nie zmienia zasad promocji. Przed jej włączeniem trzeba wdrożyć i sprawdzić przywracanie tej samej karty po ponownym otwarciu issue, także po pominiętym webhooku. Przygotowanie: [#131](https://github.com/OtisRed/agent-github-flow/issues/131) i [#132](https://github.com/OtisRed/agent-github-flow/issues/132); sam zapis zasady nie oznacza włączenia archiwizacji.
 - Po zakończeniu całego właściwego flow porządkujemy worktree po potwierdzeniu zachowania pracy i zakończenia użycia; gałęzi ani historii nie usuwamy automatycznie. Docelowo repozytoria pod `C:\Offline\Repozytoria` używają ignorowanego katalogu `worktrees/` w głównym checkoutcie. Jeśli host wymaga własnego zarządzanego worktree w innym miejscu, korzystamy z jego właściciela i nie przenosimy ani nie powielamy aktywnej pracy wyłącznie dla ścieżki.
 
+## Środowiska i dowody
+
+- PR: review dotyczy aktualnego commita, a CI sprawdza zmianę w izolacji właściwej dla projektu. Zielone CI nie oznacza wykonanego wspólnego smoke. Testy automatyczne i próbne zapisy używają syntetycznych, odizolowanych danych; dane produkcyjne ani ich kopie nie są domyślną fixture.
+- Po integracji: wspólny smoke właściciela i agenta dotyczy dostarczonej zmiany na `smoke` i rzeczywistego środowiska próby. W issue zapisujemy wynik, zidentyfikowaną wersję lub commit, środowisko, zakres danych i ograniczenia. Gdy nie można potwierdzić uruchomionej wersji, oznaczamy ją jako niepotwierdzoną, bez zastępowania jej nazwą gałęzi czy deklaracją. Właściciel ocenia zakres smoke i decyduje o zamknięciu.
+- Produkcja: promocja zamkniętych zmian do `main` nie jest sama wdrożeniem ani jego dowodem. Osobno zapisujemy, co faktycznie wdrożono i jak potwierdzono uruchomioną wersję. Hash źródła, tag obrazu, stan plików i działający proces są różnymi dowodami; zakres dowodu zależy od sposobu uruchomienia.
+- Projekt wybiera właściwe środowiska, testy i sposób identyfikacji, zachowując wspólne etapy. Nie wymaga się serwera ani instalacji dla zmiany, która ich nie potrzebuje. Kopia danych produkcyjnych lub test z zapisem do rzeczywistego systemu wymagają wcześniejszego uzgodnienia konkretnego zakresu z właścicielem; nie nadpisujemy produkcji wynikami próby.
+
 ## Setup i zmiany globalne
 
 - Po spike można kontynuować pracę na tej samej gałęzi i worktree, dostosowując wynik do aktualnego kontraktu i zachowując potrzebne dowody. Sama zmiana etapu nie wymaga nowej gałęzi ani utraty pracy.
