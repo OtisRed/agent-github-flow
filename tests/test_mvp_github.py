@@ -112,7 +112,7 @@ class GitHubTests(unittest.TestCase):
         with self.assertRaises(ValueError) as observed:
             self.github.read(20, 7)
         line = format_read_failure(read_failure("snapshot", observed.exception))
-        self.assertEqual(line, "FLOW attention: read-failed stage=snapshot cause=issue-changed")
+        self.assertEqual(line, "FLOW retry: issue-changed stage=snapshot")
         self.assertIsNone(self.github._last)
         with self.assertRaises(ValueError):
             self.github.set_status(20, 7, "agent-ready")

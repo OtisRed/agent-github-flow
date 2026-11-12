@@ -1,11 +1,13 @@
 import sys
+import io
+from contextlib import redirect_stdout, redirect_stderr
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from mvp_errors import GitHubRequestError, read_failure, format_read_failure
+from mvp_errors import GitHubRequestError, read_failure, format_read_failure, report_read_failure
 from mvp_github import request
 
 
@@ -42,6 +44,15 @@ class ReadDiagnosticsTests(unittest.TestCase):
             result = read_failure('snapshot', error)
             self.assertEqual(result['cause'], 'invalid-data')
             self.assertNotIn('secret', format_read_failure(result))
+
+    def test_expected_issue_change_is_informational_but_other_failures_warn(self):
+        output, errors = io.StringIO(), io.StringIO()
+        with redirect_stdout(output), redirect_stderr(errors):
+            report_read_failure(read_failure('snapshot', ValueError('Issue changed during read')))
+            report_read_failure(read_failure('verify-snapshot', ValueError('sensitive data')))
+        self.assertEqual(output.getvalue(), 'FLOW retry: issue-changed stage=snapshot\n')
+        self.assertEqual(errors.getvalue(), 'FLOW attention: read-failed stage=verify-snapshot cause=invalid-data\n')
+        self.assertNotIn('sensitive data', output.getvalue() + errors.getvalue())
 
     def test_formatter_rejects_untrusted_fields_and_exception_messages(self):
         result = read_failure('snapshot', ValueError('secret text'))

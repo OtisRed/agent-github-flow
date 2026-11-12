@@ -45,6 +45,70 @@ Assert-Count @(Get-ControllerWarnings -HealthJson 'not json') 1 'invalid remote 
 
 $bundledPython = if ($env:USERPROFILE) { Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' } else { $null }
 $python = if ($bundledPython -and (Test-Path -LiteralPath $bundledPython)) { $bundledPython } else { (Get-Command python3 -ErrorAction Stop).Source }
+# Exercise the real queue and SQL embedded in the backup across retries.
+$retryCode = @'
+import contextlib,json,re,sqlite3,sys,tempfile
+from pathlib import Path
+root=Path(sys.argv[1])
+sys.path.insert(0,str(root / 'src'))
+from mvp_store import Store
+from mvp_worker import process_one
+
+source=(root / 'scripts' / 'backup-state-to-windows.ps1').read_text(encoding='utf-8')
+match=re.search(r"'queue': db\.execute\('([^']+)'\)\.fetchone\(\)\[0\]",source)
+if not match:
+    raise SystemExit('queue probe not found')
+sql=match.group(1)
+now=[1000.0]
+class Github:
+    failing=True
+    def read(self,*_):
+        if self.failing:
+            raise ValueError('Issue changed during read')
+        return {'complete':True,'state':'OPEN','status':'needs-design',
+                'created_at':'2026-10-01T00:00:00Z','comments':[],'latest_reopen':None}
+    def set_status(self,*_):
+        raise AssertionError('unexpected write')
+
+with tempfile.TemporaryDirectory() as directory:
+    path=Path(directory) / 'state.sqlite'
+    store=Store(path,clock=lambda:now[0])
+    store.initialize()
+    store.enqueue(20,7)
+    github=Github()
+    for attempt in range(3):
+        result=process_one(store,github,enrolled_at='2026-11-01T00:00:00Z',
+                           trusted_authors=frozenset({10}))
+        if result.get('cause')!='issue-changed':
+            raise AssertionError('expected deferred read')
+        if attempt<2:
+            now[0]+=60
+    def count():
+        with contextlib.closing(sqlite3.connect(path)) as db:
+            return db.execute(sql).fetchone()[0]
+    first=count()
+    now[0]+=15
+    second=count()
+    now[0]+=45
+    github.failing=False
+    if process_one(store,github,enrolled_at='2026-11-01T00:00:00Z',
+                   trusted_authors=frozenset({10})).get('kind')!='completed':
+        raise AssertionError('expected recovery')
+    print(json.dumps({'first':first,'second':second,'recovered':count()}))
+'@
+$retryJson = (& $python -c $retryCode (Split-Path -Parent $PSScriptRoot)) -join [Environment]::NewLine
+if ($LASTEXITCODE -ne 0) { throw 'synthetic retry probe failed' }
+$retry = $retryJson | ConvertFrom-Json
+$health = $healthy | ConvertFrom-Json
+foreach ($sample in @($retry.first, $retry.second)) {
+  $health.queue = $sample
+  $warnings = @(Get-ControllerWarnings -HealthJson ($health | ConvertTo-Json -Compress))
+  Assert-Count $warnings 1 'persistent queue is reported'
+  Assert-Equal $warnings[0] 'Nie mozna jeszcze potwierdzic oproznienia kolejki kontrolera.' 'queue warning'
+}
+$health.queue = $retry.recovered
+Assert-Count @(Get-ControllerWarnings -HealthJson ($health | ConvertTo-Json -Compress)) 0 'resolved retry clears warning'
+
 $echoCode = 'import json,sys; print(json.dumps({"args":sys.argv[1:],"input":sys.stdin.read()}))'
 $echo = Invoke-BoundedProcess -FilePath $python -ProcessArguments @('-c', $echoCode, 'space value', 'quote"value', 'trailing\') -InputText "hello`n" -TimeoutSeconds 15 | ConvertFrom-Json
 Assert-Equal $echo.args[0] 'space value' 'argument with spaces'

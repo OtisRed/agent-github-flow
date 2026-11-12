@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 from mvp_credentials import AppToken, read_private_file
 from mvp_archive import archive_candidates, archive_one
 from mvp_decision import _date
-from mvp_errors import format_read_failure
+from mvp_errors import report_read_failure
 from mvp_github import GitHub
 from mvp_http import make_server
 from mvp_scan import collect_in_background, stage_one
@@ -320,8 +320,10 @@ def run(config):
             print("FLOW worker: step seconds=" + str(round(time.monotonic() - step_started, 1)), flush=True)
             if result["kind"] in ("read-failed", "blocked", "write-uncertain", "awaiting-card"):
                 # No issue IDs, response bodies, tokens or comment contents.
-                message = format_read_failure(result) if result["kind"] == "read-failed" else "FLOW attention: " + result["kind"]
-                print(message, file=sys.stderr, flush=True)
+                if result["kind"] == "read-failed":
+                    report_read_failure(result)
+                else:
+                    print("FLOW attention: " + result["kind"], file=sys.stderr, flush=True)
             if result["kind"] in ("rescan", "read-failed", "waiting"):
                 stop.wait(1)
     finally:
