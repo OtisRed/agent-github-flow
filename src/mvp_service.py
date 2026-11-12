@@ -25,6 +25,7 @@ from mvp_store import Store
 from mvp_worker import process_one
 from promotion_schedule import run_promotions
 from pr_admission_service import build_readers, run_admission
+from pr_admission_github import normalize_retry_targets
 from webhook_ingress import validate_registry
 
 
@@ -92,6 +93,8 @@ def validate_config(config):
                            or type(c.get('app_id')) is not int or c['app_id'] <= 0 for c in checks)
                     or len({(c['context'], c['app_id']) for c in checks}) != len(checks)):
                 raise ValueError("Invalid admission test checks")
+            normalize_retry_targets(project.get("admission_retry_targets"),
+                                    tuple((c["context"], c["app_id"]) for c in checks))
         ids.append(project["repository_id"])
         authors = project.get("trusted_author_ids")
         if (not isinstance(authors, list) or not authors or any(type(value) is not int or value <= 0 for value in authors)
