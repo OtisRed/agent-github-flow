@@ -99,7 +99,7 @@ class MultiWorkflowRetryTests(unittest.TestCase):
         next(check for check in checks if check['id'] == 100)['conclusion'] = 'failure'
         self.fixture.rows[self.path]['total_count'] -= 1
         self.fixture.rows['/actions/runs/19/attempts/1/jobs?per_page=100'] = {
-            'total_count': 1, 'jobs': [{'name': 'verify', 'conclusion': 'failure',
+            'total_count': 1, 'jobs': [{'id': 100, 'name': 'verify', 'status': 'completed', 'conclusion': 'failure',
                 'steps': [{'name': 'Wait for flow admission', 'conclusion': 'failure'}]}]}
         previous = self.reader.transport
         attempts = []
@@ -109,6 +109,11 @@ class MultiWorkflowRetryTests(unittest.TestCase):
                 raise TimeoutError('synthetic uncertain response')
             return previous(path, token, body=body)
         self.reader.transport = lost
+        gate_check = next(check for check in checks if check['id'] == 100)
+        gate_check['conclusion'] = 'success'
+        self.assertNotEqual(self.reader.rerun_blocked_ci(4), 'rerun-requested')
+        self.assertEqual(attempts, [])
+        gate_check['conclusion'] = 'failure'
         other = self.fixture.rows[self.query]['workflow_runs'][0]
         other['head_repository']['id'] = 99
         self.assertEqual(self.reader.rerun_blocked_ci(4), 'other-checks-blocked')
@@ -146,7 +151,7 @@ class MultiWorkflowRetryTests(unittest.TestCase):
         checks[-1]['conclusion'] = 'failure'
         self.fixture.rows[self.path]['total_count'] -= 1
         self.fixture.rows['/actions/runs/19/attempts/1/jobs?per_page=100'] = {
-            'total_count': 1, 'jobs': [{'name': 'verify', 'conclusion': 'failure',
+            'total_count': 1, 'jobs': [{'id': 100, 'name': 'verify', 'status': 'completed', 'conclusion': 'failure',
                 'steps': [{'name': 'Wait for flow admission', 'conclusion': 'failure'}]}]}
         other = self.fixture.rows[self.query]['workflow_runs'][0]
         other['conclusion'] = 'failure'

@@ -455,6 +455,21 @@ class AdmissionReader:
         # across restarts. Existing single-workflow behavior remains unchanged.
         if self.retry_targets:
             checks = self._check_runs(sha, token)
+            app = dict(self.required_tests).get(gate_job)
+            matching = [check for check in checks if isinstance(check, dict)
+                        and (check.get("name"), (check.get("app") or {}).get("id")) == (gate_job, app)]
+            if (not matching or any(type(check.get("id")) is not int or check["id"] <= 0
+                                    or check.get("head_sha") != sha for check in matching)
+                    or len({check["id"] for check in matching}) != len(matching)):
+                return "shadow-unverified"
+            latest = max(matching, key=lambda check: check["id"])
+            pattern = (r"https://github\.com/" + re.escape(self.full_name)
+                       + r"/actions/runs/([1-9][0-9]*)/job/([1-9][0-9]*)")
+            match = re.fullmatch(pattern, latest.get("details_url") or "", flags=re.IGNORECASE)
+            if (latest.get("status") != "completed" or latest.get("conclusion") != "failure"
+                    or verify[0].get("status") != "completed" or verify[0].get("id") != latest["id"]
+                    or not match or int(match.group(1)) != run_id or int(match.group(2)) != latest["id"]):
+                return "shadow-unverified"
             if not self._other_checks_allow_gate_retry(number, pr, sha, token, gate_job, checks):
                 return "other-checks-blocked"
             after = self._get(f"/pulls/{number}", token)
