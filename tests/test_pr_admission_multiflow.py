@@ -188,7 +188,7 @@ class MultiWorkflowRetryTests(unittest.TestCase):
         self.reader.retry_targets += (('ci.yml', 'pull_request', 'old-canary'),)
         self.fixture.rows['/actions/runs/19/attempts/1/jobs?per_page=100'] = {'total_count': 2, 'jobs': [
             {'id': 100, 'name': 'verify', 'status': 'completed', 'conclusion': 'failure',
-             'steps': [{'name': 'Wait for flow admission', 'conclusion': 'failure'}]},
+             'steps': [{'name': 'Wait for flow admission', 'status': 'completed', 'conclusion': 'failure'}]},
             {'id': 152, 'name': 'old-canary', 'status': 'completed', 'conclusion': 'skipped', 'steps': []}]}
         previous = self.reader.transport
         def capture(path, token, *, body=None):
@@ -211,6 +211,10 @@ class MultiWorkflowRetryTests(unittest.TestCase):
         self.assertEqual(self.writes, [])
         jobs.pop()
         self.fixture.rows['/actions/runs/19/attempts/1/jobs?per_page=100']['total_count'] -= 1
+        jobs[0]['steps'].append({'name': 'Unknown step', 'status': 'completed', 'conclusion': 'cancelled'})
+        self.assertEqual(self.reader.rerun_blocked_ci(4), 'other-checks-blocked')
+        self.assertEqual(self.writes, [])
+        jobs[0]['steps'].pop()
         self.assertEqual(self.reader.rerun_blocked_ci(4), 'rerun-requested')
         self.assertEqual(self.writes, [{}])
         self.reader._requested_ci_attempts.clear()

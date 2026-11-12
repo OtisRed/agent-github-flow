@@ -543,8 +543,11 @@ class AdmissionReader:
                     if (len(failures) != 1 or failures[0].get("name") != gate_job
                             or failures[0].get("id") != gate_job_id or not isinstance(failures[0].get("steps"), list)):
                         return False
-                    failed_steps = [step for step in failures[0]["steps"] if isinstance(step, dict)
-                                    and step.get("conclusion") == "failure"]
+                    if any(not isinstance(step, dict) or step.get("status") != "completed"
+                           or step.get("conclusion") not in ("success", "skipped", "failure")
+                           for step in failures[0]["steps"]):
+                        return False
+                    failed_steps = [step for step in failures[0]["steps"] if step.get("conclusion") == "failure"]
                     if len(failed_steps) != 1 or failed_steps[0].get("name") != "Wait for flow admission":
                         return False
                 continue
