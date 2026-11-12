@@ -19,7 +19,7 @@ class AppTokenTests(unittest.TestCase):
         from cryptography.hazmat.primitives.asymmetric import rsa
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
-        expected = {"issues": "write", "pull_requests": "write"}
+        expected = {"issues": "write", "pull_requests": "write", "contents": "write"}
         now = 1_800_000_000
         def transport(_path, _jwt, *, body=None):
             self.assertEqual(body, {"repository_ids": [20], "permissions": expected})
