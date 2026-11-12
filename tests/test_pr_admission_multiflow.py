@@ -172,6 +172,55 @@ class MultiWorkflowRetryTests(unittest.TestCase):
         self.assertEqual(self.reader.rerun_blocked_ci(4), 'rerun-requested')
         self.assertEqual(self.writes, [{}])
 
+    def test_admission_failure_with_skipped_dependent_canary_is_retried(self):
+        query = f'/actions/workflows/ci.yml/runs?event=pull_request&head_sha={self.fixture.sha}&per_page=100'
+        run = self.fixture.rows[query]['workflow_runs'][0]
+        run['conclusion'] = 'failure'
+        self.fixture.rows[query] = {'total_count': 1, 'workflow_runs': [run]}
+        checks = self.fixture.rows[self.path]['check_runs']
+        checks[:] = [check for check in checks if check['id'] != 101]
+        next(check for check in checks if check['id'] == 100)['conclusion'] = 'failure'
+        checks.append({'id': 152, 'name': 'old-canary', 'app': {'id': 15368},
+                       'head_sha': self.fixture.sha, 'status': 'completed', 'conclusion': 'skipped',
+                       'details_url': 'https://github.com/owner/repo/actions/runs/19/job/152'})
+        self.fixture.rows[self.path]['total_count'] = len(checks)
+        self.reader.required_tests += (('old-canary', 15368),)
+        self.reader.retry_targets += (('ci.yml', 'pull_request', 'old-canary'),)
+        self.fixture.rows['/actions/runs/19/attempts/1/jobs?per_page=100'] = {'total_count': 2, 'jobs': [
+            {'id': 100, 'name': 'verify', 'status': 'completed', 'conclusion': 'failure',
+             'steps': [{'name': 'Wait for flow admission', 'status': 'completed', 'conclusion': 'failure'}]},
+            {'id': 152, 'name': 'old-canary', 'status': 'completed', 'conclusion': 'skipped', 'steps': []}]}
+        previous = self.reader.transport
+        def capture(path, token, *, body=None):
+            if path.endswith('/actions/runs/19/rerun-failed-jobs'):
+                self.writes.append(body)
+                return None, None
+            return previous(path, token, body=body)
+        self.reader.transport = capture
+        jobs = self.fixture.rows['/actions/runs/19/attempts/1/jobs?per_page=100']['jobs']
+        jobs.append({'id': 153, 'name': 'product', 'status': 'completed', 'conclusion': 'failure',
+                     'steps': [{'name': 'Test product', 'conclusion': 'failure'}]})
+        self.fixture.rows['/actions/runs/19/attempts/1/jobs?per_page=100']['total_count'] += 1
+        self.assertEqual(self.reader.rerun_blocked_ci(4), 'other-checks-blocked')
+        self.assertEqual(self.writes, [])
+        jobs.pop()
+        self.fixture.rows['/actions/runs/19/attempts/1/jobs?per_page=100']['total_count'] -= 1
+        jobs.append({'id': 153, 'name': 'product', 'status': 'completed', 'conclusion': 'cancelled', 'steps': []})
+        self.fixture.rows['/actions/runs/19/attempts/1/jobs?per_page=100']['total_count'] += 1
+        self.assertEqual(self.reader.rerun_blocked_ci(4), 'other-checks-blocked')
+        self.assertEqual(self.writes, [])
+        jobs.pop()
+        self.fixture.rows['/actions/runs/19/attempts/1/jobs?per_page=100']['total_count'] -= 1
+        jobs[0]['steps'].append({'name': 'Unknown step', 'status': 'completed', 'conclusion': 'cancelled'})
+        self.assertEqual(self.reader.rerun_blocked_ci(4), 'other-checks-blocked')
+        self.assertEqual(self.writes, [])
+        jobs[0]['steps'].pop()
+        self.assertEqual(self.reader.rerun_blocked_ci(4), 'rerun-requested')
+        self.assertEqual(self.writes, [{}])
+        self.reader._requested_ci_attempts.clear()
+        self.assertEqual(self.reader.rerun_blocked_ci(4), 'already-requested')
+        self.assertEqual(self.writes, [{}])
+
     def test_pr_changed_before_shadow_retry_is_blocked(self):
         previous = self.reader.transport
         reads = 0
