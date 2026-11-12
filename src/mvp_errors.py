@@ -1,5 +1,7 @@
 """Allowlisted diagnostic categories; never include exception text or IDs."""
 
+import sys
+
 CAUSES = frozenset({'http-401', 'http-403', 'http-404', 'http-429', 'http-4xx', 'http-5xx',
                     'http-other', 'timeout', 'network', 'invalid-data', 'issue-changed', 'other'})
 STAGES = frozenset({'snapshot', 'pr-handoff', 'verify-snapshot', 'unarchive'})
@@ -28,4 +30,12 @@ def format_read_failure(result):
     cause = result.get('cause')
     stage = stage if isinstance(stage, str) and stage in STAGES else 'other'
     cause = cause if isinstance(cause, str) and cause in CAUSES else 'other'
+    if cause == 'issue-changed':
+        return 'FLOW retry: issue-changed stage=' + stage
     return 'FLOW attention: read-failed stage=' + stage + ' cause=' + cause
+
+
+def report_read_failure(result):
+    message = format_read_failure(result)
+    stream = sys.stdout if result.get('cause') == 'issue-changed' else sys.stderr
+    print(message, file=stream, flush=True)
