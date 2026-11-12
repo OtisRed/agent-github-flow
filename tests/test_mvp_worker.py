@@ -119,6 +119,23 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(self.github.writes, [])
         self.assertEqual(self.store.get(20, 7)['retry_after'], self.now + 60)
 
+    def test_issue_change_on_verification_defers_without_write(self):
+        self.github.snapshot['comments'] = [self.handoff()]
+        self.store.enqueue(20, 7)
+        initial = self.github.read
+        calls = 0
+        def read(*args):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise ValueError('Issue changed during read')
+            return initial(*args)
+        self.github.read = read
+        result = self.run_worker()
+        self.assertEqual(result, {'kind': 'read-failed', 'stage': 'verify-snapshot', 'cause': 'issue-changed'})
+        self.assertEqual(self.github.writes, [])
+        self.assertEqual(self.store.get(20, 7)['retry_after'], self.now + 60)
+
     def test_pr_handoff_failure_is_distinct_without_leaking_exception(self):
         self.store.enqueue(20, 7)
         with patch('pr_flow_runner.process_pr_handoff', side_effect=RuntimeError('secret content')):
