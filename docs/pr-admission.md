@@ -1,6 +1,6 @@
 # PR admission
 
-Mechanizm jest domyślnie wyłączony; włączono go dla `agent-github-flow` i VSone. W rzeczywistej próbie [PR #110](https://github.com/OtisRed/agent-github-flow/pull/110) przeszedł admission i CI, po czym aplikacja scaliła go do `smoke`. W [VSone PR #3965](https://github.com/OtisRed/VSonenote-plugin/pull/3965) brak wymaganego drugiego review zatrzymał admission i Canary; po zmianie wymogu kontroler wznowił testy bez nowego commita i scalił PR po pozytywnym preflight oraz Windows Canary. VSone nadal zarządza własnymi statusami. Przyszły rzeczywisty forward-sync po aktywacji wymaga obserwacji w [VSone #3967](https://github.com/OtisRed/VSonenote-plugin/issues/3967). Osobny worker istniejącego procesu na Mikrusie sprawdza podpisane sygnały i ponownie odczytuje GitHub. Zdarzenia są wskazówką do skanowania, nie zaufaną treścią decyzji. Po restarcie skan otwartych PR przywraca pracę. Nie zapisuje treści issue ani review w logach.
+Mechanizm jest domyślnie wyłączony; jego aktywację dla poszczególnych projektów określa aktualna konfiguracja kontrolera. W rzeczywistej próbie [PR #110](https://github.com/OtisRed/agent-github-flow/pull/110) przeszedł admission i CI, po czym aplikacja scaliła go do `smoke`. W [VSone PR #3965](https://github.com/OtisRed/VSonenote-plugin/pull/3965) brak wymaganego drugiego review zatrzymał admission i Canary; po zmianie wymogu kontroler wznowił testy bez nowego commita i scalił PR po pozytywnym preflight oraz Windows Canary. Przyszły rzeczywisty forward-sync po aktywacji wymaga obserwacji w [VSone #3967](https://github.com/OtisRed/VSonenote-plugin/issues/3967). Osobny worker istniejącego procesu na Mikrusie sprawdza podpisane sygnały i ponownie odczytuje GitHub. Zdarzenia są wskazówką do skanowania, nie zaufaną treścią decyzji. Po restarcie skan otwartych PR przywraca pracę. Nie zapisuje treści issue ani review w logach.
 
 Jedna logika ocenia wymagane review z DA i sprawdzony commit. Po publikacji checka `flow-admission` właściwe CI wykonuje testy; worker ponownie odczytuje dane i w przypadku kompletu warunków próbuje scalenia do `smoke` z oczekiwanym head SHA. Nie korzysta z pozostawionego w GitHubie auto-merge. Dla realnych zmian wynik checka, CI, merge, wspólny smoke i zamknięcie issue są odrębnymi dowodami.
 
@@ -62,6 +62,17 @@ Przy pominiętym checku draftu, który zasłonił wcześniejszy zielony check na
 Po pozytywnym admission i testach kontroler sprawdza dane jeszcze raz i scala gotowy PR do `smoke`. Wspólny smoke i decyzja właściciela o zamknięciu issue następują później. Jeżeli merge ma niepewny wynik, sprawdź stan PR i komunikat usługi przed dalszym działaniem; nie uznawaj samego checka za potwierdzenie scalenia.
 
 ## Ograniczenia i powrót
+
+W CI tego repozytorium zwykły workflow przed pobraniem kodu PR wykonuje
+skrypt oczekiwania na admission z chronionej gałęzi domyślnej. Zmiana samego
+skryptu w PR nie jest wykonywana w tym kroku. Jest to zabezpieczenie kolejności,
+nie niezależny dowód pochodzenia CI: workflow `pull_request` i testy mogą być
+zmienione przez PR, a inny job może pominąć to oczekiwanie. Dlatego review
+obejmuje definicje workflow, skrypty testowe, zależności oraz uprawnienia;
+wynik checka powiązany z nazwą, App i SHA nie dowodzi niezmienności testów.
+PR z gałęzi w tym samym repozytorium nie korzysta automatycznie z ograniczeń
+sekretów właściwych dla PR z forka. Zob. [zasady GitHuba](https://docs.github.com/en/actions/concepts/security/compromised-runners)
+oraz [ograniczenia identyfikacji checków](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/troubleshooting-rules).
 
 GitHub nie łączy atomowo edytowalnego komentarza i opisu issue z merge. Po końcowym odczycie pozostaje krótki wyścig edycji; w tym czasie nie zmieniamy review ani kontraktu. Warunek head SHA nie chroni tych pól. Jeśli Mikrus jest niedostępny, sam nie uruchomi końcowego merge; ręczne scalenie poza tym procesem nie ma tej dodatkowej kontroli.
 
