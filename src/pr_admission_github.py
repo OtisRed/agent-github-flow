@@ -489,9 +489,7 @@ class AdmissionReader:
             latest = max(relevant, key=lambda check: check["id"])
             if latest.get("status") != "completed":
                 return False
-            if latest.get("conclusion") in ("success", "skipped"):
-                continue
-            if latest.get("conclusion") != "failure":
+            if latest.get("conclusion") not in ("success", "skipped", "failure"):
                 return False
             match = re.fullmatch(pattern, latest.get("details_url") or "", flags=re.IGNORECASE)
             if not match or int(match.group(2)) != latest["id"]:
@@ -499,7 +497,7 @@ class AdmissionReader:
             candidates = self._workflow_candidates(number, pr, sha, token, workflow, event)
             matches = [run for run in candidates if run.get("id") == int(match.group(1))]
             if (len(matches) != 1 or matches[0].get("status") != "completed"
-                    or matches[0].get("conclusion") != "failure"):
+                    or matches[0].get("conclusion") != latest.get("conclusion")):
                 return False
             run = matches[0]
             path = f"/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100"
@@ -510,7 +508,15 @@ class AdmissionReader:
                 return False
             selected = [job for job in jobs["jobs"] if isinstance(job, dict) and job.get("name") == name]
             if (len(selected) != 1 or selected[0].get("id") != latest["id"]
-                    or selected[0].get("conclusion") != "failure" or not isinstance(selected[0].get("steps"), list)):
+                    or selected[0].get("status") != "completed"
+                    or selected[0].get("conclusion") != latest.get("conclusion")):
+                return False
+            if latest.get("conclusion") in ("success", "skipped"):
+                if latest["conclusion"] == "success" and (not isinstance(selected[0].get("steps"), list)
+                                                          or not selected[0]["steps"]):
+                    return False
+                continue
+            if not isinstance(selected[0].get("steps"), list):
                 return False
             failed = [step for step in selected[0]["steps"] if isinstance(step, dict) and step.get("conclusion") == "failure"]
             if len(failed) != 1 or failed[0].get("name") != "Wait for flow admission":

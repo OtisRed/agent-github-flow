@@ -109,6 +109,11 @@ class MultiWorkflowRetryTests(unittest.TestCase):
                 raise TimeoutError('synthetic uncertain response')
             return previous(path, token, body=body)
         self.reader.transport = lost
+        other = self.fixture.rows[self.query]['workflow_runs'][0]
+        other['head_repository']['id'] = 99
+        self.assertEqual(self.reader.rerun_blocked_ci(4), 'other-checks-blocked')
+        self.assertEqual(attempts, [])
+        other['head_repository']['id'] = 20
         with self.assertRaises(TimeoutError):
             self.reader.rerun_blocked_ci(4)
         self.reader._requested_ci_attempts.clear()
@@ -146,7 +151,7 @@ class MultiWorkflowRetryTests(unittest.TestCase):
         other = self.fixture.rows[self.query]['workflow_runs'][0]
         other['conclusion'] = 'failure'
         self.fixture.rows['/actions/runs/30/attempts/1/jobs?per_page=100'] = {
-            'total_count': 1, 'jobs': [{'id': 150, 'name': 'preflight', 'conclusion': 'failure',
+            'total_count': 1, 'jobs': [{'id': 150, 'name': 'preflight', 'status': 'completed', 'conclusion': 'failure',
                 'steps': [{'name': 'Actual product tests', 'conclusion': 'failure'}]}]}
         self.assertEqual(self.reader.rerun_blocked_ci(4), 'other-checks-blocked')
         self.assertEqual(self.writes, [])
