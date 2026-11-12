@@ -130,6 +130,38 @@ class MultiWorkflowRetryTests(unittest.TestCase):
         self.assertNotEqual(self.reader.rerun_blocked_ci(4), 'rerun-requested')
         self.assertEqual(self.writes, [])
 
+    def test_gate_retry_does_not_run_while_another_product_test_is_red(self):
+        query = f'/actions/workflows/ci.yml/runs?event=pull_request&head_sha={self.fixture.sha}&per_page=100'
+        run = self.fixture.rows[query]['workflow_runs'][0]
+        run['conclusion'] = 'failure'
+        self.fixture.rows[query] = {'total_count': 1, 'workflow_runs': [run]}
+        checks = self.fixture.rows[self.path]['check_runs']
+        checks[:] = [check for check in checks if check['id'] != 101]
+        next(check for check in checks if check['id'] == 100)['conclusion'] = 'failure'
+        checks[-1]['conclusion'] = 'failure'
+        self.fixture.rows[self.path]['total_count'] -= 1
+        self.fixture.rows['/actions/runs/19/attempts/1/jobs?per_page=100'] = {
+            'total_count': 1, 'jobs': [{'name': 'verify', 'conclusion': 'failure',
+                'steps': [{'name': 'Wait for flow admission', 'conclusion': 'failure'}]}]}
+        other = self.fixture.rows[self.query]['workflow_runs'][0]
+        other['conclusion'] = 'failure'
+        self.fixture.rows['/actions/runs/30/attempts/1/jobs?per_page=100'] = {
+            'total_count': 1, 'jobs': [{'id': 150, 'name': 'preflight', 'conclusion': 'failure',
+                'steps': [{'name': 'Actual product tests', 'conclusion': 'failure'}]}]}
+        self.assertEqual(self.reader.rerun_blocked_ci(4), 'other-checks-blocked')
+        self.assertEqual(self.writes, [])
+        self.fixture.rows['/actions/runs/30/attempts/1/jobs?per_page=100']['jobs'][0]['steps'] = [
+            {'name': 'Wait for flow admission', 'conclusion': 'failure'}]
+        previous = self.reader.transport
+        def capture(path, token, *, body=None):
+            if path.endswith('/actions/runs/19/rerun-failed-jobs'):
+                self.writes.append(body)
+                return None, None
+            return previous(path, token, body=body)
+        self.reader.transport = capture
+        self.assertEqual(self.reader.rerun_blocked_ci(4), 'rerun-requested')
+        self.assertEqual(self.writes, [{}])
+
     def test_pr_changed_before_shadow_retry_is_blocked(self):
         previous = self.reader.transport
         reads = 0

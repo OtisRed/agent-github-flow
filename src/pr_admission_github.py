@@ -455,6 +455,8 @@ class AdmissionReader:
         # across restarts. Existing single-workflow behavior remains unchanged.
         if self.retry_targets:
             checks = self._check_runs(sha, token)
+            if not self._other_checks_allow_gate_retry(number, pr, sha, token, gate_job, checks):
+                return "other-checks-blocked"
             after = self._get(f"/pulls/{number}", token)
             if not isinstance(after, dict) or any(after.get(k) != pr.get(k) for k in ("number", "state", "draft", "head", "base")):
                 return "pr-changed"
@@ -469,6 +471,51 @@ class AdmissionReader:
         self._requested_ci_attempts.add(key)
         self.transport(self.root + f"/actions/runs/{run_id}/rerun-failed-jobs", token, body={})
         return "rerun-requested"
+
+    def _other_checks_allow_gate_retry(self, number, pr, sha, token, gate_job, checks):
+        """Allow only green, skipped, or admission-only failures in other workflows."""
+        app_by_name = {name: app for name, app in self.required_tests}
+        pattern = (r"https://github\.com/" + re.escape(self.full_name)
+                   + r"/actions/runs/([1-9][0-9]*)/job/([1-9][0-9]*)")
+        for workflow, event, name in self.retry_targets:
+            if name == gate_job:
+                continue
+            relevant = [check for check in checks if isinstance(check, dict)
+                        and (check.get("name"), (check.get("app") or {}).get("id")) == (name, app_by_name[name])]
+            if (not relevant or any(type(check.get("id")) is not int or check["id"] <= 0
+                                    or check.get("head_sha") != sha for check in relevant)
+                    or len({check["id"] for check in relevant}) != len(relevant)):
+                return False
+            latest = max(relevant, key=lambda check: check["id"])
+            if latest.get("status") != "completed":
+                return False
+            if latest.get("conclusion") in ("success", "skipped"):
+                continue
+            if latest.get("conclusion") != "failure":
+                return False
+            match = re.fullmatch(pattern, latest.get("details_url") or "", flags=re.IGNORECASE)
+            if not match or int(match.group(2)) != latest["id"]:
+                return False
+            candidates = self._workflow_candidates(number, pr, sha, token, workflow, event)
+            matches = [run for run in candidates if run.get("id") == int(match.group(1))]
+            if (len(matches) != 1 or matches[0].get("status") != "completed"
+                    or matches[0].get("conclusion") != "failure"):
+                return False
+            run = matches[0]
+            path = f"/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100"
+            jobs = self._get(path, token)
+            if (not isinstance(jobs, dict) or type(jobs.get("total_count")) is not int
+                    or not isinstance(jobs.get("jobs"), list) or jobs["total_count"] != len(jobs["jobs"])
+                    or jobs["total_count"] > 100):
+                return False
+            selected = [job for job in jobs["jobs"] if isinstance(job, dict) and job.get("name") == name]
+            if (len(selected) != 1 or selected[0].get("id") != latest["id"]
+                    or selected[0].get("conclusion") != "failure" or not isinstance(selected[0].get("steps"), list)):
+                return False
+            failed = [step for step in selected[0]["steps"] if isinstance(step, dict) and step.get("conclusion") == "failure"]
+            if len(failed) != 1 or failed[0].get("name") != "Wait for flow admission":
+                return False
+        return True
 
     def _rerun_shadowed_ci(self, number, pr, sha, candidates, token,
                            workflow, workflow_event, gate_job):
