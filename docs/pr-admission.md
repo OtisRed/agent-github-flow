@@ -32,7 +32,10 @@ zielony wynik, może ponowić jeden potwierdzony przebieg na skan; pozostałe
 rozliczy po kolejnym odczycie. Czerwony, niepełny, trwający albo niejednoznaczny
 wynik nie staje się zielony. Także przy ponowieniu z powodu nieudanego
 oczekiwania na admission nowy wariant zapisuje zamiar w istniejącym SQLite;
-w razie niepewnej odpowiedzi nie powtarza żądania w ciemno po restarcie.
+w razie niepewnej odpowiedzi nie powtarza żądania w ciemno po restarcie. Jeśli stary Canary w tym samym workflow został pominięty po błędzie
+oczekiwania na admission, ponowienie jest możliwe dopiero po potwierdzeniu, że
+jedyny nieudany job zatrzymał się wyłącznie na tym oczekiwaniu; błąd produktu
+lub niepełne dane nadal blokują próbę.
 
 ## Przekazania statusu po PR
 
