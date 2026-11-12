@@ -63,6 +63,17 @@ Po pozytywnym admission i testach kontroler sprawdza dane jeszcze raz i scala go
 
 ## Ograniczenia i powrót
 
+W CI tego repozytorium zwykły workflow przed pobraniem kodu PR wykonuje
+skrypt oczekiwania na admission z chronionej gałęzi domyślnej. Zmiana samego
+skryptu w PR nie jest wykonywana w tym kroku. Jest to zabezpieczenie kolejności,
+nie niezależny dowód pochodzenia CI: workflow `pull_request` i testy mogą być
+zmienione przez PR, a inny job może pominąć to oczekiwanie. Dlatego review
+obejmuje definicje workflow, skrypty testowe, zależności oraz uprawnienia;
+wynik checka powiązany z nazwą, App i SHA nie dowodzi niezmienności testów.
+PR z gałęzi w tym samym repozytorium nie korzysta automatycznie z ograniczeń
+sekretów właściwych dla PR z forka. Zob. [zasady GitHuba](https://docs.github.com/en/actions/concepts/security/compromised-runners)
+oraz [ograniczenia identyfikacji checków](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/troubleshooting-rules).
+
 GitHub nie łączy atomowo edytowalnego komentarza i opisu issue z merge. Po końcowym odczycie pozostaje krótki wyścig edycji; w tym czasie nie zmieniamy review ani kontraktu. Warunek head SHA nie chroni tych pól. Jeśli Mikrus jest niedostępny, sam nie uruchomi końcowego merge; ręczne scalenie poza tym procesem nie ma tej dodatkowej kontroli.
 
 Przed zapisem merge w prywatnym katalogu stanu powstaje mały trwały znacznik PR i SHA. Po potwierdzonym odczycie scalenia jest usuwany. Po nieznanym wyniku pozostaje; po restarcie worker usuwa go tylko po potwierdzeniu właściwego scalenia, a otwarty PR pozostaje zablokowany do wyjaśnienia. Znacznik nie jest częścią kopii SQLite: po utracie całego serwera lub samego znacznika odzyskanie wymaga osobnej weryfikacji stanu GitHuba. Log zawiera jedynie kod problemu.
