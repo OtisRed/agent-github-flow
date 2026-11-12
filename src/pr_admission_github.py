@@ -470,7 +470,8 @@ class AdmissionReader:
                     or verify[0].get("status") != "completed" or verify[0].get("id") != latest["id"]
                     or not match or int(match.group(1)) != run_id or int(match.group(2)) != latest["id"]):
                 return "shadow-unverified"
-            if not self._other_checks_allow_gate_retry(number, pr, sha, token, gate_job, checks):
+            if not self._other_checks_allow_gate_retry(number, pr, sha, token, gate_job, run_id,
+                                                       attempt, verify[0]["id"], checks):
                 return "other-checks-blocked"
             after = self._get(f"/pulls/{number}", token)
             if not isinstance(after, dict) or any(after.get(k) != pr.get(k) for k in ("number", "state", "draft", "head", "base")):
@@ -487,7 +488,8 @@ class AdmissionReader:
         self.transport(self.root + f"/actions/runs/{run_id}/rerun-failed-jobs", token, body={})
         return "rerun-requested"
 
-    def _other_checks_allow_gate_retry(self, number, pr, sha, token, gate_job, checks):
+    def _other_checks_allow_gate_retry(self, number, pr, sha, token, gate_job, gate_run_id,
+                                       gate_attempt, gate_job_id, checks):
         """Allow only green, skipped, or admission-only failures in other workflows."""
         app_by_name = {name: app for name, app in self.required_tests}
         pattern = (r"https://github\.com/" + re.escape(self.full_name)
@@ -511,10 +513,13 @@ class AdmissionReader:
                 return False
             candidates = self._workflow_candidates(number, pr, sha, token, workflow, event)
             matches = [run for run in candidates if run.get("id") == int(match.group(1))]
-            if (len(matches) != 1 or matches[0].get("status") != "completed"
-                    or matches[0].get("conclusion") != latest.get("conclusion")):
+            if len(matches) != 1 or matches[0].get("status") != "completed":
                 return False
             run = matches[0]
+            skipped_after_gate = (latest.get("conclusion") == "skipped" and run.get("conclusion") == "failure"
+                                  and run.get("id") == gate_run_id and run.get("run_attempt") == gate_attempt)
+            if run.get("conclusion") != latest.get("conclusion") and not skipped_after_gate:
+                return False
             path = f"/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100"
             jobs = self._get(path, token)
             if (not isinstance(jobs, dict) or type(jobs.get("total_count")) is not int
@@ -530,6 +535,18 @@ class AdmissionReader:
                 if latest["conclusion"] == "success" and (not isinstance(selected[0].get("steps"), list)
                                                           or not selected[0]["steps"]):
                     return False
+                if skipped_after_gate:
+                    if any(not isinstance(job, dict) or job.get("status") != "completed"
+                           or job.get("conclusion") not in ("success", "skipped", "failure") for job in jobs["jobs"]):
+                        return False
+                    failures = [job for job in jobs["jobs"] if job.get("conclusion") == "failure"]
+                    if (len(failures) != 1 or failures[0].get("name") != gate_job
+                            or failures[0].get("id") != gate_job_id or not isinstance(failures[0].get("steps"), list)):
+                        return False
+                    failed_steps = [step for step in failures[0]["steps"] if isinstance(step, dict)
+                                    and step.get("conclusion") == "failure"]
+                    if len(failed_steps) != 1 or failed_steps[0].get("name") != "Wait for flow admission":
+                        return False
                 continue
             if not isinstance(selected[0].get("steps"), list):
                 return False
