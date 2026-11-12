@@ -14,6 +14,26 @@ Jedna logika ocenia wymagane review z DA i sprawdzony commit. Po publikacji chec
 
 Projekt zachowujący własny automat statusów można skonfigurować z `status_enabled: false`: kontroler przyjmuje sygnały potrzebne admission, ale nie dodaje jego issue do kolejki statusów ani nie wykonuje nocnego uzgadniania tablicy. Domyślne zachowanie istniejących projektów pozostaje bez zmian. To ustawienie nie włącza samo admission ani nie przenosi właściciela statusów.
 
+### Opcjonalne ponawianie dla kilku workflow
+
+Jeżeli wymagane checki projektu pochodzą z oddzielnych workflow, prywatna
+konfiguracja może podać `admission_retry_targets`: listę obiektów z polami
+`workflow`, `event` i `job`, po jednym dla każdej nazwy z `admission_tests`.
+Na przykład dwa checki `preflight` i `canary` mogą wskazywać odpowiednio
+`preflight.yml`/`pull_request_target` oraz `canary.yml`/`pull_request`. Nazwy
+jobów i wartości App w wymaganych checkach nadal muszą odpowiadać rzeczywistej
+ochronie gałęzi. Mapowanie jest opcjonalne; jego brak zachowuje dotychczasowe
+zachowanie jednego workflow. Nie włączaj go przed wdrożeniem i zweryfikowaniem
+odpowiednich workflow w projekcie.
+
+Dla rozdzielonych workflow kontroler weryfikuje każdy check w jego wskazanym
+workflow, na tym samym SHA i dla jednoznacznego PR. Jeśli pominięcie zasłania
+zielony wynik, może ponowić jeden potwierdzony przebieg na skan; pozostałe
+rozliczy po kolejnym odczycie. Czerwony, niepełny, trwający albo niejednoznaczny
+wynik nie staje się zielony. Także przy ponowieniu z powodu nieudanego
+oczekiwania na admission nowy wariant zapisuje zamiar w istniejącym SQLite;
+w razie niepewnej odpowiedzi nie powtarza żądania w ciemno po restarcie.
+
 ## Przekazania statusu po PR
 
 Wspólne przekazania do `review` i `smoke` można włączyć osobno dla projektu obsługiwanego już przez centralny kontroler statusów. Prywatna konfiguracja wymaga `pr_flow_enabled: true`, `pr_flow_enrolled_at` (czas granicy aktywacji) i `pr_flow_app_author_id` (identyfikator konta bota App, uwzględniony także w `trusted_author_ids`). Nie zmieniaj granicy przy zwykłym restarcie. Przed aktywacją usuń równoległego właściciela tych samych statusów. Domyślnie funkcja jest wyłączona.
