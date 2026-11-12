@@ -5,6 +5,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mvp_decision import STATUSES
+from mvp_errors import read_failure, format_read_failure
 from mvp_github import (PROJECT_BATCH_QUERY, PROJECT_ID_QUERY, PROJECT_QUERY, STATUS_MUTATION,
                         ARCHIVED_QUERY, UNARCHIVE_MUTATION, GitHub)
 
@@ -93,6 +94,28 @@ class GitHubTests(unittest.TestCase):
         self.assertEqual(mutations[0]["variables"]["value"], {"singleSelectOptionId": "option-agent-ready"})
         with self.assertRaises(ValueError):
             self.github.set_status(20, 7, "review")
+
+    def test_issue_change_during_read_has_safe_distinct_diagnostic(self):
+        original = self.transport
+        count = 0
+
+        def changed(path, token, *, body=None):
+            nonlocal count
+            value, link = original(path, token, body=body)
+            if path == "/repos/Owner/Project/issues/7":
+                count += 1
+                if count == 2:
+                    value["updated_at"] = "2026-11-02T01:00:01Z"
+            return value, link
+
+        self.github.transport = changed
+        with self.assertRaises(ValueError) as observed:
+            self.github.read(20, 7)
+        line = format_read_failure(read_failure("snapshot", observed.exception))
+        self.assertEqual(line, "FLOW attention: read-failed stage=snapshot cause=issue-changed")
+        self.assertIsNone(self.github._last)
+        with self.assertRaises(ValueError):
+            self.github.set_status(20, 7, "agent-ready")
 
     def test_missing_card_is_distinguished_without_adding_it(self):
         self.transport.items = []
