@@ -13,23 +13,30 @@ export function prepare({repo,project,apply=false,initializeEmpty=false,createSm
  const blockers=['repository','remote-identity','github-live','explicit-project','github-project'].filter(id=>checks[id]!=='ok');
  const identity=report.inventory?.githubRepository;
  if (!identity?.owner || !identity?.repo) blockers.push('repository-identity');
+ let projectLink='unverified';
  let view={state:'blocked',reason:'diagnostic-incomplete',changed:false};
  let smokeBranch={state:'blocked',reason:'diagnostic-incomplete',changed:false};
  if (blockers.length===0) {
+   const boardClient=makeClient(parsed);
+   const repos=boardClient.read()?.repositories;
+   if(repos?.pageInfo?.hasNextPage===false && Array.isArray(repos.nodes) && repos.nodes.some(r=>r?.nameWithOwner?.toLowerCase()===`${identity.owner}/${identity.repo}`.toLowerCase())) projectLink='ok';
+   else blockers.push('project-repository-link-unverified');
+   if(projectLink==='ok') {
    const branchResult=branch(makeRepoClient(identity),identity,{apply:apply && createSmoke});
    const {state,reason,changed,writeConfirmed,writeAttempted}=branchResult;
    smokeBranch={state,reason,changed,writeConfirmed,writeAttempted};
    if (!['conflict','unverified'].includes(state)) {
-     const result=board(makeClient(parsed),{apply,initializeEmpty});
+     const result=board(boardClient,{apply,initializeEmpty});
      const {state:viewState,reason:viewReason,number,changed:viewChanged,writeConfirmed:viewConfirmed,statusInitialized,writeAttempted:viewAttempted}=result;
      view={state:viewState,reason:viewReason,number,changed:viewChanged,writeConfirmed:viewConfirmed,statusInitialized,writeAttempted:viewAttempted,columnsVisible:'unverified'};
    } else view={state:'blocked',reason:'branch-outcome-unverified',changed:false};
+   }
  }
  return {
    ready:false,
    state:'partial',
    durationMs:Math.max(0,now()-start),
-   diagnostic:{checks,blockers},
+   diagnostic:{checks,projectLink,blockers},
    smokeBranch,
    firstView:view,
    remaining:['visible-kanban-columns-check','app-installation-access','project-auto-add-and-status-writers','repository-instructions-ci-and-protection','controller-enrollment-and-promotion','actual-issue-pr-and-owner-smoke'],
