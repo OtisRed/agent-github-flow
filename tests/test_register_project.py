@@ -23,6 +23,10 @@ class RegisterProjectTests(unittest.TestCase):
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)
         self.original_validate = self.module.validate_candidate
+        self.original_backup = self.module.database_backup
+        validator_spec = importlib.util.spec_from_file_location('validate_registration_test', ROOT / 'scripts/validate_registration.py')
+        self.validator = importlib.util.module_from_spec(validator_spec)
+        validator_spec.loader.exec_module(self.validator)
         from mvp_service import validate_config
         from pr_admission_github import AdmissionReader
         def local_validate(config, entry=None):
@@ -68,6 +72,7 @@ class RegisterProjectTests(unittest.TestCase):
         self.patches = [patch.object(self.module, 'systemctl', side_effect=ctl),
                         patch.object(self.module, 'healthy', side_effect=lambda: self.active),
                         patch.object(self.module, 'validate_candidate', side_effect=local_validate),
+                        patch.object(self.module, 'database_backup', side_effect=self.validator.backup_database),
                         patch.object(self.module.time, 'sleep', return_value=None)]
         for p in self.patches: p.start()
 
@@ -195,6 +200,14 @@ class RegisterProjectTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertEqual(command[:6], ['/usr/sbin/runuser', '-u', 'agent-flow', '--', '/usr/bin/python3', '-I'])
         self.assertEqual(Path(command[-1]).name, 'validate_registration.py')
+
+    def test_real_database_backup_is_invoked_as_service_user(self):
+        result = SimpleNamespace(returncode=0, stdout=b'ok\n')
+        with patch.object(self.module.subprocess, 'run', return_value=result) as run:
+            self.original_backup(self.state, 20)
+        command = run.call_args.args[0]
+        self.assertEqual(command[:6], ['/usr/sbin/runuser', '-u', 'agent-flow', '--', '/usr/bin/python3', '-I'])
+        self.assertEqual(command[-1], '--backup')
 
     def test_installed_validator_selects_current_release_not_stale_root_source(self):
         spec = importlib.util.spec_from_file_location('validate_registration', ROOT / 'scripts/validate_registration.py')

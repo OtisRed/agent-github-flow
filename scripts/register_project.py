@@ -5,7 +5,6 @@ Run on the controller host as root from a reviewed, root-owned release. The
 request is JSON on stdin, not shell arguments; output contains no project data.
 """
 import argparse
-import contextlib
 import copy
 import fcntl
 import json
@@ -13,7 +12,6 @@ import os
 import pwd
 import re
 import signal
-import sqlite3
 import stat
 import subprocess
 import sys
@@ -139,36 +137,19 @@ def healthy():
         return False
 
 
-def database_backup(state, directory, uid, gid, repository_id):
-    private_file_info = os.stat(state, follow_symlinks=False)
-    if not stat.S_ISREG(private_file_info.st_mode) or private_file_info.st_uid != uid or private_file_info.st_mode & 0o077:
-        raise ValueError('unsafe-state')
-    source = sqlite3.connect(state.resolve().as_uri() + '?mode=ro', uri=True, timeout=5)
-    try:
-        if source.execute('PRAGMA application_id').fetchone()[0] != 0x4147464D or source.execute('PRAGMA user_version').fetchone()[0] != 2:
-            raise ValueError('invalid-state')
-        if source.execute('SELECT 1 FROM project_boundaries WHERE repository_id=?', (repository_id,)).fetchone():
+def database_backup(state, repository_id):
+    # Never follow a path inside the service-owned directory as root.
+    helper = Path(__file__).resolve().with_name('validate_registration.py')
+    payload = json.dumps({'state': str(state), 'repository_id': repository_id}).encode('utf-8')
+    result = subprocess.run(['/usr/sbin/runuser', '-u', 'agent-flow', '--', '/usr/bin/python3', '-I',
+                             str(helper), '--backup'], input=payload, capture_output=True, timeout=30, check=False,
+                            env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C'})
+    if result.returncode != 0:
+        if result.stdout.strip() == b'previous-boundary-exists':
             raise ValueError('previous-boundary-exists')
-        fd, target = tempfile.mkstemp(prefix='onboarding-state-', suffix='.sqlite', dir=directory)
-        os.fchmod(fd, 0o600)
-        os.fchown(fd, uid, gid)
-        os.close(fd)
-        with contextlib.closing(sqlite3.connect(target)) as copy_db:
-            source.backup(copy_db)
-            if copy_db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
-                raise ValueError('invalid-backup')
-        backup_fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-        try:
-            os.fsync(backup_fd)
-        finally:
-            os.close(backup_fd)
-        directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    finally:
-        source.close()
+        raise ValueError('invalid-backup')
+    if result.stdout.strip() != b'ok':
+        raise ValueError('invalid-backup')
 
 
 def registration_lock(directory, uid, gid):
@@ -241,7 +222,7 @@ def apply_candidate(config_path, request, config, candidate, original, state, ui
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if private_file(config_path, uid) != original:
                 raise RuntimeError('configuration-changed')
-            database_backup(state, state.parent, uid, gid, request['repository_id'])
+            database_backup(state, request['repository_id'])
             save_private(config_path.parent, 'onboarding-config-backup-', original, uid, gid)
             staged = save_private(config_path.parent, '.onboarding-config-', new_bytes, uid, gid)
             if private_file(config_path, uid) != original:
