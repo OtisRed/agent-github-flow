@@ -1,0 +1,17 @@
+name: Wait for GitHub Flow admission
+description: Wait for the configured App check on the current PR head before project tests.
+inputs:
+  app-id:
+    description: Numeric GitHub App ID that publishes flow-admission.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Wait for flow admission
+      shell: bash
+      env:
+        GITHUB_ACTION_PATH: ${{ github.action_path }}
+        GH_TOKEN: ${{ github.token }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        FLOW_APP_ID: ${{ inputs.app-id }}
+      run: python3 "$GITHUB_ACTION_PATH/../../../scripts/wait_admission.py"

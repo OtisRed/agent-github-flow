@@ -1,0 +1,32 @@
+# Starting point for a NEW repository. Adapt before committing:
+# 1. Replace the all-zero ref with the reviewed FULL commit SHA containing the shared action.
+# 2. Replace the failing final step with the project's real setup and tests on isolated data.
+# 3. Configure admission and branch protection only after the controller is ready.
+name: Verify project
+on:
+  pull_request:
+    branches: [main, smoke]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  push:
+    branches: [main, smoke]
+permissions:
+  contents: read
+  checks: read
+jobs:
+  verify:
+    name: verify
+    if: github.event_name != 'pull_request' || github.event.pull_request.base.ref != 'smoke' || vars.FLOW_ADMISSION_ENABLED != 'true' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Wait for flow admission
+        if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'smoke' && vars.FLOW_ADMISSION_ENABLED == 'true'
+        uses: OtisRed/agent-github-flow/.github/actions/wait-admission@0000000000000000000000000000000000000000
+        with:
+          app-id: ${{ vars.FLOW_ADMISSION_APP_ID }}
+      - name: Check out event revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Replace with real project tests
+        run: exit 1
