@@ -286,7 +286,8 @@ class RegisterProjectTests(unittest.TestCase):
                  patch.object(self.module.sys, 'stdout', output), \
                  patch.object(self.module.sys, 'flags', SimpleNamespace(isolated=1)), \
                  patch.object(self.module.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=os.geteuid(), pw_gid=os.getegid())), \
-                 patch.object(self.module, 'secure_tools'), patch.object(self.module.signal, 'signal'):
+                 patch.object(self.module, 'secure_tools'), patch.object(self.module, 'require_root'), \
+                 patch.object(self.module.signal, 'signal'):
                 self.module.main()
             return json.loads(output.getvalue())
         planned = invoke(['--plan', '--update'], req)
@@ -303,6 +304,11 @@ class RegisterProjectTests(unittest.TestCase):
         self.assertEqual(invoke(['--apply', '--update'], {**req, 'expected_config_sha256': repeated['config_sha256']}),
                          {'result': 'exists'})
         self.assertEqual(self.operations, ['stop', 'start'])
+
+    def test_root_guard_remains_required(self):
+        with patch.object(self.module.os, 'geteuid', return_value=1000):
+            with self.assertRaisesRegex(RuntimeError, 'root-required'):
+                self.module.require_root()
 
     def test_prior_database_boundary_blocks_registration_and_restarts(self):
         with sqlite3.connect(self.state) as db:

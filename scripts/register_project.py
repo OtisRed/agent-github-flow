@@ -333,6 +333,11 @@ def secure_tools(script):
             raise ValueError('unsafe-helper')
 
 
+def require_root():
+    if os.geteuid() != 0:
+        raise RuntimeError('root-required')
+
+
 def main():
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -340,8 +345,7 @@ def main():
     mode.add_argument('--apply', action='store_true')
     parser.add_argument('--update', action='store_true')
     args = parser.parse_args()
-    if os.geteuid() != 0:
-        raise RuntimeError('root-required')
+    require_root()
     if not sys.flags.isolated:
         raise RuntimeError('isolated-mode-required')
     secure_tools(Path(__file__).absolute())
