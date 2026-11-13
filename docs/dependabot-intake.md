@@ -12,7 +12,9 @@ kontraktu, przygotowuje draft do gałęzi `smoke` i dopisuje `Refs #...` bez
 usuwania treści PR. Nowe issue przechodzi zwykły intake i rozpoczyna w
 `needs-design`; sam Dependabot nie zatwierdza pracy ani nie przestawia statusów.
 Do operacji repozytorium używany jest krótkotrwały token App ograniczony do
-repozytorium i uprawnień issues oraz pull requests.
+repozytorium oraz uprawnień issues, pull requests i contents (write). GitHub
+wymaga dostępu do zapisu contents dla edycji PR; token może więc także zapisywać
+kod w tym jednym repozytorium. Pozostałe profile tokenów są niezależne.
 
 Przed próbą utworzenia issue zapisujemy zamiar w istniejącym SQLite. Po awarii
 kontroler szuka znacznika w GitHubie; nie ponawia niepotwierdzonego utworzenia.
