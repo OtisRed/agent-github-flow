@@ -1,0 +1,10 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {ensureSmoke} from '../scripts/repo-branch.mjs';
+const SHA='a'.repeat(40),OTHER='b'.repeat(40),identity={owner:'Owner',repo:'Repo'};
+const base=()=>({id:'repo',nameWithOwner:'Owner/Repo',isEmpty:false,defaultBranchRef:{name:'main',target:{oid:SHA}},ref:null});
+function fake(behavior={}) {let value=base(),reads=0,writes=0;return {read(){reads++;const copy=structuredClone(value);if(behavior.read)return behavior.read(reads,copy);return copy;},create(id,oid){writes++;assert.equal(id,'repo');assert.equal(oid,SHA);if(behavior.write!==false)value.ref={target:{oid:SHA}};return behavior.reply!==false;},get writes(){return writes;},value};}
+test('plans without writing and creates only from the verified default head',()=>{const c=fake();assert.equal(ensureSmoke(c,identity).state,'needs-create');assert.equal(c.writes,0);assert.deepEqual(ensureSmoke(c,identity,{apply:true}),{state:'ok',changed:true,writeConfirmed:true});assert.equal(c.writes,1);});
+test('never rewrites an existing smoke branch or an empty repository',()=>{const c=fake();c.value.ref={target:{oid:OTHER}};assert.equal(ensureSmoke(c,identity,{apply:true}).state,'ok');assert.equal(c.writes,0);c.value.isEmpty=true;assert.equal(ensureSmoke(c,identity,{apply:true}).reason,'infrastructure-commit-needed');assert.equal(c.writes,0);});
+test('stops when default head changes or repository identity differs',()=>{const c=fake({read(n,v){if(n===2)v.defaultBranchRef.target.oid=OTHER;return v;}});assert.equal(ensureSmoke(c,identity,{apply:true}).reason,'repository-changed-before-write');assert.equal(c.writes,0);assert.equal(ensureSmoke(fake(),{owner:'other',repo:'repo'},{apply:true}).state,'unverified');});
+test('rechecks but never retries a lost response',()=>{const done=fake({reply:false});assert.deepEqual(ensureSmoke(done,identity,{apply:true}),{state:'ok',changed:true,writeConfirmed:false});assert.equal(done.writes,1);const unknown=fake({reply:false,write:false});assert.equal(ensureSmoke(unknown,identity,{apply:true}).reason,'branch-write-outcome-unknown');assert.equal(unknown.writes,1);});
