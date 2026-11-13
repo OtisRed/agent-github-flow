@@ -22,7 +22,8 @@ proces są lokalne; uruchamianie obcego lub nieprzejrzanego commita jest
 wykonaniem jego kodu. Przygotowany `chef-test.mjs` używa stdio oraz lokalnego
 połączenia HTTP na 127.0.0.1; środowisko musi dopuszczać loopback.
 
-W katalogu `marketplace` generowane są manifesty dla osobnej wtyczki Codexa.
+W katalogu `marketplace` generowane są manifesty dla osobnej lokalnej wtyczki
+Codexa. Ten pakiet nie jest zweryfikowaną wtyczką ChatGPT ani paczką przenośną.
 Przy pierwszej instalacji można użyć `codex plugin marketplace add <katalog
 marketplace>` i `codex plugin add chef-test@agf-local-chef-test`. Proces
 powinien startować wraz z klientem MCP. `chef_test_srodowisko` zwraca nazwę środowiska, commit eksportu i

@@ -35,9 +35,9 @@ $runtime = @{command=(Get-Command node).Source; args=@('--experimental-sqlite',(
 Write-JsonFile (Join-Path $registry 'marketplace.json') @{name='agf-local-chef-test'; interface=@{displayName='AGF Chef Test Local'}; plugins=@(@{name='chef-test';source=@{source='local';path='./plugins/chef-test'};policy=@{installation='AVAILABLE';authentication='ON_INSTALL'};category='Developer Tools'})}
 Write-JsonFile (Join-Path $plugin '.codex-plugin/plugin.json') @{name='chef-test';version='0.1.0';description='Chef-test na danych fikcyjnych';mcpServers='./.mcp.json';author=@{name='Local pilot'}}
 Write-JsonFile (Join-Path $plugin '.mcp.json') @{mcpServers=@{'chef-test'=$runtime}}
-Write-JsonFile (Join-Path $plugin 'plugin.json') @{name='chef-test';version='0.1.0';description='Chef-test na danych fikcyjnych';author=@{name='Local pilot'}}
-$portableRuntime = $runtime.Clone(); $portableRuntime['type'] = 'stdio'
-Write-JsonFile (Join-Path $plugin 'mcp.json') @{mcpServers=@{'chef-test'=$portableRuntime}}
+# This local Codex build prefers a root plugin.json over the compatibility
+# manifest and then fails to discover the MCP server. Generate the verified
+# Codex package only; do not claim this is a portable ChatGPT package.
 Write-Output "Chef-test snapshot: $Commit"
 Write-Output "Lokalny marketplace: $marketplace"
 Write-Output 'Nastepny krok: podlacz lokalna wtyczke i sprawdz chef_test_srodowisko.'
