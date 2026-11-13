@@ -33,9 +33,12 @@ pochodzenia; nie obejmuje zależności ani samego adaptera.
 
 Przed próbą sprawdź w `chef_test_srodowisko` oczekiwany SHA. Wyłączenie
 połączenia MCP zamyka proces; kolejny start tworzy nowe dane syntetyczne.
-Zmiana commita wymaga przygotowania nowego katalogu, przestawienia wtyczki
-na ten katalog i ponownego wczytania narzędzi. Te czynności i zachowanie w
-aktywnym Codexie wymagają jeszcze pełnego sprawdzenia. Nie używaj wtyczki
+Zmiana commita wymaga przygotowania nowego katalogu, zastąpienia pliku
+`plugins/chef-test/.mcp.json` w pierwotnym katalogu marketplace plikiem
+wygenerowanym dla nowego snapshotu oraz ponownej instalacji
+`codex plugin add chef-test@agf-local-chef-test`. Zachowaj poprzedni plik do
+przywrócenia. W nowym procesie sprawdź `chef_test_srodowisko`; bieżąca sesja
+może zachować poprzedni proces. Nie używaj wtyczki
 produkcyjnej zamiast testowej i nie wnioskuj o wersji produkcji z tagu obrazu.
 
 ## Stan pilota
@@ -43,8 +46,13 @@ produkcyjnej zamiast testowej i nie wnioskuj o wersji produkcji z tagu obrazu.
 Na snapshocie Chef `8bb8a64d4413e47544f7c821cef783f54e6c26e5` bezpośredni
 klient MCP odczytał i zmienił fikcyjny produkt, a kolejny proces otrzymał
 nową bazę. Odtworzono ten sam wynik z osobnego katalogu i z drugiego commita
-`7960c7fd3017c2fb2cbf6a17651d94d9d85e8ded`. W nowym procesie Codex odczytał
-narzędzia wtyczki; nie potwierdzono jeszcze wywołania z czatu ani przełączenia
-wersji w działającej wtyczce. Produkcyjny
-Chef odpowiedział na próbę połączenia bez informacji o commicie. Potrzebny jest
-również wspólny smoke w docelowym kliencie.
+`7960c7fd3017c2fb2cbf6a17651d94d9d85e8ded`. W rozmowie Codex wywołał testowe
+narzędzie środowiska, odczytał fikcyjny produkt, zmienił go i ponownie odczytał.
+Przełączenie instalacji na drugi commit i powrót potwierdzono w osobnych nowych
+procesach. Nie potwierdza to automatycznego przełączenia procesu bieżącego czatu.
+
+Na Mikrusie kontener `jedzenie-mcp-pilot` działał z obrazem opisanym tagiem
+`issue37-db0a4f3`; narzędzie produkcyjne potwierdziło łączność bez podania
+commita. Skróty dwóch plików (`server.js` i `category-catalog.js`) były zgodne
+z drugim snapshotem, a `server.js` różnił się od pierwszego. To nie dowodzi
+pełnej tożsamości uruchomionej wersji. Potrzebny jest wspólny smoke właściciela.
