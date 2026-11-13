@@ -38,6 +38,12 @@ for (const osoba of ['krzysztof', 'eliza']) {
 createFixture(dbPath);
 const db = openWritableCatalog(dbPath);
 for (const migrate of [migrateMealSchema, migratePortionReviewSchema, migrateMealComplexitySchema, migrateAliasSchema]) migrate(db);
+// Only import verified files belonging to the chosen snapshot; older Chef versions have no category schema.
+const hasCategories = Object.hasOwn(manifest.files, 'src/category-schema.js');
+if (hasCategories) {
+  const { migrateCategorySchema } = await import('./src/category-schema.js');
+  migrateCategorySchema(db);
+}
 const http = createApp({catalog: db, demo: true, allowWrite: true, profileDir: profiles}).listen(0, '127.0.0.1');
 await new Promise((resolve, reject) => { http.once('listening', resolve); http.once('error', reject); });
 const client = new Client({name:'chef-test-bridge', version:'0.1.0'});
@@ -48,7 +54,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {tools:[{name:'chef_test_srodowisko', description:'Identyfikuje wyłącznie lokalny Chef-test i jego wersję.', inputSchema:{type:'object', properties:{}, additionalProperties:false}, annotations:{readOnlyHint:true}}, ...result.tools.map(tool => ({...tool, description:`[CHEF-TEST: dane fikcyjne] ${tool.description ?? ''}`}))]};
 });
 server.setRequestHandler(CallToolRequestSchema, async ({params}) => {
-  if (params.name === 'chef_test_srodowisko') return {content:[{type:'text', text:JSON.stringify({srodowisko:'chef-test', dane:'syntetyczne', commit_zrodla:manifest.commit, integralnosc:'zgodna z manifestem pilota', przechowywanie:'oddzielny katalog i baza dla każdego uruchomienia'})}]};
+  if (params.name === 'chef_test_srodowisko') return {content:[{type:'text', text:JSON.stringify({srodowisko:'chef-test', dane:'syntetyczne', commit_zrodla:manifest.commit, schemat_kategorii:hasCategories, integralnosc:'zgodna z manifestem pilota', przechowywanie:'oddzielny katalog i baza dla każdego uruchomienia'})}]};
   return client.callTool({name:params.name, arguments:params.arguments ?? {}});
 });
 const transport = new StdioServerTransport();

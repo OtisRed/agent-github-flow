@@ -27,7 +27,7 @@ Codexa. Ten pakiet nie jest zweryfikowaną wtyczką ChatGPT ani paczką przenoś
 Przy pierwszej instalacji można użyć `codex plugin marketplace add <katalog
 marketplace>` i `codex plugin add chef-test@agf-local-chef-test`. Proces
 powinien startować wraz z klientem MCP. `chef_test_srodowisko` zwraca nazwę środowiska, commit eksportu i
-wynik kontroli plików źródłowych względem manifestu. Manifest chroni przed
+wynik kontroli plików źródłowych względem manifestu. Pole `schemat_kategorii` informuje, czy w zweryfikowanym snapshocie jest migracja kategorii i została wykonana. Starszy snapshot bez tej migracji uruchamia się bez eksploracji kategorii. Manifest chroni przed
 przypadkową późniejszą zmianą, nie jest podpisem ani niezależnym dowodem
 pochodzenia; nie obejmuje zależności ani samego adaptera.
 
