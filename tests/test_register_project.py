@@ -1,5 +1,7 @@
 """Synthetic tests for safe controller registration; never touches systemd."""
 import copy
+import hashlib
+import io
 import importlib.util
 import json
 import os
@@ -106,6 +108,201 @@ class RegisterProjectTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'existing-conflict'): self.run_registration()
         self.assertEqual(self.config_file.read_bytes(), original)
         self.assertEqual(self.operations, [])
+
+    def update_request(self):
+        return {key: copy.deepcopy(self.existing[key]) for key in self.module.REQUIRED}
+
+    def update(self, request, digest=None):
+        digest = digest or hashlib.sha256(self.config_file.read_bytes()).hexdigest()
+        return self.module.enroll(self.config_file, request, os.geteuid(), os.getegid(),
+                                  update=True, expected_sha256=digest)
+
+    def insert_existing_boundary(self, boundary=None):
+        with sqlite3.connect(self.state) as db:
+            db.execute('INSERT INTO project_boundaries VALUES (?, ?)',
+                       (10, boundary or self.existing['enrolled_at']))
+
+    def test_staged_activation_keeps_boundaries_and_other_projects(self):
+        self.insert_existing_boundary()
+        other = copy.deepcopy(self.existing)
+        other.update(repository_id=11, repository='other', project_number=3)
+        self.config['projects'].append(other)
+        self.config_file.write_text(json.dumps(self.config))
+        req = self.update_request()
+        req.update(pr_flow_enabled=True, admission_enabled=True, pr_flow_app_author_id=2,
+                   admission_tests=[{'context': 'verify', 'app_id': 15368}])
+        candidate, result, changes = self.module.plan_update(self.config, req, '2026-11-13T10:00:00Z')
+        self.assertEqual(result, 'updated')
+        self.assertEqual(changes, ['pr_flow_enabled', 'admission_enabled'])
+        self.assertEqual(candidate['projects'][0]['enrolled_at'], self.existing['enrolled_at'])
+        self.assertEqual(candidate['projects'][0]['pr_flow_enrolled_at'], '2026-11-13T10:00:00Z')
+        self.assertEqual(self.update(req), 'updated')
+        current = json.loads(self.config_file.read_text())
+        self.assertEqual(current['projects'][1], other)
+        self.assertEqual(current['projects'][0]['enrolled_at'], self.existing['enrolled_at'])
+        first_flow_boundary = current['projects'][0]['pr_flow_enrolled_at']
+        self.assertEqual(self.update(req), 'exists')
+        self.assertEqual(self.operations, ['stop', 'start'])
+        req['promotion_enabled'] = True
+        self.assertEqual(self.update(req), 'updated')
+        current = json.loads(self.config_file.read_text())
+        self.assertEqual(current['projects'][0]['pr_flow_enrolled_at'], first_flow_boundary)
+        self.assertTrue(current['projects'][0]['promotion_enabled'])
+        self.assertEqual(len(list(self.root.glob('onboarding-state-*.sqlite'))), 2)
+        with sqlite3.connect(self.state) as db:
+            self.assertEqual(db.execute('SELECT enrolled_at FROM project_boundaries WHERE repository_id=10').fetchone()[0],
+                             self.existing['enrolled_at'])
+
+    def test_update_rejects_stale_hash_and_identity_or_option_changes(self):
+        self.insert_existing_boundary()
+        req = self.update_request()
+        req['promotion_enabled'] = True
+        digest = hashlib.sha256(self.config_file.read_bytes()).hexdigest()
+        self.config_file.write_text(json.dumps({**self.config, 'external': 'preserved'}))
+        with self.assertRaisesRegex(ValueError, 'configuration-changed'):
+            self.update(req, digest)
+        self.assertEqual(self.operations, [])
+        self.assertEqual(json.loads(self.config_file.read_text())['external'], 'preserved')
+        req['trusted_author_ids'] = [2, 3]
+        with self.assertRaisesRegex(ValueError, 'existing-conflict'):
+            self.update(req)
+        req = self.update_request()
+        req['status_enabled'] = False
+        with self.assertRaisesRegex(ValueError, 'existing-conflict'):
+            self.update(req)
+        self.assertEqual(self.operations, [])
+
+    def test_update_blocks_missing_or_changed_database_boundary(self):
+        req = self.update_request()
+        req['promotion_enabled'] = True
+        with self.assertRaisesRegex(ValueError, 'boundary-mismatch'):
+            self.update(req)
+        self.assertTrue(self.active)
+        self.insert_existing_boundary('2026-11-02T00:00:00Z')
+        with self.assertRaisesRegex(ValueError, 'boundary-mismatch'):
+            self.update(req)
+        self.assertEqual(json.loads(self.config_file.read_text()), self.config)
+        self.assertTrue(self.active)
+
+    def test_update_requires_dependencies_and_preserves_old_flow_boundary(self):
+        self.insert_existing_boundary()
+        req = self.update_request()
+        req['dependabot_enabled'] = True
+        with self.assertRaises(ValueError):
+            self.update(req)
+        self.assertEqual(self.operations, [])
+        self.config['projects'][0]['pr_flow_enrolled_at'] = '2026-11-03T00:00:00Z'
+        self.config_file.write_text(json.dumps(self.config))
+        req = self.update_request()
+        req.update(pr_flow_enabled=True, pr_flow_app_author_id=2)
+        with self.assertRaisesRegex(ValueError, 'existing-conflict'):
+            self.update(req)
+        self.assertEqual(self.operations, [])
+
+    def test_update_external_change_after_stop_and_failed_restart_are_safe(self):
+        self.insert_existing_boundary()
+        req = self.update_request()
+        req['promotion_enabled'] = True
+        def changed(action, *args):
+            self.operations.append(action)
+            if action == 'stop':
+                self.active = False
+                self.config_file.write_text(json.dumps({**self.config, 'external': 'keep'}))
+            if action == 'start': self.active = True
+        with patch.object(self.module, 'systemctl', side_effect=changed):
+            with self.assertRaisesRegex(RuntimeError, 'configuration-changed'):
+                self.update(req)
+        self.assertEqual(json.loads(self.config_file.read_text())['external'], 'keep')
+        self.assertTrue(self.active)
+        self.config_file.write_text(json.dumps(self.config))
+        original = self.config_file.read_bytes()
+        starts = 0
+        def restart_fails(action, *args):
+            nonlocal starts
+            if action == 'stop': self.active = False
+            if action == 'start':
+                starts += 1
+                if starts == 1: raise RuntimeError('service-operation-failed')
+                self.active = True
+        with patch.object(self.module, 'systemctl', side_effect=restart_fails):
+            with self.assertRaisesRegex(RuntimeError, 'service-operation-failed'):
+                self.update(req)
+        self.assertEqual(self.config_file.read_bytes(), original)
+        self.assertTrue(self.active)
+        with sqlite3.connect(self.state) as db:
+            self.assertEqual(db.execute('SELECT enrolled_at FROM project_boundaries WHERE repository_id=10').fetchone()[0],
+                             self.existing['enrolled_at'])
+
+    def test_update_failed_stop_and_competing_lock_never_change_config(self):
+        self.insert_existing_boundary()
+        req = self.update_request()
+        req['promotion_enabled'] = True
+        original = self.config_file.read_bytes()
+        def failed_stop(action, *args):
+            self.operations.append(action)
+            if action == 'stop':
+                self.active = False
+                raise RuntimeError('service-operation-failed')
+            if action == 'start': self.active = True
+        with patch.object(self.module, 'systemctl', side_effect=failed_stop):
+            with self.assertRaisesRegex(RuntimeError, 'service-operation-failed'):
+                self.update(req)
+        self.assertEqual(self.config_file.read_bytes(), original)
+        self.assertTrue(self.active)
+        self.operations.clear()
+        fd = self.module.registration_lock(self.root, os.geteuid(), os.getegid())
+        try:
+            with self.assertRaises(BlockingIOError): self.update(req)
+        finally:
+            os.close(fd)
+        self.assertEqual(self.operations, [])
+        self.assertEqual(self.config_file.read_bytes(), original)
+
+    def test_update_can_enable_initial_status_only_without_previous_boundary(self):
+        self.config['projects'][0]['status_enabled'] = False
+        self.config_file.write_text(json.dumps(self.config))
+        req = self.update_request()
+        self.assertEqual(self.update(req), 'updated')
+        after = json.loads(self.config_file.read_text())['projects'][0]
+        self.assertTrue(after['status_enabled'])
+        self.assertEqual(after['enrolled_at'], self.existing['enrolled_at'])
+
+    def test_update_requires_a_current_plan_even_for_noop(self):
+        req = self.update_request()
+        with self.assertRaisesRegex(ValueError, 'configuration-changed'):
+            self.module.enroll(self.config_file, req, os.geteuid(), os.getegid(), update=True)
+        self.assertEqual(self.operations, [])
+
+    def test_cli_plan_then_apply_then_new_plan_is_noop(self):
+        self.insert_existing_boundary()
+        req = self.update_request()
+        req['promotion_enabled'] = True
+        def invoke(args, payload):
+            incoming = io.TextIOWrapper(io.BytesIO(json.dumps(payload).encode('utf-8')), encoding='utf-8')
+            output = io.StringIO()
+            with patch.object(self.module, 'CONFIG', self.config_file), \
+                 patch.object(self.module.sys, 'argv', ['register_project.py', *args]), \
+                 patch.object(self.module.sys, 'stdin', incoming), \
+                 patch.object(self.module.sys, 'stdout', output), \
+                 patch.object(self.module.sys, 'flags', SimpleNamespace(isolated=1)), \
+                 patch.object(self.module.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=os.geteuid(), pw_gid=os.getegid())), \
+                 patch.object(self.module, 'secure_tools'), patch.object(self.module.signal, 'signal'):
+                self.module.main()
+            return json.loads(output.getvalue())
+        planned = invoke(['--plan', '--update'], req)
+        self.assertEqual(planned['result'], 'updated')
+        self.assertEqual(planned['changes'], ['promotion_enabled'])
+        self.assertNotIn('Owner', json.dumps(planned))
+        apply_req = {**req, 'expected_config_sha256': planned['config_sha256']}
+        self.assertEqual(invoke(['--apply', '--update'], apply_req), {'result': 'updated'})
+        with self.assertRaisesRegex(ValueError, 'configuration-changed'):
+            invoke(['--apply', '--update'], apply_req)
+        repeated = invoke(['--plan', '--update'], req)
+        self.assertEqual(repeated['result'], 'exists')
+        self.assertEqual(repeated['changes'], [])
+        self.assertEqual(invoke(['--apply', '--update'], {**req, 'expected_config_sha256': repeated['config_sha256']}),
+                         {'result': 'exists'})
+        self.assertEqual(self.operations, ['stop', 'start'])
 
     def test_prior_database_boundary_blocks_registration_and_restarts(self):
         with sqlite3.connect(self.state) as db:

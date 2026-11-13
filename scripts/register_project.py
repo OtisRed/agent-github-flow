@@ -7,6 +7,7 @@ request is JSON on stdin, not shell arguments; output contains no project data.
 import argparse
 import copy
 import fcntl
+import hashlib
 import json
 import os
 import pwd
@@ -39,9 +40,7 @@ def validate_candidate(config, entry=None):
         raise ValueError('validation-failed')
 
 
-def plan(config, request, now):
-    """Return an unchanged config for an existing match; never move a boundary."""
-    validate_candidate(config)
+def validate_request(request):
     if not isinstance(request, dict) or not REQUIRED <= request.keys() or request.keys() - REQUIRED - OPTIONAL:
         raise ValueError('invalid-request')
     for field in ('owner', 'project_owner'):
@@ -63,6 +62,12 @@ def plan(config, request, now):
     admission_fields = OPTIONAL - {'pr_flow_app_author_id'}
     if not request['admission_enabled'] and request.keys() & admission_fields:
         raise ValueError('invalid-admission')
+
+
+def plan(config, request, now):
+    """Return an unchanged config for an existing match; never move a boundary."""
+    validate_candidate(config)
+    validate_request(request)
     matches = [p for p in config['projects'] if p['repository_id'] == request['repository_id']
                or (str(p.get('owner', '')).lower(), str(p.get('repository', '')).lower())
                == (request['owner'].lower(), request['repository'].lower())]
@@ -85,6 +90,50 @@ def plan(config, request, now):
     candidate['projects'].append(entry)
     validate_candidate(candidate, entry)
     return candidate, 'new'
+
+
+def plan_update(config, request, now):
+    """Enable explicitly requested stages only; reject changed identities or options."""
+    validate_candidate(config)
+    validate_request(request)
+    matches = [p for p in config['projects'] if p['repository_id'] == request['repository_id']
+               or (str(p.get('owner', '')).lower(), str(p.get('repository', '')).lower())
+               == (request['owner'].lower(), request['repository'].lower())]
+    if len(matches) != 1:
+        raise ValueError('existing-conflict')
+    existing = matches[0]
+    for key in REQUIRED - set(FLAGS):
+        old, new = existing.get(key), request[key]
+        if key in ('owner', 'repository', 'project_owner') and isinstance(old, str):
+            old, new = old.lower(), new.lower()
+        if old != new:
+            raise ValueError('existing-conflict')
+    candidate = copy.deepcopy(config)
+    entry = next(p for p in candidate['projects'] if p['repository_id'] == request['repository_id'])
+    changes = []
+    for flag in FLAGS:
+        old = existing.get(flag, flag == 'status_enabled')
+        if old is True and request[flag] is False:
+            raise ValueError('existing-conflict')
+        if old is False and request[flag] is True:
+            entry[flag] = True
+            changes.append(flag)
+    if 'pr_flow_enabled' in changes:
+        if 'pr_flow_enrolled_at' in existing or 'pr_flow_app_author_id' in existing:
+            raise ValueError('existing-conflict')
+        entry['pr_flow_enrolled_at'] = now
+    for key in OPTIONAL & request.keys():
+        if key in existing and existing[key] != request[key]:
+            raise ValueError('existing-conflict')
+        if key not in existing:
+            if ((key == 'pr_flow_app_author_id' and 'pr_flow_enabled' not in changes)
+                    or (key != 'pr_flow_app_author_id' and 'admission_enabled' not in changes)):
+                raise ValueError('existing-conflict')
+            entry[key] = copy.deepcopy(request[key])
+    if not changes:
+        return config, 'exists', []
+    validate_candidate(candidate, entry)
+    return candidate, 'updated', changes
 
 
 def private_file(path, uid):
@@ -137,16 +186,17 @@ def healthy():
         return False
 
 
-def database_backup(state, repository_id):
+def database_backup(state, repository_id, expected_boundary=None):
     # Never follow a path inside the service-owned directory as root.
     helper = Path(__file__).resolve().with_name('validate_registration.py')
-    payload = json.dumps({'state': str(state), 'repository_id': repository_id}).encode('utf-8')
+    payload = json.dumps({'state': str(state), 'repository_id': repository_id,
+                          'expected_boundary': expected_boundary}).encode('utf-8')
     result = subprocess.run(['/usr/sbin/runuser', '-u', 'agent-flow', '--', '/usr/bin/python3', '-I',
                              str(helper), '--backup'], input=payload, capture_output=True, timeout=30, check=False,
                             env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C'})
     if result.returncode != 0:
-        if result.stdout.strip() == b'previous-boundary-exists':
-            raise ValueError('previous-boundary-exists')
+        if result.stdout.strip() in (b'previous-boundary-exists', b'boundary-mismatch'):
+            raise ValueError(result.stdout.strip().decode('ascii'))
         raise ValueError('invalid-backup')
     if result.stdout.strip() != b'ok':
         raise ValueError('invalid-backup')
@@ -175,13 +225,19 @@ def registration_lock(directory, uid, gid):
         raise
 
 
-def enroll(config_path, request, uid, gid):
+def enroll(config_path, request, uid, gid, *, update=False, expected_sha256=None):
     """Make one guarded update. Do not restore a SQLite snapshot automatically."""
     private_dir(config_path.parent, uid)
     original = private_file(config_path, uid)
+    if update and (not isinstance(expected_sha256, str) or not re.fullmatch(r'[0-9a-f]{64}', expected_sha256)
+                   or hashlib.sha256(original).hexdigest() != expected_sha256):
+        raise ValueError('configuration-changed')
     config = json.loads(original)
     now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-    candidate, action = plan(config, request, now)
+    if update:
+        candidate, action, _ = plan_update(config, request, now)
+    else:
+        candidate, action = plan(config, request, now)
     if action == 'exists':
         return 'exists'
     state = Path(config['state_path'])
@@ -192,12 +248,12 @@ def enroll(config_path, request, uid, gid):
     try:
         if private_file(config_path, uid) != original:
             raise RuntimeError('configuration-changed')
-        return apply_candidate(config_path, request, config, candidate, original, state, uid, gid)
+        return apply_candidate(config_path, request, config, candidate, original, state, uid, gid, action=action)
     finally:
         os.close(registration_fd)
 
 
-def apply_candidate(config_path, request, config, candidate, original, state, uid, gid):
+def apply_candidate(config_path, request, config, candidate, original, state, uid, gid, *, action='new'):
     if not healthy():
         raise RuntimeError('service-not-active')
     lock_path = str(state) + '.lock'
@@ -222,7 +278,10 @@ def apply_candidate(config_path, request, config, candidate, original, state, ui
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if private_file(config_path, uid) != original:
                 raise RuntimeError('configuration-changed')
-            database_backup(state, request['repository_id'])
+            previous = next((p for p in config['projects'] if p['repository_id'] == request['repository_id']), None)
+            expected_boundary = (previous['enrolled_at'] if action == 'updated'
+                                 and previous.get('status_enabled', True) is True else None)
+            database_backup(state, request['repository_id'], expected_boundary)
             save_private(config_path.parent, 'onboarding-config-backup-', original, uid, gid)
             staged = save_private(config_path.parent, '.onboarding-config-', new_bytes, uid, gid)
             if private_file(config_path, uid) != original:
@@ -242,7 +301,7 @@ def apply_candidate(config_path, request, config, candidate, original, state, ui
             raise RuntimeError('service-start-unconfirmed')
         if private_file(config_path, uid) != new_bytes:
             raise RuntimeError('configuration-changed')
-        return 'registered'
+        return 'updated' if action == 'updated' else 'registered'
     except Exception:
         # Restore only the exact candidate we wrote, never a changed file or DB.
         if stopped:
@@ -279,6 +338,7 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--plan', action='store_true')
     mode.add_argument('--apply', action='store_true')
+    parser.add_argument('--update', action='store_true')
     args = parser.parse_args()
     if os.geteuid() != 0:
         raise RuntimeError('root-required')
@@ -294,12 +354,25 @@ def main():
         raise ValueError('invalid-request')
     account = pwd.getpwnam('agent-flow')
     request = json.loads(raw)
+    expected = request.pop('expected_config_sha256', None) if isinstance(request, dict) else None
+    if not args.update and expected is not None:
+        raise ValueError('invalid-request')
     if args.plan:
         private_dir(CONFIG.parent, account.pw_uid)
-        config = json.loads(private_file(CONFIG, account.pw_uid))
-        _, result = plan(config, request, datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
+        original = private_file(CONFIG, account.pw_uid)
+        config = json.loads(original)
+        now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        if args.update:
+            if expected is not None:
+                raise ValueError('invalid-request')
+            _, result, changes = plan_update(config, request, now)
+            print(json.dumps({'result': result, 'changes': changes,
+                              'config_sha256': hashlib.sha256(original).hexdigest()}))
+            return
+        _, result = plan(config, request, now)
     else:
-        result = enroll(CONFIG, request, account.pw_uid, account.pw_gid)
+        result = enroll(CONFIG, request, account.pw_uid, account.pw_gid, update=args.update,
+                        expected_sha256=expected)
     print(json.dumps({'result': result}))
 
 
@@ -312,7 +385,7 @@ if __name__ == '__main__':
                    'invalid-admission', 'existing-conflict', 'unsafe-file', 'unsafe-directory',
                    'invalid-file', 'service-not-active', 'service-operation-failed',
                    'service-stop-unconfirmed', 'service-start-unconfirmed', 'configuration-changed',
-                   'manual-recovery-required', 'unsafe-state', 'invalid-state', 'previous-boundary-exists',
+                   'manual-recovery-required', 'unsafe-state', 'invalid-state', 'previous-boundary-exists', 'boundary-mismatch',
                    'invalid-backup', 'unsafe-lock', 'unsafe-registration-lock', 'config-too-large', 'root-required',
                    'validation-failed', 'unsafe-helper', 'isolated-mode-required', 'interrupted'}
         code = str(exc) if str(exc) in allowed else type(exc).__name__
