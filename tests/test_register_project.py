@@ -161,6 +161,20 @@ class RegisterProjectTests(unittest.TestCase):
         self.assertEqual(self.operations, ['stop', 'start'])
         self.assertTrue(self.active)
 
+    def test_config_changed_during_start_is_not_overwritten_by_recovery(self):
+        def ctl(action, *args):
+            self.operations.append(action)
+            if action == 'stop': self.active = False
+            if action == 'start':
+                self.active = True
+                data = json.loads(self.config_file.read_text(encoding='utf-8'))
+                data['external_update'] = 'keep'
+                self.config_file.write_text(json.dumps(data), encoding='utf-8')
+        with patch.object(self.module, 'systemctl', side_effect=ctl):
+            with self.assertRaisesRegex(RuntimeError, 'manual-recovery-required'): self.run_registration()
+        self.assertEqual(json.loads(self.config_file.read_text(encoding='utf-8'))['external_update'], 'keep')
+        self.assertEqual(self.operations, ['stop', 'start', 'stop'])
+
     def test_concurrent_registration_does_not_stop_service(self):
         fd = self.module.registration_lock(self.root, os.geteuid(), os.getegid())
         try:

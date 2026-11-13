@@ -259,6 +259,8 @@ def apply_candidate(config_path, request, config, candidate, original, state, ui
         time.sleep(2)
         if not healthy():
             raise RuntimeError('service-start-unconfirmed')
+        if private_file(config_path, uid) != new_bytes:
+            raise RuntimeError('configuration-changed')
         return 'registered'
     except Exception:
         # Restore only the exact candidate we wrote, never a changed file or DB.
