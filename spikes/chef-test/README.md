@@ -27,7 +27,7 @@ Codexa. Ten pakiet nie jest zweryfikowaną wtyczką ChatGPT ani paczką przenoś
 Przy pierwszej instalacji można użyć `codex plugin marketplace add <katalog
 marketplace>` i `codex plugin add chef-test@agf-local-chef-test`. Proces
 powinien startować wraz z klientem MCP. `chef_test_srodowisko` zwraca nazwę środowiska, commit eksportu i
-wynik kontroli plików źródłowych względem manifestu. Manifest chroni przed
+wynik kontroli plików źródłowych względem manifestu. Pole `schemat_kategorii` informuje, czy w zweryfikowanym snapshocie jest migracja kategorii i została wykonana. Starszy snapshot bez tej migracji uruchamia się bez eksploracji kategorii. Manifest chroni przed
 przypadkową późniejszą zmianą, nie jest podpisem ani niezależnym dowodem
 pochodzenia; nie obejmuje zależności ani samego adaptera.
 
@@ -56,3 +56,5 @@ Na Mikrusie kontener `jedzenie-mcp-pilot` działał z obrazem opisanym tagiem
 commita. Skróty dwóch plików (`server.js` i `category-catalog.js`) były zgodne
 z drugim snapshotem, a `server.js` różnił się od pierwszego. To nie dowodzi
 pełnej tożsamości uruchomionej wersji. Potrzebny jest wspólny smoke właściciela.
+
+W Chef-test adapter ukrywa wyłącznie stare wyszukiwarki `szukaj_produktow` i `szukaj_wariantow_posilkow`, gdy dostępne są ich zamienniki. Pełne stare odczyty pozostają dla funkcji nieprzeniesionych do nowych narzędzi. To ustawienie testowe nie zmienia produkcyjnego serwera.
