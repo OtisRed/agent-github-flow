@@ -17,10 +17,11 @@ def controller_source(script):
     return root / 'current/src' if location.parent.name == 'tools' else root / 'src'
 
 
-def backup_database(state, repository_id):
+def backup_database(state, repository_id, expected_boundary=None):
     """Read and copy the SQLite state using only service-user privileges."""
     state = Path(state)
-    if type(repository_id) is not int or repository_id <= 0:
+    if (type(repository_id) is not int or repository_id <= 0
+            or (expected_boundary is not None and (not isinstance(expected_boundary, str) or not expected_boundary))):
         raise ValueError('invalid-backup')
     info = os.stat(state, follow_symlinks=False)
     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
@@ -29,8 +30,11 @@ def backup_database(state, repository_id):
     try:
         if source.execute('PRAGMA application_id').fetchone()[0] != 0x4147464D or source.execute('PRAGMA user_version').fetchone()[0] != 2:
             raise ValueError('invalid-state')
-        if source.execute('SELECT 1 FROM project_boundaries WHERE repository_id=?', (repository_id,)).fetchone():
+        boundary = source.execute('SELECT enrolled_at FROM project_boundaries WHERE repository_id=?', (repository_id,)).fetchone()
+        if expected_boundary is None and boundary is not None:
             raise ValueError('previous-boundary-exists')
+        if expected_boundary is not None and (boundary is None or boundary[0] != expected_boundary):
+            raise ValueError('boundary-mismatch')
         fd, target = tempfile.mkstemp(prefix='onboarding-state-', suffix='.sqlite', dir=state.parent)
         os.fchmod(fd, 0o600)
         os.close(fd)
@@ -60,7 +64,7 @@ def main():
         raise ValueError('invalid')
     payload = json.loads(raw)
     if sys.argv[1:] == ['--backup']:
-        backup_database(payload['state'], payload['repository_id'])
+        backup_database(payload['state'], payload['repository_id'], payload.get('expected_boundary'))
         print('ok')
         return
     if sys.argv[1:]:
@@ -86,6 +90,6 @@ if __name__ == '__main__':
     try:
         main()
     except Exception as exc:
-        if str(exc) == 'previous-boundary-exists':
-            print('previous-boundary-exists')
+        if str(exc) in ('previous-boundary-exists', 'boundary-mismatch'):
+            print(str(exc))
         sys.exit(1)
