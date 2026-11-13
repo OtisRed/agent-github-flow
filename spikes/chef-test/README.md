@@ -56,3 +56,5 @@ Na Mikrusie kontener `jedzenie-mcp-pilot` działał z obrazem opisanym tagiem
 commita. Skróty dwóch plików (`server.js` i `category-catalog.js`) były zgodne
 z drugim snapshotem, a `server.js` różnił się od pierwszego. To nie dowodzi
 pełnej tożsamości uruchomionej wersji. Potrzebny jest wspólny smoke właściciela.
+
+W Chef-test adapter ukrywa wyłącznie stare wyszukiwarki `szukaj_produktow` i `szukaj_wariantow_posilkow`, gdy dostępne są ich zamienniki. Pełne stare odczyty pozostają dla funkcji nieprzeniesionych do nowych narzędzi. To ustawienie testowe nie zmienia produkcyjnego serwera.
