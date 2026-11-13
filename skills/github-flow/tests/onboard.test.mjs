@@ -1,10 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {prepare} from '../scripts/onboard.mjs';
+import {prepare,ensureProjectLink} from '../scripts/onboard.mjs';
 
 const success=['repository','remote-identity','github-live','explicit-project','github-project'];
 const report=()=>({checks:success.map(id=>({id,state:'ok'})),inventory:{githubRepository:{owner:'owner',repo:'repo'}}});
-const linkedClient=()=>({read:()=>({repositories:{nodes:[{nameWithOwner:'owner/repo'}],pageInfo:{hasNextPage:false}}})});
+const linkedClient=()=>({read:()=>({id:'project',closed:false,repositories:{nodes:[{nameWithOwner:'owner/repo'}],pageInfo:{hasNextPage:false}}})});
 test('orchestrates an explicitly identified repo and Project without claiming remaining work is done',()=>{
  let options;let t=100;
  const result=prepare({repo:'repo',project:'user:owner/10',apply:true,initializeEmpty:true},{diagnostic:report,makeClient:linkedClient,makeRepoClient:()=>({}),branch:()=>({state:'ok',changed:false}),board:(_c,o)=>(options=o,{state:'ok',changed:false,number:1}),now:()=>t+=10});
@@ -25,7 +25,37 @@ test('a project check does not create a missing smoke branch without its explici
 });
 test('an unrelated, unreadable or partially listed Project cannot trigger any writes',()=>{
  for(const repos of [null,{nodes:[{nameWithOwner:'other/repo'}],pageInfo:{hasNextPage:false}},{nodes:[{nameWithOwner:'owner/repo'}],pageInfo:{hasNextPage:true}}]){
-  let touched=false;const result=prepare({repo:'repo',project:'user:owner/10',apply:true,createSmoke:true},{diagnostic:report,makeClient:()=>({read:()=>({repositories:repos})}),branch:()=>{touched=true;},board:()=>{touched=true;}});
+  let touched=false;const result=prepare({repo:'repo',project:'user:owner/10',apply:true,createSmoke:true},{diagnostic:report,makeClient:()=>({read:()=>({id:'project',closed:false,repositories:repos})}),makeRepoClient:()=>({}),branch:()=>{touched=true;},board:()=>{touched=true;}});
   assert.ok(result.diagnostic.blockers.includes('project-repository-link-unverified'));assert.equal(touched,false);
+ }
+});
+
+const projectState=(names=[])=>({id:'project',closed:false,repositories:{nodes:names.map(nameWithOwner=>({nameWithOwner})),pageInfo:{hasNextPage:false}}});
+const target={owner:'owner',repo:'repo'};
+const repoClient={read:()=>({id:'repo-id',nameWithOwner:'owner/repo'})};
+test('links only in explicit setup mode and confirms by readback without removing prior links',()=>{
+ let state=projectState(['other/repo']), writes=0;
+ const client={read:()=>state,link:(projectId,repoId)=>{assert.equal(projectId,'project');assert.equal(repoId,'repo-id');writes++;state=projectState(['other/repo','owner/repo']);return true;}};
+ assert.equal(ensureProjectLink(client,repoClient,target).state,'missing');assert.equal(writes,0);
+ assert.deepEqual(ensureProjectLink(client,repoClient,target,{apply:true}),{state:'ok',changed:true,writeConfirmed:true});
+ assert.deepEqual(ensureProjectLink(client,repoClient,target,{apply:true}),{state:'ok',changed:false});assert.equal(writes,1);
+});
+test('rejects incomplete reads, changing links and wrong repository without writing',()=>{
+ for(const [a,b,repo] of [
+  [null,null,repoClient],
+  [{...projectState(),repositories:{nodes:[],pageInfo:{hasNextPage:true}}},null,repoClient],
+  [projectState(),projectState(['other/repo']),repoClient],
+  [projectState(),projectState(),{read:()=>({id:'different',nameWithOwner:'other/repo'})}]
+ ]){let count=0,writes=0;const client={read:()=>count++===0?a:b,link:()=>{writes++;}};const result=ensureProjectLink(client,repo,target,{apply:true});assert.notEqual(result.state,'ok');assert.equal(writes,0);}
+});
+test('uncertain link is read back and never blindly repeated',()=>{
+ for(const appears of [false,true]){let reads=0,writes=0;const client={read:()=>++reads>2 && appears?projectState(['owner/repo']):projectState(),link:()=>{writes++;return false;}};const result=ensureProjectLink(client,repoClient,target,{apply:true});assert.equal(result.state,appears?'ok':'unverified');assert.equal(writes,1);}
+});
+test('full preparation links only with the explicit setup flag before touching board and branch',()=>{
+ for(const linkProject of [false,true]){
+  let state=projectState(),writes=0,steps=0;
+  const client={read:()=>state,link:()=>{writes++;state=projectState(['owner/repo']);return true;}};
+  const result=prepare({repo:'repo',project:'user:owner/10',apply:true,linkProject},{diagnostic:report,makeClient:()=>client,makeRepoClient:()=>repoClient,branch:()=>{steps++;return {state:'ok'};},board:()=>{steps++;return {state:'ok'};}});
+  assert.equal(writes,linkProject?1:0);assert.equal(steps,linkProject?2:0);assert.equal(result.diagnostic.projectLink,linkProject?'ok':'unverified');
  }
 });
