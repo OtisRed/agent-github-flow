@@ -182,6 +182,17 @@ class RegisterProjectTests(unittest.TestCase):
         self.assertEqual(command[:6], ['/usr/sbin/runuser', '-u', 'agent-flow', '--', '/usr/bin/python3', '-I'])
         self.assertEqual(Path(command[-1]).name, 'validate_registration.py')
 
+    def test_installed_validator_selects_current_release_not_stale_root_source(self):
+        spec = importlib.util.spec_from_file_location('validate_registration', ROOT / 'scripts/validate_registration.py')
+        validator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(validator)
+        tools = self.root / 'tools'
+        tools.mkdir()
+        script = tools / 'validate_registration.py'
+        script.touch()
+        (self.root / 'src').mkdir()
+        self.assertEqual(validator.controller_source(script), self.root / 'current/src')
+
 
     def test_registers_explicitly_prepared_flow_and_preserves_one_boundary(self):
         self.request.update(status_enabled=True, pr_flow_enabled=True, admission_enabled=True,

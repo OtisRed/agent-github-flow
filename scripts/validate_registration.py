@@ -5,12 +5,18 @@ import os
 from pathlib import Path
 import sys
 
+def controller_source(script):
+    location = Path(script).resolve()
+    root = location.parents[1]
+    # Installed tools live alongside the current release symlink. A stale
+    # root/src from an older deployment must not shadow the running release.
+    return root / 'current/src' if location.parent.name == 'tools' else root / 'src'
+
+
 def main():
     if os.geteuid() == 0:
         raise RuntimeError('service-user-required')
-    root = Path(__file__).resolve().parents[1]
-    source = root / 'src' if (root / 'src/mvp_service.py').is_file() else root / 'current/src'
-    sys.path.insert(0, str(source))
+    sys.path.insert(0, str(controller_source(__file__)))
     from mvp_service import validate_config
     from pr_admission_github import AdmissionReader
     raw = sys.stdin.buffer.read(131073)
