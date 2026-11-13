@@ -42,7 +42,9 @@ produkcyjnej zamiast testowej i nie wnioskuj o wersji produkcji z tagu obrazu.
 
 Na snapshocie Chef `8bb8a64d4413e47544f7c821cef783f54e6c26e5` bezpośredni
 klient MCP odczytał i zmienił fikcyjny produkt, a kolejny proces otrzymał
-nową bazę. Odtworzono ten sam wynik z osobnego katalogu. Wtyczkę zainstalowano
-lokalnie, ale nie potwierdzono jeszcze wywołania przez czat Codexa; produkcyjny
+nową bazę. Odtworzono ten sam wynik z osobnego katalogu i z drugiego commita
+`7960c7fd3017c2fb2cbf6a17651d94d9d85e8ded`. W nowym procesie Codex odczytał
+narzędzia wtyczki; nie potwierdzono jeszcze wywołania z czatu ani przełączenia
+wersji w działającej wtyczce. Produkcyjny
 Chef odpowiedział na próbę połączenia bez informacji o commicie. Potrzebny jest
 również wspólny smoke w docelowym kliencie.
