@@ -73,7 +73,9 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
       - name: Validate GitHub Actions workflows
         shell: bash
-        run: '"$RUNNER_TEMP/actionlint" -shellcheck='
+        run: |
+          "$RUNNER_TEMP/actionlint" -shellcheck=
+          "$RUNNER_TEMP/actionlint" -shellcheck= skills/github-flow/assets/ci-template.yml
       - name: Confirm invalid workflow is rejected
         shell: bash
         run: |
