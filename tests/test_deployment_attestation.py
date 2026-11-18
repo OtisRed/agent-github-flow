@@ -1,4 +1,4 @@
-"""The project may recheck only the currently running AGF deployment."""
+"""Only the exact running attempt or explicit unknown-state recovery is attested."""
 import sys
 import tempfile
 import unittest
@@ -43,6 +43,16 @@ class AttestationTests(unittest.TestCase):
             self.assertTrue(attest(self.config, smoke, 'token', self.store))
             self.config['projects'][0]['deployment_enabled'] = False
             self.assertFalse(attest(self.config, smoke, 'token', self.store))
+
+    def test_unknown_attempt_requires_explicit_recovery_and_exact_ci(self):
+        self.store.transition(self.req, 'running', 'unknown')
+        with patch('deployment_attestation.verify_head_and_ci', return_value=True), \
+             patch('deployment_attestation.promoted_scope', return_value={'changes': ['issue-1'], 'commits': ['b' * 40]}):
+            self.assertFalse(attest(self.config, self.req, 'token', self.store))
+            self.assertTrue(attest(self.config, self.req, 'token', self.store, recovery=True))
+            self.assertFalse(attest(self.config, {**self.req, 'changes': ['issue-2']}, 'token', self.store, recovery=True))
+        with patch('deployment_attestation.verify_head_and_ci', return_value=False):
+            self.assertFalse(attest(self.config, self.req, 'token', self.store, recovery=True))
 
 
 if __name__ == '__main__':

@@ -12,7 +12,9 @@ from mvp_credentials import AppToken, read_private_file
 from mvp_github import request as github_request
 
 
-def attest(config, candidate, token, store, transport=github_request):
+def attest(config, candidate, token, store, transport=github_request, *, recovery=False):
+    if type(recovery) is not bool:
+        raise ValueError('Invalid attestation purpose')
     normalized = json.loads(_request(candidate))
     matches = [project for project in config['projects']
                if project.get('repository_id') == normalized['repository_id']
@@ -21,7 +23,8 @@ def attest(config, candidate, token, store, transport=github_request):
         return False
     project = matches[0]
     attempt = store.get_attempt(normalized)
-    if not attempt or attempt['request'] != normalized or attempt['status'] != 'running':
+    allowed = ('running', 'unknown') if recovery else ('running',)
+    if not attempt or attempt['request'] != normalized or attempt['status'] not in allowed:
         return False
     required = tuple((item['context'], item['app_id']) for item in project['deployment_checks'])
     if not verify_head_and_ci(transport, token, project['owner'], project['repository'],
@@ -44,10 +47,16 @@ def main():
     if len(raw) > 65536:
         raise ValueError('Oversized request')
     candidate = json.loads(raw)
+    recovery = False
+    if isinstance(candidate, dict) and set(candidate) == {'purpose', 'request'}:
+        if candidate['purpose'] != 'recovery':
+            raise ValueError('Invalid attestation purpose')
+        recovery = True
+        candidate = candidate['request']
     normalized = json.loads(_request(candidate))
     token = AppToken(config['app_id'], config['installation_id'], normalized['repository_id'],
                      read_private_file(config['app_key_path']), purpose='deployment')
-    ok = attest(config, normalized, token(), DeploymentState(config['deployment_state_path']))
+    ok = attest(config, normalized, token(), DeploymentState(config['deployment_state_path']), recovery=recovery)
     print(json.dumps({'confirmed': ok}, separators=(',', ':')))
 
 
