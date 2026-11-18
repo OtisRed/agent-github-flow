@@ -17,4 +17,5 @@ Zarezerwowane, lecz jeszcze niewysłane zlecenie mogło po zmianie gałęzi pozo
 
 - Dla commitów draft PR-ów automatyczne `verify` jest pomijane ze względu na regułę draft/admission; nie jest zielonym wynikiem.
 - Osobny `workflow_dispatch` Jedzenia przeszedł na `4667e4cb0d5b88e4c186180e70da54b75dbe624b`: [wynik](https://github.com/OtisRed/Jedzenie/actions/runs/44342587713). Ten przebieg obejmuje też dodane do CI testy snapshotu. To dowód dla tego commita, nie przyszłych zmian ani admission PR.
+- Po poprawkach rezerwacji lokalny pakiet AGF zakończył się wynikiem 395 testów, 10 pominiętych, bez błędów; testy Node AGF: 87 bez błędów. To nie zastępuje CI GitHuba dla PR.
 - Systemd przyjął składnię obu jednostek na Mikrusie bez ich uruchamiania. Syntetyczny test pełnego przepływu używał osobnego WSL/Dockera i symulowanej aktywacji systemd, co nie dowodzi działania produkcyjnej instalacji.
