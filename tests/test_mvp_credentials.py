@@ -14,6 +14,19 @@ from mvp_credentials import AppToken, read_private_file
 
 @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography is unavailable")
 class AppTokenTests(unittest.TestCase):
+    def test_deployment_token_is_read_only_and_repo_scoped(self):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+        expected = {'contents': 'read', 'checks': 'read', 'pull_requests': 'read'}
+        now = 1_800_000_000
+        def transport(_path, _jwt, *, body=None):
+            self.assertEqual(body, {'repository_ids': [20], 'permissions': expected})
+            return {'token': 'fixture', 'expires_at': datetime.fromtimestamp(now + 3600, timezone.utc).isoformat(),
+                    'permissions': dict(expected, metadata='read'), 'repositories': [{'id': 20}]}, None
+        self.assertEqual(AppToken(9, 10, 20, pem, transport=transport, clock=lambda: now, purpose='deployment')(), 'fixture')
+
     def test_dependabot_token_is_limited_to_one_repository_and_needed_permissions(self):
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric import rsa

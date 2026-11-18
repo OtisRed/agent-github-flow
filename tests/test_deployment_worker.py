@@ -16,7 +16,7 @@ class DeploymentWorkerTests(unittest.TestCase):
         self.store = DeploymentState(Path(temp.name) / 'state.sqlite')
         self.store.initialize()
         self.req = {'id': 'attempt', 'repository_id': 7, 'target': 'main', 'commit': 'a'*40, 'changes': ['A', 'B']}
-        self.result = {'id': 'attempt', 'target': 'main', 'commit': 'a'*40, 'status': 'succeeded'}
+        self.result = {'id': 'attempt', 'target': 'main', 'commit': 'a'*40, 'observed_commit': 'a'*40, 'status': 'succeeded'}
 
     def test_verifies_twice_and_duplicate_never_reexecutes(self):
         calls = []
@@ -43,6 +43,11 @@ class DeploymentWorkerTests(unittest.TestCase):
             reconcile_deployment(self.store, self.req, {**self.result, 'id': 'another'})
         self.assertEqual(reconcile_deployment(self.store, self.req, self.result), 'succeeded')
 
+    def test_different_running_version_does_not_report_success(self):
+        response = {**self.result, 'observed_commit': 'b'*40}
+        self.assertEqual(run_deployment_once(self.store, self.req, lambda r: True, lambda r: response), 'unknown')
+        self.assertEqual(self.store.get(7)['status'], 'unknown')
+
     def test_process_death_keeps_running_attempt_until_confirmed(self):
         self.store.reserve(self.req)
         self.store.transition(self.req, 'reserved', 'running')
@@ -52,8 +57,8 @@ class DeploymentWorkerTests(unittest.TestCase):
         self.assertEqual(reconcile_deployment(reopened, self.req, self.result), 'succeeded')
 
     def test_real_fixture_process_reports_exact_attempt(self):
-        script = ('import json,sys; r=json.load(sys.stdin); '
-                  'print(json.dumps({"id":r["id"],"target":r["target"],"commit":r["commit"],"status":"succeeded"}))')
+        script = ('import json,sys; r=json.load(sys.stdin)["request"]; '
+                  'print(json.dumps({"id":r["id"],"target":r["target"],"commit":r["commit"],"observed_commit":r["commit"],"status":"succeeded"}))')
         executor = ProjectExecutor((sys.executable, '-c', script))
         self.assertEqual(run_deployment_once(self.store, self.req, lambda req: True, executor), 'succeeded')
         self.assertEqual(self.store.get(7)['request']['changes'], ['A', 'B'])

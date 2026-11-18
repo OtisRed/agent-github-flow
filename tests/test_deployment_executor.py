@@ -8,7 +8,7 @@ from deployment_executor import ProjectExecutor
 
 class ProjectExecutorTests(unittest.TestCase):
     def test_fixed_process_roundtrip(self):
-        script = ('import json,sys; r=json.load(sys.stdin); '
+        script = ('import json,sys; r=json.load(sys.stdin)["request"]; '
                   'print(json.dumps({"id":r["id"],"target":r["target"],"commit":r["commit"],"status":"succeeded"}))')
         executor = ProjectExecutor((sys.executable, '-c', script))
         request = {'id': 'one', 'repository_id': 1, 'target': 'smoke', 'commit': 'a'*40, 'changes': []}

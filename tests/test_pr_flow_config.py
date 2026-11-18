@@ -41,6 +41,9 @@ class ConfigurationTests(unittest.TestCase):
             validate_config(self.config)
         self.config['deployment_state_path'] = os.path.abspath('deployment-state')
         self.project['promotion_enabled'] = True
+        self.project['deployment_enabled'] = True
+        self.project['deployment_executor'] = os.path.abspath('synthetic-executor')
+        self.project['deployment_checks'] = [{'context': 'verify', 'app_id': 10}]
         self.assertIs(validate_config(self.config), self.config)
         self.config['deployment_state_path'] = 'relative'
         with self.assertRaises(ValueError):

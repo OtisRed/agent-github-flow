@@ -91,6 +91,19 @@ class DeploymentStateTests(unittest.TestCase):
         worker.join(4)
         self.assertTrue(finished.is_set())
 
+    def test_promotion_receipt_survives_interrupted_transaction_and_cannot_be_rewritten(self):
+        candidate, base = 'b'*40, 'a'*40
+        plan = {'main': base, 'plan': {'kind': 'ready', 'sha': candidate, 'count': 1},
+                'accepted_scope': {'changes': ['issue-1'], 'commits': [candidate]}}
+        with self.assertRaisesRegex(RuntimeError, 'interrupted'):
+            with self.store.promotion_guard(1) as ready:
+                ready.capture(plan, 17)
+                raise RuntimeError('interrupted')
+        self.assertEqual(self.store.promotion_receipt(1, candidate)['scope'], plan['accepted_scope'])
+        with self.store.promotion_guard(1) as ready:
+            with self.assertRaisesRegex(ValueError, 'Conflicting'):
+                ready.capture(plan, 18)
+
 
 if __name__ == '__main__':
     unittest.main()

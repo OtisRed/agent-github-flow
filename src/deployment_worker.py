@@ -3,12 +3,16 @@
 The caller supplies authenticated GitHub verification and a fixed trusted
 executor. An exception after dispatch is uncertain, not a reason to retry.
 """
+from deployment_state import SHA
 
 
 def _result(request, result):
-    if (not isinstance(result, dict) or set(result) != {'id', 'target', 'commit', 'status'}
+    if (not isinstance(result, dict) or set(result) != {'id', 'target', 'commit', 'observed_commit', 'status'}
             or result['id'] != request['id'] or result['target'] != request['target']
-            or result['commit'] != request['commit'] or result['status'] not in ('succeeded', 'failed')):
+            or result['commit'] != request['commit'] or result['status'] not in ('succeeded', 'failed')
+            or (result['status'] == 'succeeded' and result['observed_commit'] != request['commit'])
+            or (result['status'] == 'failed' and result['observed_commit'] is not None
+                and (not isinstance(result['observed_commit'], str) or not SHA.fullmatch(result['observed_commit'])))):
         raise ValueError('Unconfirmed executor result')
     return result['status']
 
@@ -38,7 +42,7 @@ def run_deployment_once(store, request, verify, execute):
 def reconcile_deployment(store, request, observed):
     """Accept only a confirmed result for the same persisted attempt."""
     status = _result(request, observed)
-    current = store.get(request['repository_id'])
+    current = store.get_attempt(request)
     if current is None or current['request'] != request or current['status'] not in ('running', 'unknown'):
         raise ValueError('No matching unresolved deployment')
     return store.transition(request, current['status'], status)

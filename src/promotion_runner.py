@@ -92,5 +92,10 @@ def promotion_step(transport, token, owner, repository, *, deployment_ready=None
     # Re-read issue states and both heads immediately before the guarded merge.
     if inventory(transport, token, owner, repository) != plan:
         return 'changed'
+    if deployment_ready is not None:
+        capture = getattr(deployment_ready, 'capture', None)
+        if not callable(capture):
+            return 'deployment-blocked'
+        capture(plan, number)
     mutation(MERGE_PR, {'id': pr_id, 'sha': sha}, 'mergePullRequest', 'pullRequest')
     return 'merged'

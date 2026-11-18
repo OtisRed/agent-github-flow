@@ -43,7 +43,9 @@ class InventoryTests(unittest.TestCase):
         return inventory(self.transport, 'test-token', 'example', 'repo')
 
     def test_selects_contiguous_prefix(self):
-        self.assertEqual(self.run_inventory()['plan'], {'kind': 'ready', 'sha': self.b, 'count': 1})
+        result = self.run_inventory()
+        self.assertEqual(result['plan'], {'kind': 'ready', 'sha': self.b, 'count': 1})
+        self.assertEqual(result['accepted_scope'], {'changes': ['issue-1'], 'commits': [self.b]})
 
     def test_main_in_side_parent_uses_closed_prefix_without_walking_older_history(self):
         # main=a; smoke=c -> b -> x, with main merged into b as a side parent.
