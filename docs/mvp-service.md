@@ -41,3 +41,7 @@ Przygotowana archiwizacja jest domyślnie wyłączona i wymaga `archive_enabled:
 Przy `FLOW attention: read-failed` dopisane są tylko zamknięte kategorie `stage` i `cause`: etap odczytu lub przygotowania PR oraz rodzaj błędu HTTP, sieci, czasu, danych albo `other`. Nie zawierają numeru Issue, adresu, odpowiedzi ani tekstu wyjątku. Kategoria pomaga rozpoznać następne wystąpienie, ale sama nie ustala jego przyczyny; po błędzie nadal obowiązuje istniejące opóźnienie i ponowne sprawdzenie.
 
 Obecny algorytm porównuje tekst komentarza i jego czas aktualizacji. Jeśli treść zostanie zmieniona i przywrócona w granicach rozdzielczości czasu zwracanego przez API, bez zaobserwowania zmiany, historia takiej edycji może być niewidoczna. Rzeczywistą rozdzielczość i tę granicę trzeba uwzględnić w operacyjnej ocenie ryzyka.
+
+## Dopisanie zaufanego autora
+
+Istniejący projekt można rozszerzyć o zaufanego autora wyłącznie jawnym trybem helpera `register_project.py --plan --update --authors-only`, a następnie `--apply --update --authors-only` z aktualnym `expected_config_sha256`. Podaj pełną dotychczasową listę autorów w tej samej kolejności i dopisz nowe identyfikatory; usunięcie, zmiana kolejności oraz jednoczesna zmiana flag są odrzucane. Obowiązują te same blokady, walidacja, kopie i kontrola granicy co przy aktualizacji projektu. Przed zastosowaniem sprawdź tożsamość konta i rzeczywiste uprawnienia, ponieważ zmiana przyznaje autorowi zaufanie kontrolera. Sam plan nie potwierdza działania flow.
