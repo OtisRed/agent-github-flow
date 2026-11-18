@@ -30,6 +30,9 @@ class DeploymentStateTests(unittest.TestCase):
             restarted.reserve({**self.req, 'id': 'two'})
         restarted.transition(self.req, 'unknown', 'succeeded')
         self.assertEqual(restarted.reserve({**self.req, 'id': 'two'}), 'reserved')
+        with self.assertRaisesRegex(ValueError, 'unresolved'):
+            restarted.reserve(self.req)
+        restarted.transition({**self.req, 'id': 'two'}, 'reserved', 'superseded')
         self.assertEqual(restarted.reserve(self.req), 'succeeded')
         with self.assertRaisesRegex(ValueError, 'identifier reused'):
             restarted.reserve({**self.req, 'commit': 'b'*40})

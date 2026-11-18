@@ -67,6 +67,10 @@ class DeploymentState:
             if existing:
                 if existing[0] != encoded:
                     raise ValueError('Deployment identifier reused')
+                if existing[1] in ('succeeded', 'superseded') and db.execute(
+                        "SELECT 1 FROM deployment WHERE repository_id=? AND deployment_id<>? AND status NOT IN ('succeeded','superseded') LIMIT 1",
+                        (request['repository_id'], request['id'])).fetchone():
+                    raise ValueError('Previous deployment is unresolved')
                 return existing[1]
             row = db.execute("SELECT status FROM deployment WHERE repository_id=? AND status NOT IN ('succeeded','superseded') LIMIT 1",
                              (request['repository_id'],)).fetchone()
