@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from mvp_credentials import AppToken
 from mvp_github import request
 from promotion_runner import promotion_step
+from deployment_state import DeploymentState
 
 
 def run_promotions(stop, config, private_key, *, transport=request):
@@ -25,11 +26,16 @@ def run_promotions(stop, config, private_key, *, transport=request):
                 if stop.is_set():
                     break
                 try:
-                    result = promotion_step(transport, token(), project['owner'], project['repository'])
+                    if project.get('deployment_guarded') is True:
+                        store = DeploymentState(config['deployment_state_path'])
+                        with store.promotion_guard(project['repository_id']) as ready:
+                            result = promotion_step(transport, token(), project['owner'], project['repository'], deployment_ready=ready)
+                    else:
+                        result = promotion_step(transport, token(), project['owner'], project['repository'])
                 except Exception:
                     result = 'failed'
                 if previous.get(project['repository_id']) != result:
-                    alert = result in ('failed', 'protection-required', 'blocked')
+                    alert = result in ('failed', 'protection-required', 'blocked', 'deployment-blocked')
                     print(('FLOW attention: promotion-' if alert else 'FLOW promotion: ') + result
                           + ' repo=' + str(project['repository_id']),
                           file=sys.stderr if alert else sys.stdout, flush=True)

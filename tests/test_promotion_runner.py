@@ -94,6 +94,12 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(self.run_step(), 'merged')
         self.assertEqual(self.mutations[0]['variables'], {'id': 'pr', 'sha': self.sha})
 
+    def test_deployment_gate_blocks_before_any_github_mutation(self):
+        with patch('promotion_runner.inventory', return_value=self.plan):
+            outcome = promotion_step(self.transport, 'test-token', 'example', 'repo', deployment_ready=lambda sha: False)
+        self.assertEqual(outcome, 'deployment-blocked')
+        self.assertFalse(self.mutations)
+
 
 if __name__ == '__main__':
     unittest.main()

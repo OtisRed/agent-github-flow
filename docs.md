@@ -26,5 +26,6 @@
 - [Decyzja kontrolera MVP](docs/mvp-decision.md) — reguły jednego issue i granice odłączonego modelu.
 - [Usługa MVP](docs/mvp-service.md) — konfiguracja, granice poświadczeń i warunki wdrożenia.
 - [Nocna promocja](docs/nightly-promotion.md) — kolejka zamkniętych zmian, warunki scalenia i ograniczenia.
+- [Prototyp koordynacji wdrożeń](docs/deployment-prototype-189.md) — odłączony stan, wykonawca i blokada promocji; bez wdrożenia produkcyjnego.
 
 - [Odzyskanie dostępu kontrolera](docs/credential-recovery.md) — poświadczenia App i Projectów, wymiana oraz ograniczenia odtwarzania.

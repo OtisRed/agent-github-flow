@@ -35,6 +35,17 @@ class ConfigurationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_config(self.config)
 
+    def test_deployment_guard_requires_explicit_state_and_promotion(self):
+        self.project['deployment_guarded'] = True
+        with self.assertRaises(ValueError):
+            validate_config(self.config)
+        self.config['deployment_state_path'] = os.path.abspath('deployment-state')
+        self.project['promotion_enabled'] = True
+        self.assertIs(validate_config(self.config), self.config)
+        self.config['deployment_state_path'] = 'relative'
+        with self.assertRaises(ValueError):
+            validate_config(self.config)
+
 
 if __name__ == "__main__":
     unittest.main()

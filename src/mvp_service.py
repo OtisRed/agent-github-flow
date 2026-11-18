@@ -53,6 +53,8 @@ def validate_config(config):
         raise ValueError("Invalid config")
     if 'archive_enabled' in config and type(config['archive_enabled']) is not bool:
         raise ValueError("Invalid archive setting")
+    if 'deployment_state_path' in config and (not isinstance(config['deployment_state_path'], str) or not os.path.isabs(config['deployment_state_path'])):
+        raise ValueError("Invalid deployment state path")
     for name in ("app_id", "installation_id", "port"):
         if type(config.get(name)) is not int or config[name] <= 0:
             raise ValueError("Invalid config")
@@ -70,6 +72,10 @@ def validate_config(config):
             raise ValueError("Invalid project")
         if 'promotion_enabled' in project and type(project['promotion_enabled']) is not bool:
             raise ValueError("Invalid promotion setting")
+        if 'deployment_guarded' in project and type(project['deployment_guarded']) is not bool:
+            raise ValueError("Invalid deployment guard setting")
+        if project.get('deployment_guarded') is True and ('deployment_state_path' not in config or project.get('promotion_enabled') is not True):
+            raise ValueError("Deployment guard requires promotion and deployment state")
         if 'status_enabled' in project and type(project['status_enabled']) is not bool:
             raise ValueError("Invalid status setting")
         if 'admission_enabled' in project and type(project['admission_enabled']) is not bool:

@@ -1,0 +1,10 @@
+# Prototyp koordynacji wdrożeń — AGF #189
+
+To odłączony prototyp, nie działające wdrożenie Chefa. Nie instaluje ani nie uruchamia wykonawcy, nie tworzy Chef-testu, nie konfiguruje webhooka i nie wykrywa jeszcze zmian gałęzi lub wyników CI. Nie inicjalizować jego magazynu na produkcji przed ukończeniem integracji i testów.
+
+- `deployment_state.py` przechowuje zidentyfikowane próby i serializuje je dla repozytorium. Nierozstrzygnięta lub nieudana próba blokuje kolejną. Powtórzenie tego samego ID nie uruchamia ponownie wcześniejszej operacji.
+- `deployment_worker.py` przyjmuje zaufane funkcje sprawdzenia wersji oraz wykonania. Przed wywołaniem ponawia weryfikację; po niepotwierdzonej odpowiedzi zapisuje stan nieznany. Ponowne uzgodnienie wymaga wiarygodnego wyniku tej samej próby z projektu. Moduł sam nie uwierzytelnia źródła wyniku.
+- `deployment_executor.py` uruchamia wyłącznie stałą komendę dostarczoną przez zaufaną konfigurację, przekazuje JSON i nie używa powłoki. Nie tworzy granicy uprawnień ani nie udowadnia, że projekt zakończył wdrożenie; niezaufana konfiguracja polecenia byłaby niedopuszczalna.
+- Opcjonalna konfiguracja `deployment_guarded` i `deployment_state_path` sprawia, że istniejący worker promocji wymaga potwierdzonego, zgodnego z bieżącym `main` wdrożenia produkcyjnego. Trzyma blokadę SQLite przez krok promocji, aby inne próby korzystające z tego samego magazynu nie rozpoczęły się w tym czasie. Pozostałe projekty zachowują dotychczasowe działanie. Brak lub nieprawidłowy magazyn kończy się błędem, a nie automatycznym utworzeniem.
+
+Do ukończenia pozostają: połączenie z dokładnym odczytem GitHuba i CI, wykrywanie zmian `smoke`/`main` i obsługa restartu, wyznaczenie pełnego zaakceptowanego zakresu promocji, projektowy wykonawca i ograniczenie jego uprawnień, wiarygodne potwierdzenie działającej wersji i stanu po nieznanym wyniku, raportowanie do issue, bootstrap istniejącego `main` oraz uruchomienie Chef-testu. Po sprawdzeniu stanu GitHub i przed fizycznym przełączeniem wykonawca musi ponowić kontrolę aktualności; nie ma atomowej transakcji obejmującej GitHub i host. Testy prototypu używają wyłącznie fikcyjnych danych.
