@@ -126,3 +126,25 @@ class IntegrationTests(unittest.TestCase):
                                       'observed_commit': req['commit'], 'status': 'succeeded'}
         self.assertEqual(bootstrap_current_main(self.transport, 'fixture', 'example', 'repo', 20, (('verify', 7),), self.store, execute), 'succeeded')
         self.assertEqual(self.store.get(20)['request']['commit'], self.commit)
+
+    def test_interrupted_bootstrap_can_resume_without_deploying(self):
+        request = {'id': 'bootstrap-main-' + self.commit, 'repository_id': 20,
+                   'target': 'main', 'commit': self.commit, 'changes': []}
+        self.store.reserve(request)
+        def execute(_): self.fail('bootstrap must not deploy')
+        execute.status = lambda req: {'id': req['id'], 'target': req['target'], 'commit': req['commit'],
+                                      'observed_commit': req['commit'], 'status': 'succeeded'}
+        self.assertEqual(bootstrap_current_main(self.transport, 'fixture', 'example', 'repo', 20,
+                                                (('verify', 7),), self.store, execute), 'succeeded')
+        self.assertEqual(self.store.get_attempt(request)['status'], 'succeeded')
+
+    def test_bootstrap_after_superseded_reservation_still_checks_live_state(self):
+        old = {'id': 'bootstrap-main-' + 'a'*40, 'repository_id': 20,
+               'target': 'main', 'commit': 'a'*40, 'changes': []}
+        self.store.reserve(old); self.store.transition(old, 'reserved', 'superseded')
+        def execute(_): self.fail('bootstrap must not deploy')
+        execute.status = lambda req: {'id': req['id'], 'target': req['target'], 'commit': req['commit'],
+                                      'observed_commit': req['commit'], 'status': 'succeeded'}
+        self.assertEqual(bootstrap_current_main(self.transport, 'fixture', 'example', 'repo', 20,
+                                                (('verify', 7),), self.store, execute), 'succeeded')
+        self.assertEqual(self.store.get(20)['request']['commit'], self.commit)

@@ -58,6 +58,48 @@ class ScheduleTests(unittest.TestCase):
                 run_deployments(OneTurn(), self.config, b'fixture', executor_factory=lambda _: Executor())
             self.assertEqual(state.get(3)['status'], 'succeeded')
 
+    def test_stale_reservation_is_superseded_after_branch_moves(self):
+        with tempfile.TemporaryDirectory() as folder:
+            state = DeploymentState(Path(folder) / 'state'); state.initialize()
+            req = {'id': 'smoke-' + 'a'*40, 'repository_id': 3, 'target': 'smoke', 'commit': 'a'*40, 'changes': []}
+            state.reserve(req)
+            self.config['deployment_state_path'] = str(state.path)
+            with patch('deployment_schedule.AppToken', return_value=lambda: 'fixture'), \
+                    patch('deployment_schedule.branch_head', return_value='b'*40, create=True), \
+                    patch('deployment_schedule.dispatch_current', return_value='succeeded'), contextlib.redirect_stdout(io.StringIO()):
+                run_deployments(OneTurn(), self.config, b'fixture', executor_factory=lambda _: lambda _: None)
+            self.assertEqual(state.get_attempt(req)['status'], 'superseded')
+
+    def test_current_smoke_reservation_is_retried_before_main(self):
+        with tempfile.TemporaryDirectory() as folder:
+            state = DeploymentState(Path(folder) / 'state'); state.initialize()
+            req = {'id': 'smoke-' + 'a'*40, 'repository_id': 3, 'target': 'smoke', 'commit': 'a'*40, 'changes': []}
+            state.reserve(req); self.config['deployment_state_path'] = str(state.path)
+            calls = []
+            def dispatch(_transport, _token, _owner, _repo, _id, target, _required, _store, _execute):
+                calls.append(target)
+                if len(calls) == 1:
+                    state.transition(req, 'reserved', 'running'); state.transition(req, 'running', 'succeeded')
+                return 'succeeded'
+            with patch('deployment_schedule.AppToken', return_value=lambda: 'fixture'), \
+                    patch('deployment_schedule.branch_head', return_value='a'*40, create=True), \
+                    patch('deployment_schedule.dispatch_current', side_effect=dispatch), contextlib.redirect_stdout(io.StringIO()):
+                run_deployments(OneTurn(), self.config, b'fixture', executor_factory=lambda _: lambda _: None)
+            self.assertEqual(calls[0], 'smoke')
+            self.assertEqual(state.get_attempt(req)['status'], 'succeeded')
+
+    def test_branch_lookup_error_preserves_reservation_without_dispatch(self):
+        with tempfile.TemporaryDirectory() as folder:
+            state = DeploymentState(Path(folder) / 'state'); state.initialize()
+            req = {'id': 'smoke-' + 'a'*40, 'repository_id': 3, 'target': 'smoke', 'commit': 'a'*40, 'changes': []}
+            state.reserve(req); self.config['deployment_state_path'] = str(state.path)
+            with patch('deployment_schedule.AppToken', return_value=lambda: 'fixture'), \
+                    patch('deployment_schedule.branch_head', side_effect=OSError('offline')), \
+                    patch('deployment_schedule.dispatch_current') as dispatch, contextlib.redirect_stderr(io.StringIO()):
+                run_deployments(OneTurn(), self.config, b'fixture', executor_factory=lambda _: lambda _: None)
+            self.assertEqual(state.get_attempt(req)['status'], 'reserved')
+            dispatch.assert_not_called()
+
     def test_bad_executor_blocks_only_its_project(self):
         other = {**self.config['projects'][0], 'repository_id': 4, 'deployment_executor': '/fixed/other'}
         self.config['projects'].append(other)

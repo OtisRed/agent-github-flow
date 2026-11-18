@@ -6,6 +6,7 @@ from pathlib import Path
 
 from deployment_dispatch import bootstrap_current_main, dispatch_current
 from deployment_executor import ProjectExecutor
+from deployment_source import branch_head
 from deployment_state import DeploymentState
 from deployment_worker import reconcile_deployment
 from mvp_credentials import AppToken
@@ -58,7 +59,32 @@ def run_deployments(stop, config, private_key, *, transport=request, executor_fa
                     reconcile_deployment(store, unresolved['request'], executor.status(unresolved['request']))
                 except Exception:
                     pass  # An unconfirmed result remains durably blocked.
-            if current is None:
+            # A reservation has not dispatched any project command. After a
+            # restart, either retry its still-current target first, or retire
+            # it when the trusted branch has moved. Never discard it merely
+            # because GitHub is unavailable or CI cannot be checked.
+            if current and current['status'] == 'reserved':
+                pending = current['request']
+                try:
+                    head = branch_head(transport, token(), project['owner'], project['repository'], pending['target'])
+                    if head != pending['commit']:
+                        store.transition(pending, 'reserved', 'superseded')
+                    elif pending['id'] == f"bootstrap-main-{pending['commit']}":
+                        result = bootstrap_current_main(transport, token(), project['owner'], project['repository'],
+                                                        project['repository_id'], required, store, executor)
+                        if result != 'succeeded':
+                            continue
+                    else:
+                        result = dispatch_current(transport, token(), project['owner'], project['repository'],
+                                                  project['repository_id'], pending['target'], required, store, executor)
+                        if result != 'succeeded':
+                            continue
+                except Exception:
+                    print('FLOW attention: deployment-blocked repo=' + str(project['repository_id'])
+                          + ' target=reservation', file=sys.stderr, flush=True)
+                    continue
+                current = store.get(project['repository_id'])
+            if current is None or (current['status'] == 'superseded' and store.last_success(project['repository_id'], 'main') is None):
                 try:
                     baseline = bootstrap_current_main(transport, token(), project['owner'], project['repository'],
                                                       project['repository_id'], required, store, executor)

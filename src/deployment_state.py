@@ -71,6 +71,14 @@ class DeploymentState:
                         "SELECT 1 FROM deployment WHERE repository_id=? AND deployment_id<>? AND status NOT IN ('succeeded','superseded') LIMIT 1",
                         (request['repository_id'], request['id'])).fetchone():
                     raise ValueError('Previous deployment is unresolved')
+                if existing[1] == 'superseded':
+                    # Superseded is reachable only before dispatch. If the
+                    # exact branch and request return, make this the newest
+                    # attempt and require the caller to verify it again.
+                    sequence = db.execute('SELECT COALESCE(MAX(sequence), 0) + 1 FROM deployment').fetchone()[0]
+                    db.execute("UPDATE deployment SET sequence=?,status='reserved',result=NULL WHERE repository_id=? AND deployment_id=?",
+                               (sequence, request['repository_id'], request['id']))
+                    return 'reserved'
                 return existing[1]
             row = db.execute("SELECT status FROM deployment WHERE repository_id=? AND status NOT IN ('succeeded','superseded') LIMIT 1",
                              (request['repository_id'],)).fetchone()

@@ -28,5 +28,6 @@
 - [Nocna promocja](docs/nightly-promotion.md) — kolejka zamkniętych zmian, warunki scalenia i ograniczenia.
 - [Prototyp koordynacji wdrożeń](docs/deployment-prototype-189.md) — odłączony stan, wykonawca i blokada promocji; bez wdrożenia produkcyjnego.
 - [Preflight wykonawcy na Mikrusie](docs/preflight-mikrus-wykonawca-189.md) — sprawdzony stan hosta i warunki przygotowania wdrożenia.
+- [Roboczy przegląd wdrożenia](docs/review-wdrozenia-189-56.md) — wykryte blokady i zakres dowodów przed finalnym review.
 
 - [Odzyskanie dostępu kontrolera](docs/credential-recovery.md) — poświadczenia App i Projectów, wymiana oraz ograniczenia odtwarzania.

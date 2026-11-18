@@ -34,6 +34,13 @@ class DeploymentWorkerTests(unittest.TestCase):
         self.assertEqual(self.store.get(7)['status'], 'superseded')
         self.assertEqual(self.store.reserve({**self.req, 'id': 'new', 'commit': 'b'*40}), 'reserved')
 
+    def test_superseded_undispatched_request_can_be_revalidated_if_branch_returns(self):
+        checks = iter([True, False])
+        self.assertEqual(run_deployment_once(self.store, self.req, lambda r: next(checks),
+                                             lambda r: self.fail('must not run')), 'not-verified')
+        self.assertEqual(run_deployment_once(self.store, self.req, lambda r: True,
+                                             lambda r: self.result), 'succeeded')
+
     def test_unconfirmed_result_blocks_and_requires_exact_reconciliation(self):
         self.assertEqual(run_deployment_once(self.store, self.req, lambda r: True,
                                              lambda r: {**self.result, 'commit': 'b'*40}), 'unknown')
