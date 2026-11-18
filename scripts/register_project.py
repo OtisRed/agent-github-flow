@@ -92,8 +92,8 @@ def plan(config, request, now):
     return candidate, 'new'
 
 
-def plan_update(config, request, now):
-    """Enable explicitly requested stages only; reject changed identities or options."""
+def plan_update(config, request, now, *, authors_only=False):
+    """Enable stages, or append authors in an explicit, isolated mode."""
     validate_candidate(config)
     validate_request(request)
     matches = [p for p in config['projects'] if p['repository_id'] == request['repository_id']
@@ -102,7 +102,7 @@ def plan_update(config, request, now):
     if len(matches) != 1:
         raise ValueError('existing-conflict')
     existing = matches[0]
-    for key in REQUIRED - set(FLAGS):
+    for key in REQUIRED - set(FLAGS) - ({'trusted_author_ids'} if authors_only else set()):
         old, new = existing.get(key), request[key]
         if key in ('owner', 'repository', 'project_owner') and isinstance(old, str):
             old, new = old.lower(), new.lower()
@@ -111,6 +111,18 @@ def plan_update(config, request, now):
     candidate = copy.deepcopy(config)
     entry = next(p for p in candidate['projects'] if p['repository_id'] == request['repository_id'])
     changes = []
+    if authors_only:
+        old_authors = existing['trusted_author_ids']
+        new_authors = request['trusted_author_ids']
+        if new_authors[:len(old_authors)] != old_authors:
+            raise ValueError('existing-conflict')
+        if old_authors != new_authors:
+            entry['trusted_author_ids'] = copy.deepcopy(new_authors)
+            changes.append('trusted_author_ids')
+        if any(existing.get(flag, flag == 'status_enabled') != request[flag] for flag in FLAGS):
+            raise ValueError('existing-conflict')
+        if any(existing.get(key) != value for key, value in request.items() if key in OPTIONAL):
+            raise ValueError('existing-conflict')
     for flag in FLAGS:
         old = existing.get(flag, flag == 'status_enabled')
         if old is True and request[flag] is False:
@@ -225,7 +237,7 @@ def registration_lock(directory, uid, gid):
         raise
 
 
-def enroll(config_path, request, uid, gid, *, update=False, expected_sha256=None):
+def enroll(config_path, request, uid, gid, *, update=False, expected_sha256=None, authors_only=False):
     """Make one guarded update. Do not restore a SQLite snapshot automatically."""
     private_dir(config_path.parent, uid)
     original = private_file(config_path, uid)
@@ -235,7 +247,7 @@ def enroll(config_path, request, uid, gid, *, update=False, expected_sha256=None
     config = json.loads(original)
     now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     if update:
-        candidate, action, _ = plan_update(config, request, now)
+        candidate, action, _ = plan_update(config, request, now, authors_only=authors_only)
     else:
         candidate, action = plan(config, request, now)
     if action == 'exists':
@@ -344,7 +356,10 @@ def main():
     mode.add_argument('--plan', action='store_true')
     mode.add_argument('--apply', action='store_true')
     parser.add_argument('--update', action='store_true')
+    parser.add_argument('--authors-only', action='store_true')
     args = parser.parse_args()
+    if args.authors_only and not args.update:
+        raise ValueError('invalid-request')
     require_root()
     if not sys.flags.isolated:
         raise RuntimeError('isolated-mode-required')
@@ -369,14 +384,14 @@ def main():
         if args.update:
             if expected is not None:
                 raise ValueError('invalid-request')
-            _, result, changes = plan_update(config, request, now)
+            _, result, changes = plan_update(config, request, now, authors_only=args.authors_only)
             print(json.dumps({'result': result, 'changes': changes,
                               'config_sha256': hashlib.sha256(original).hexdigest()}))
             return
         _, result = plan(config, request, now)
     else:
         result = enroll(CONFIG, request, account.pw_uid, account.pw_gid, update=args.update,
-                        expected_sha256=expected)
+                        expected_sha256=expected, authors_only=args.authors_only)
     print(json.dumps({'result': result}))
 
 

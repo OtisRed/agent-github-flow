@@ -172,6 +172,57 @@ class RegisterProjectTests(unittest.TestCase):
             self.update(req)
         self.assertEqual(self.operations, [])
 
+    def test_append_authors_isolated_and_repeat_safe(self):
+        self.insert_existing_boundary()
+        other = copy.deepcopy(self.existing)
+        other.update(repository_id=11, repository='other', project_number=3)
+        self.config['projects'].append(other)
+        self.config_file.write_text(json.dumps(self.config))
+        req = self.update_request()
+        req['trusted_author_ids'] = [2, 3]
+        candidate, result, changes = self.module.plan_update(self.config, req, '2026-11-13T10:00:00Z', authors_only=True)
+        self.assertEqual((result, changes), ('updated', ['trusted_author_ids']))
+        self.assertEqual(candidate['projects'][0]['enrolled_at'], self.existing['enrolled_at'])
+        self.assertEqual(candidate['projects'][1], other)
+        digest = hashlib.sha256(self.config_file.read_bytes()).hexdigest()
+        self.assertEqual(self.module.enroll(self.config_file, req, os.geteuid(), os.getegid(),
+                         update=True, expected_sha256=digest, authors_only=True), 'updated')
+        current = json.loads(self.config_file.read_text())
+        self.assertEqual(current['projects'][1], other)
+        self.assertEqual(current['projects'][0], {**self.existing, 'trusted_author_ids': [2, 3]})
+        digest = hashlib.sha256(self.config_file.read_bytes()).hexdigest()
+        self.assertEqual(self.module.enroll(self.config_file, req, os.geteuid(), os.getegid(),
+                         update=True, expected_sha256=digest, authors_only=True), 'exists')
+        self.assertEqual(self.operations, ['stop', 'start'])
+        self.assertEqual(len(list(self.root.glob('onboarding-state-*.sqlite'))), 1)
+
+    def test_append_authors_rejects_replacement_reorder_and_flag_changes(self):
+        for authors in ([3], [3, 2], []):
+            req = self.update_request()
+            req['trusted_author_ids'] = authors
+            with self.assertRaises(ValueError):
+                self.module.plan_update(self.config, req, '2026-11-13T10:00:00Z', authors_only=True)
+        req = self.update_request()
+        req.update(trusted_author_ids=[2, 3], promotion_enabled=True)
+        with self.assertRaisesRegex(ValueError, 'existing-conflict'):
+            self.module.plan_update(self.config, req, '2026-11-13T10:00:00Z', authors_only=True)
+        self.assertEqual(self.operations, [])
+
+    def test_append_authors_rejects_stale_config_and_wrong_boundary(self):
+        req = self.update_request()
+        req['trusted_author_ids'] = [2, 3]
+        digest = hashlib.sha256(self.config_file.read_bytes()).hexdigest()
+        self.config_file.write_text(json.dumps({**self.config, 'external': 'preserved'}))
+        with self.assertRaisesRegex(ValueError, 'configuration-changed'):
+            self.module.enroll(self.config_file, req, os.geteuid(), os.getegid(), update=True,
+                               expected_sha256=digest, authors_only=True)
+        digest = hashlib.sha256(self.config_file.read_bytes()).hexdigest()
+        with self.assertRaisesRegex(ValueError, 'boundary-mismatch'):
+            self.module.enroll(self.config_file, req, os.geteuid(), os.getegid(), update=True,
+                               expected_sha256=digest, authors_only=True)
+        self.assertTrue(self.active)
+        self.assertEqual(json.loads(self.config_file.read_text())['external'], 'preserved')
+
     def test_update_blocks_missing_or_changed_database_boundary(self):
         req = self.update_request()
         req['promotion_enabled'] = True
