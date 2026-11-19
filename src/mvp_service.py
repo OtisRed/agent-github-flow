@@ -85,8 +85,8 @@ def validate_config(config):
         smoke_only = project.get('deployment_smoke_only', False)
         if type(smoke_only) is not bool or (smoke_only and (
                 project.get('deployment_enabled') is not True or 'deployment_state_path' not in config
-                or project.get('deployment_guarded') is True or project.get('promotion_enabled') is True)):
-            raise ValueError("Smoke-only deployment requires a ledger and disables main promotion")
+                or project.get('deployment_guarded') is True)):
+            raise ValueError("Smoke-only deployment requires a ledger and cannot guard production promotion")
         if project.get('deployment_enabled') is True:
             checks = project.get('deployment_checks')
             if ((not smoke_only and project.get('deployment_guarded') is not True)

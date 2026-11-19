@@ -4,11 +4,13 @@ import sys
 import unittest
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch, Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from deployment_schedule import run_deployments
 from deployment_state import DeploymentState
+from promotion_schedule import run_promotions
 
 
 class OneTurn:
@@ -43,20 +45,52 @@ class ScheduleTests(unittest.TestCase):
             run_deployments(OneTurn(), self.config, b'fixture', executor_factory=lambda _: lambda _: None)
         self.assertEqual(calls, ['main'])
 
-    def test_smoke_only_does_not_bootstrap_or_dispatch_main(self):
-        self.config['projects'][0]['deployment_smoke_only'] = True
+    def test_smoke_only_dispatches_chef_test_and_keeps_nightly_promotion(self):
+        commit = 'a' * 40
+        project = self.config['projects'][0]
+        project.update(deployment_smoke_only=True, promotion_enabled=True,
+                       repository='Jedzenie', deployment_executor='/fixed/chef-test')
+        attempted_routes = []
+
+        def github(route, _token):
+            attempted_routes.append(route)
+            if route == '/repos/example/Jedzenie/branches/smoke':
+                return {'commit': {'sha': commit}}, {}
+            if route.startswith(f'/repos/example/Jedzenie/commits/{commit}/check-runs?'):
+                return {'total_count': 1, 'check_runs': [
+                    {'id': 1, 'head_sha': commit, 'name': 'verify', 'app': {'id': 4},
+                     'status': 'completed', 'conclusion': 'success'}]}, {}
+            raise AssertionError(f'Unexpected deployment lookup: {route}')
+
+        def confirm(job):
+            return {key: job[key] for key in ('id', 'target', 'commit')} | {
+                'observed_commit': commit, 'status': 'succeeded'}
+
+        chef_test = Mock(side_effect=confirm)
         with tempfile.TemporaryDirectory() as folder:
             state = DeploymentState(Path(folder) / 'state')
             state.initialize()
             self.config['deployment_state_path'] = str(state.path)
             with patch('deployment_schedule.AppToken', return_value=lambda: 'fixture'), \
                     patch('deployment_schedule.bootstrap_current_main') as bootstrap, \
-                    patch('deployment_schedule.dispatch_current', return_value='succeeded') as dispatch, \
+                    patch('promotion_schedule.AppToken', return_value=lambda: 'fixture'), \
+                    patch('promotion_schedule.datetime') as clock, \
+                    patch('promotion_schedule.promotion_step', return_value='merged') as promote, \
                     contextlib.redirect_stdout(io.StringIO()):
-                run_deployments(OneTurn(), self.config, b'fixture', executor_factory=lambda _: lambda _: None)
+                clock.now.return_value = SimpleNamespace(hour=4)
+                factory = Mock(return_value=chef_test)
+                run_deployments(OneTurn(), self.config, b'fixture', transport=github, executor_factory=factory)
+                run_promotions(OneTurn(), self.config, b'fixture', transport=github)
             bootstrap.assert_not_called()
-            dispatch.assert_called_once()
-            self.assertEqual(dispatch.call_args.args[5], 'smoke')
+            factory.assert_called_once_with('/fixed/chef-test')
+            request = {'id': 'smoke-' + commit, 'repository_id': 3, 'target': 'smoke',
+                       'commit': commit, 'changes': []}
+            chef_test.assert_called_once_with(request)
+            self.assertTrue(attempted_routes)
+            self.assertFalse(any('/branches/main' in route for route in attempted_routes))
+            self.assertEqual(state.get_attempt(request)['status'], 'succeeded')
+            self.assertIsNone(state.last_success(3, 'main'))
+            promote.assert_called_once_with(github, 'fixture', 'example', 'Jedzenie')
 
     def test_restart_reconciles_only_confirmed_same_attempt(self):
         with tempfile.TemporaryDirectory() as folder:
