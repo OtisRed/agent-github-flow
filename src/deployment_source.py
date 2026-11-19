@@ -7,6 +7,22 @@ from pr_admission_checks import tests_state
 MAX_PAGES = 10
 
 
+def deployment_checks(project, target):
+    """Resolve required checks for the selected branch, including legacy lists."""
+    checks = project.get('deployment_checks')
+    if isinstance(checks, dict):
+        checks = checks.get(target)
+    if (not isinstance(checks, list) or not checks
+            or any(not isinstance(item, dict) or set(item) != {'context', 'app_id'}
+                   or not isinstance(item['context'], str) or not item['context']
+                   or type(item['app_id']) is not int or item['app_id'] <= 0 for item in checks)):
+        raise ValueError('Invalid deployment checks')
+    required = tuple((item['context'], item['app_id']) for item in checks)
+    if len(set(required)) != len(required):
+        raise ValueError('Duplicate deployment checks')
+    return required
+
+
 def branch_head(transport, token, owner, repository, target):
     if target not in ('smoke', 'main'):
         raise ValueError('Invalid deployment target')

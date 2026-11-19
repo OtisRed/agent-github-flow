@@ -45,6 +45,53 @@ class ScheduleTests(unittest.TestCase):
             run_deployments(OneTurn(), self.config, b'fixture', executor_factory=lambda _: lambda _: None)
         self.assertEqual(calls, ['main'])
 
+    def test_first_main_baseline_after_smoke_uses_each_branch_checks(self):
+        main, smoke = 'a' * 40, 'b' * 40
+        self.config['projects'][0]['deployment_checks'] = {
+            'main': [{'context': 'verify', 'app_id': 4}],
+            'smoke': [{'context': 'verify', 'app_id': 4}, {'context': 'build-chef-test', 'app_id': 4}],
+        }
+        smoke_request = {'id': 'smoke-' + smoke, 'repository_id': 3,
+                         'target': 'smoke', 'commit': smoke, 'changes': []}
+
+        def github(route, _token):
+            if route.endswith('/branches/main'):
+                return {'commit': {'sha': main}}, {}
+            if route.endswith('/branches/smoke'):
+                return {'commit': {'sha': smoke}}, {}
+            for commit, names in ((main, ('verify',)), (smoke, ('verify', 'build-chef-test'))):
+                if f'/commits/{commit}/check-runs?' in route:
+                    return {'total_count': len(names), 'check_runs': [
+                        {'id': index, 'head_sha': commit, 'name': name, 'app': {'id': 4},
+                         'status': 'completed', 'conclusion': 'success'}
+                        for index, name in enumerate(names, start=1)]}, {}
+            self.fail(f'Unexpected discovery of production promotion scope: {route}')
+
+        executor = Mock()
+        executor.status.side_effect = lambda job: {
+            **{key: job[key] for key in ('id', 'target', 'commit')},
+            'observed_commit': job['commit'], 'status': 'succeeded',
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            store = DeploymentState(Path(folder) / 'state')
+            store.initialize()
+            store.reserve(smoke_request)
+            store.transition(smoke_request, 'reserved', 'running')
+            store.transition(smoke_request, 'running', 'succeeded')
+            self.config['deployment_state_path'] = str(store.path)
+            with patch('deployment_schedule.AppToken', return_value=lambda: 'fixture'), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                run_deployments(OneTurn(), self.config, b'fixture', transport=github,
+                                executor_factory=lambda _: executor)
+            self.assertEqual(store.last_success(3, 'main'), {
+                'id': 'bootstrap-main-' + main, 'repository_id': 3,
+                'target': 'main', 'commit': main, 'changes': [],
+            })
+            self.assertEqual(store.last_success(3, 'smoke'), smoke_request)
+        executor.assert_not_called()
+        self.assertEqual([call.args[0]['target'] for call in executor.status.call_args_list],
+                         ['main', 'main', 'smoke'])
+
     def test_smoke_only_dispatches_chef_test_and_keeps_nightly_promotion(self):
         commit = 'a' * 40
         project = self.config['projects'][0]

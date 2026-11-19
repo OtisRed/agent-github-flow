@@ -6,7 +6,7 @@ only a boolean, never an installation token or executable migration payload.
 import json
 import sys
 
-from deployment_source import promoted_scope, verify_head_and_ci
+from deployment_source import deployment_checks, promoted_scope, verify_head_and_ci
 from deployment_state import DeploymentState, _request
 from mvp_credentials import AppToken, read_private_file
 from mvp_github import request as github_request
@@ -28,7 +28,7 @@ def attest(config, candidate, token, store, transport=github_request, *, recover
     allowed = ('running', 'unknown') if recovery else ('running',)
     if not attempt or attempt['request'] != normalized or attempt['status'] not in allowed:
         return False
-    required = tuple((item['context'], item['app_id']) for item in project['deployment_checks'])
+    required = deployment_checks(project, normalized['target'])
     if not verify_head_and_ci(transport, token, project['owner'], project['repository'],
                               normalized['target'], normalized['commit'], required):
         return False
