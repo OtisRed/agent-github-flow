@@ -6,7 +6,7 @@ from pathlib import Path
 
 from deployment_dispatch import bootstrap_current_main, dispatch_current
 from deployment_executor import ProjectExecutor
-from deployment_source import branch_head
+from deployment_source import branch_head, deployment_checks
 from deployment_state import DeploymentState
 from deployment_worker import reconcile_deployment
 from mvp_credentials import AppToken
@@ -44,7 +44,6 @@ def run_deployments(stop, config, private_key, *, transport=request, executor_fa
     while not stop.is_set():
         for project, token in projects:
             smoke_only = project.get('deployment_smoke_only') is True
-            required = tuple((item['context'], item['app_id']) for item in project['deployment_checks'])
             try:
                 executor = executor_factory(project['deployment_executor'])
                 unresolved = store.unresolved(project['repository_id'])
@@ -76,24 +75,25 @@ def run_deployments(stop, config, private_key, *, transport=request, executor_fa
                         store.transition(pending, 'reserved', 'superseded')
                     elif pending['id'] == f"bootstrap-main-{pending['commit']}":
                         result = bootstrap_current_main(transport, token(), project['owner'], project['repository'],
-                                                        project['repository_id'], required, store, executor)
+                                                        project['repository_id'], deployment_checks(project, 'main'),
+                                                        store, executor)
                         if result != 'succeeded':
                             continue
                     else:
                         result = dispatch_current(transport, token(), project['owner'], project['repository'],
-                                                  project['repository_id'], pending['target'], required, store, executor)
+                                                  project['repository_id'], pending['target'],
+                                                  deployment_checks(project, pending['target']), store, executor)
                         if result != 'succeeded':
                             continue
                 except Exception:
                     print('FLOW attention: deployment-blocked repo=' + str(project['repository_id'])
                           + ' target=reservation', file=sys.stderr, flush=True)
                     continue
-                current = store.get(project['repository_id'])
-            if not smoke_only and (current is None or (
-                    current['status'] == 'superseded' and store.last_success(project['repository_id'], 'main') is None)):
+            if not smoke_only:
                 try:
                     baseline = bootstrap_current_main(transport, token(), project['owner'], project['repository'],
-                                                      project['repository_id'], required, store, executor)
+                                                      project['repository_id'], deployment_checks(project, 'main'),
+                                                      store, executor)
                 except Exception:
                     baseline = 'blocked'
                 if baseline not in ('succeeded', 'already-initialized'):
@@ -107,7 +107,8 @@ def run_deployments(stop, config, private_key, *, transport=request, executor_fa
                     break
                 try:
                     result = dispatch_current(transport, token(), project['owner'], project['repository'],
-                                              project['repository_id'], target, required, store, executor)
+                                              project['repository_id'], target, deployment_checks(project, target),
+                                              store, executor)
                 except Exception:
                     result = 'blocked'
                 key = (project['repository_id'], target)

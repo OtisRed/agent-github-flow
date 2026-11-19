@@ -64,6 +64,23 @@ class ConfigurationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'cannot guard production promotion'):
             validate_config(self.config)
 
+    def test_per_branch_checks_require_all_and_only_enabled_targets(self):
+        verify = {'context': 'verify', 'app_id': 10}
+        build = {'context': 'build-chef-test', 'app_id': 10}
+        self.config['deployment_state_path'] = os.path.abspath('deployment-state')
+        self.project.update(deployment_enabled=True, promotion_enabled=True, deployment_guarded=True,
+                            deployment_executor=os.path.abspath('synthetic-executor'),
+                            deployment_checks={'smoke': [verify, build], 'main': [verify]})
+        self.assertIs(validate_config(self.config), self.config)
+        self.project['deployment_checks'] = {'smoke': [verify, build]}
+        with self.assertRaises(ValueError):
+            validate_config(self.config)
+        self.project.update(deployment_smoke_only=True, deployment_guarded=False)
+        self.assertIs(validate_config(self.config), self.config)
+        self.project['deployment_checks']['smoke'] = [verify, verify]
+        with self.assertRaisesRegex(ValueError, 'Duplicate deployment checks'):
+            validate_config(self.config)
+
 
 if __name__ == "__main__":
     unittest.main()

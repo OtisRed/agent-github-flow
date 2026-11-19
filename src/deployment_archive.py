@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 from deployment_attestation import attest
-from deployment_source import branch_head, verify_head_and_ci
+from deployment_source import branch_head, deployment_checks, verify_head_and_ci
 from deployment_state import DeploymentState, _request
 from mvp_credentials import AppToken, read_private_file
 from mvp_github import request as github_request
@@ -32,7 +32,7 @@ def fetch_archive(config, candidate, ref, token, store, output, *, transport=git
             or not NAME.fullmatch(project['owner']) or not NAME.fullmatch(project['repository'])
             or project['owner'] in ('.', '..') or project['repository'] in ('.', '..')):
         raise ValueError('Invalid repository name')
-    required = tuple((item['context'], item['app_id']) for item in project['deployment_checks'])
+    required = deployment_checks(project, ref)
     if not attest(config, candidate, token, store, transport, recovery=recovery):
         raise ValueError('Unconfirmed deployment')
     commit = candidate['commit'] if ref == candidate['target'] else branch_head(transport, token, project['owner'], project['repository'], ref)

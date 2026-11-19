@@ -48,6 +48,19 @@ class ArchiveTests(unittest.TestCase):
                 fetch_archive(self.config, self.req, 'smoke', 'token', object(), output, run=self.run_git)
         self.assertEqual(output.getvalue(), b'')
 
+    def test_main_deployment_verifies_smoke_checks_when_fetching_smoke(self):
+        self.req.update(target='main', commit='b' * 40)
+        self.config['projects'][0]['deployment_checks'] = {
+            'main': [{'context': 'verify', 'app_id': 1}],
+            'smoke': [{'context': 'build-chef-test', 'app_id': 2}],
+        }
+        with patch('deployment_archive.attest', return_value=True), \
+                patch('deployment_archive.branch_head', return_value='a' * 40), \
+                patch('deployment_archive.verify_head_and_ci', return_value=True) as verify:
+            fetch_archive(self.config, self.req, 'smoke', 'token', object(), io.BytesIO(), run=self.run_git)
+        self.assertEqual([call.args[4:] for call in verify.call_args_list],
+                         [('smoke', 'a' * 40, (('build-chef-test', 2),))] * 2)
+
 
 if __name__ == '__main__':
     unittest.main()

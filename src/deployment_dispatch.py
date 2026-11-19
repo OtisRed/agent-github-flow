@@ -6,15 +6,15 @@ from deployment_worker import _result
 
 def bootstrap_current_main(transport, token, owner, repository, repository_id, required, store, execute):
     """Record a baseline only after CI and the project attest the same live SHA."""
-    current = store.get(repository_id)
-    if current is not None and current['status'] == 'superseded' and store.last_success(repository_id, 'main') is None:
-        current = None
-    if current is not None and current['status'] != 'reserved':
+    if store.last_success(repository_id, 'main') is not None:
         return 'already-initialized'
+    if store.has_uncertain(repository_id):
+        return 'blocked'
+    current = store.get(repository_id)
     commit = branch_head(transport, token, owner, repository, 'main')
     request = {'id': f'bootstrap-main-{commit}', 'repository_id': repository_id,
                'target': 'main', 'commit': commit, 'changes': []}
-    if current is not None and current['request'] != request:
+    if current is not None and current['status'] == 'reserved' and current['request'] != request:
         return 'blocked'
     if not verify_head_and_ci(transport, token, owner, repository, 'main', commit, required):
         return 'not-verified'

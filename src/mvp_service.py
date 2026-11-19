@@ -25,6 +25,7 @@ from mvp_store import Store
 from mvp_worker import process_one
 from promotion_schedule import run_promotions
 from deployment_schedule import run_deployments
+from deployment_source import deployment_checks
 from deployment_state import DeploymentState
 from pr_admission_service import build_readers, run_admission
 from pr_admission_github import normalize_retry_targets
@@ -89,13 +90,14 @@ def validate_config(config):
             raise ValueError("Smoke-only deployment requires a ledger and cannot guard production promotion")
         if project.get('deployment_enabled') is True:
             checks = project.get('deployment_checks')
+            targets = {'smoke'} if smoke_only else {'main', 'smoke'}
             if ((not smoke_only and project.get('deployment_guarded') is not True)
                     or not isinstance(project.get('deployment_executor'), str)
-                    or not os.path.isabs(project['deployment_executor']) or not isinstance(checks, list) or not checks
-                    or any(not isinstance(c, dict) or set(c) != {'context', 'app_id'} or not isinstance(c['context'], str)
-                           or not c['context'] or type(c['app_id']) is not int or c['app_id'] <= 0 for c in checks)
-                    or len({(c['context'], c['app_id']) for c in checks}) != len(checks)):
+                    or not os.path.isabs(project['deployment_executor'])
+                    or (isinstance(checks, dict) and set(checks) != targets)):
                 raise ValueError("Invalid deployment configuration")
+            for target in targets:
+                deployment_checks(project, target)
         if 'status_enabled' in project and type(project['status_enabled']) is not bool:
             raise ValueError("Invalid status setting")
         if 'admission_enabled' in project and type(project['admission_enabled']) is not bool:
