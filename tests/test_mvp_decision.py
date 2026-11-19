@@ -82,8 +82,23 @@ class DecisionTests(unittest.TestCase):
 
     def test_incomplete_data_malformed_comment_and_open_done_block(self):
         self.assertEqual(run(snapshot(complete=False))["kind"], "blocked")
-        self.assertEqual(run(snapshot(comments=[comment(1, body="not a FLOW comment")]))["reason"], "invalid-flow-comment")
+        self.assertEqual(run(snapshot(comments=[comment(1, body="[FLOW]\nmissing fields")]))["reason"], "invalid-flow-comment")
         self.assertEqual(run(snapshot(comments=[comment(1, body=FLOW.replace("agent-ready", "done"))]))["reason"], "open-issue-cannot-be-done")
+
+    def test_trusted_discussion_does_not_replace_latest_handoff(self):
+        handoff = comment(1)
+        discussion = comment(2, body="Thanks! The [FLOW] above looks good.")
+        self.assertEqual(run(snapshot(comments=[handoff, discussion])),
+                         run(snapshot(comments=[handoff])))
+        self.assertEqual(run(snapshot(comments=[discussion])), {"kind": "no-change"})
+        self.assertEqual(run(snapshot(comments=[comment(3, body="Question", when=BOUNDARY)])),
+                         {"kind": "no-change"})
+
+    def test_discussion_does_not_hide_malformed_handoff(self):
+        comments = [comment(1), comment(2, body="[FLOW]\nmissing fields"),
+                    comment(3, body="Any update?")]
+        self.assertEqual(run(snapshot(comments=comments)),
+                         {"kind": "blocked", "reason": "invalid-flow-comment"})
 
     def test_ambiguous_boundary_and_missing_reopen_history_block(self):
         self.assertEqual(run(snapshot(comments=[comment(1, when=BOUNDARY)]))["reason"], "ambiguous-comment-boundary")

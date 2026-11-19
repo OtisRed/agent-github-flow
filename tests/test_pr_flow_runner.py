@@ -168,9 +168,9 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(self.snapshot["status"], "smoke")
         self.assertEqual(self.snapshot["comments"][0]["body"], "Historical workflow receipt")
 
-    def test_edited_legacy_comment_blocks_projection_of_new_merge(self):
+    def test_edited_legacy_flow_blocks_projection_of_new_merge(self):
         self.snapshot["status"] = "review"
-        self.comment.update(body="Historical receipt", created_at="2026-11-08T09:30:00Z",
+        self.comment.update(body="[FLOW]\nHistorical receipt", created_at="2026-11-08T09:30:00Z",
                             updated_at="2026-11-08T10:03:00Z")
         self.pr.update(created_at="2026-11-08T09:45:00Z", updated_at="2026-11-08T10:04:00Z",
                        state="closed", merged=True, merged_at="2026-11-08T10:04:00Z")
@@ -179,6 +179,17 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result, {"kind": "blocked", "reason": "legacy-comment-edited"})
         self.assertEqual(self.gateway.posted, [])
         self.assertEqual(self.snapshot["status"], "review")
+
+    def test_edited_legacy_discussion_does_not_block_pr_handoff(self):
+        self.snapshot["status"] = "review"
+        self.comment.update(body="Historical discussion", created_at="2026-11-08T09:30:00Z",
+                            updated_at="2026-11-08T10:03:00Z")
+        self.pr.update(created_at="2026-11-08T09:45:00Z", updated_at="2026-11-08T10:04:00Z",
+                       state="closed", merged=True, merged_at="2026-11-08T10:04:00Z")
+        result = process_one(self.store, self.gateway, enrolled_at=self.boundary, trusted_authors=frozenset({4, 99}),
+                             pr_flow={"enrolled_at": self.boundary, "app_author_id": 99})
+        self.assertEqual(result["kind"], "rescan")
+        self.assertEqual(len(self.gateway.posted), 1)
 
     def test_existing_agent_ready_issue_moves_to_review_after_pr_update(self):
         self.comment.update(body="Historical receipt", created_at="2026-11-08T09:30:00Z",

@@ -1,6 +1,6 @@
 """One PR-to-FLOW handoff, using the existing issue queue for recovery."""
 
-from mvp_decision import _date
+from mvp_decision import _date, has_flow_marker
 from pr_flow_decision import select_pr_handoff
 
 
@@ -37,6 +37,7 @@ def process_pr_handoff(store, gateway, row, snapshot, decision, *, enrolled_at, 
         # An edited legacy comment cannot safely stand in for an unchanged
         # pre-cutover history. A new FLOW explicitly starts the next cycle.
         if any(comment.get("author_id") in trusted_authors
+               and has_flow_marker(comment.get("body"))
                and _date(comment.get("created_at")) <= boundary < _date(comment.get("updated_at"))
                for comment in comments):
             store.block(repo, number, generation, "legacy-comment-edited")
