@@ -19,7 +19,7 @@ NAME = re.compile(r'^[A-Za-z0-9_.-]+$')
 MAX_ARCHIVE = 100 * 1024 * 1024
 
 
-def fetch_archive(config, candidate, ref, token, store, output, *, transport=github_request, run=subprocess.run):
+def fetch_archive(config, candidate, ref, token, store, output, *, transport=github_request, run=subprocess.run, recovery=False):
     candidate = json.loads(_request(candidate))
     if ref not in ('main', 'smoke') or (ref == 'main' and candidate['target'] != 'main'):
         raise ValueError('Invalid source branch')
@@ -33,7 +33,7 @@ def fetch_archive(config, candidate, ref, token, store, output, *, transport=git
             or project['owner'] in ('.', '..') or project['repository'] in ('.', '..')):
         raise ValueError('Invalid repository name')
     required = tuple((item['context'], item['app_id']) for item in project['deployment_checks'])
-    if not attest(config, candidate, token, store, transport):
+    if not attest(config, candidate, token, store, transport, recovery=recovery):
         raise ValueError('Unconfirmed deployment')
     commit = candidate['commit'] if ref == candidate['target'] else branch_head(transport, token, project['owner'], project['repository'], ref)
     if not verify_head_and_ci(transport, token, project['owner'], project['repository'], ref, commit, required):
@@ -59,7 +59,7 @@ def fetch_archive(config, candidate, ref, token, store, output, *, transport=git
             git(['--git-dir', repo, 'archive', '--format=tar', commit], stdout=target)
         if archive.stat().st_size > MAX_ARCHIVE:
             raise ValueError('Oversized archive')
-        if not attest(config, candidate, token, store, transport) or not verify_head_and_ci(transport, token, project['owner'], project['repository'], ref, commit, required):
+        if not attest(config, candidate, token, store, transport, recovery=recovery) or not verify_head_and_ci(transport, token, project['owner'], project['repository'], ref, commit, required):
             raise ValueError('Source changed during fetch')
         output.write((commit + '\n').encode())
         with archive.open('rb') as source:
@@ -77,12 +77,15 @@ def main():
     if len(body) > 65536:
         raise ValueError('Oversized request')
     message = json.loads(body)
-    if not isinstance(message, dict) or set(message) != {'request', 'ref'}:
+    if not isinstance(message, dict) or set(message) not in ({'request', 'ref'}, {'request', 'ref', 'purpose'}):
         raise ValueError('Invalid request')
+    recovery = 'purpose' in message
+    if recovery and (message['purpose'] != 'recovery' or message['ref'] != 'smoke'):
+        raise ValueError('Invalid source recovery purpose')
     candidate = json.loads(_request(message['request']))
     token = AppToken(config['app_id'], config['installation_id'], candidate['repository_id'],
                      read_private_file(config['app_key_path']), purpose='deployment')
-    fetch_archive(config, candidate, message['ref'], token(), DeploymentState(config['deployment_state_path']), sys.stdout.buffer)
+    fetch_archive(config, candidate, message['ref'], token(), DeploymentState(config['deployment_state_path']), sys.stdout.buffer, recovery=recovery)
 
 
 if __name__ == '__main__':
