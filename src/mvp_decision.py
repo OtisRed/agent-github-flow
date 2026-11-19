@@ -31,6 +31,11 @@ def _id(value):
     return type(value) is int and 0 < value < 2**63
 
 
+def has_flow_marker(body):
+    """Recognize declared handoffs independently of their strict syntax."""
+    return isinstance(body, str) and body.lstrip(JS_TRIM).startswith("[FLOW]")
+
+
 def parse_flow(body):
     """Apply the five-line format from flow.mjs without requiring Node on VPS."""
     if not isinstance(body, str):
@@ -120,9 +125,11 @@ def decide(snapshot, checkpoint, *, enrolled_at, trusted_authors):
             # whose most recent reopen predates controller enrollment.
             return {"kind": "target", "status": "needs-design", "recheck": True}
 
-        if any(entry[0] == boundary and entry[2]["author_id"] in trusted_authors for entry in ordered):
+        handoffs = [entry for entry in ordered if entry[2]["author_id"] in trusted_authors
+                    and has_flow_marker(entry[2]["body"])]
+        if any(entry[0] == boundary for entry in handoffs):
             return blocked("ambiguous-comment-boundary")
-        eligible = [entry for entry in ordered if entry[0] > boundary and entry[2]["author_id"] in trusted_authors]
+        eligible = [entry for entry in handoffs if entry[0] > boundary]
         if eligible:
             comment = eligible[-1][2]
             target = parse_flow(comment["body"])
