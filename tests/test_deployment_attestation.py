@@ -55,5 +55,13 @@ class AttestationTests(unittest.TestCase):
             self.assertFalse(attest(self.config, self.req, 'token', self.store, recovery=True))
 
 
+    def test_smoke_only_rejects_attestation_for_main(self):
+        self.config['projects'][0]['deployment_smoke_only'] = True
+        with patch('deployment_attestation.verify_head_and_ci') as verify:
+            self.assertFalse(attest(self.config, self.req, 'token', self.store))
+            self.assertFalse(attest(self.config, self.req, 'token', self.store, recovery=True))
+            verify.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

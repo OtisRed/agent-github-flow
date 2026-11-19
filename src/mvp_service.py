@@ -82,9 +82,15 @@ def validate_config(config):
             raise ValueError("Deployment guard requires the live version checker")
         if 'deployment_enabled' in project and type(project['deployment_enabled']) is not bool:
             raise ValueError("Invalid deployment setting")
+        smoke_only = project.get('deployment_smoke_only', False)
+        if type(smoke_only) is not bool or (smoke_only and (
+                project.get('deployment_enabled') is not True or 'deployment_state_path' not in config
+                or project.get('deployment_guarded') is True or project.get('promotion_enabled') is True)):
+            raise ValueError("Smoke-only deployment requires a ledger and disables main promotion")
         if project.get('deployment_enabled') is True:
             checks = project.get('deployment_checks')
-            if (project.get('deployment_guarded') is not True or not isinstance(project.get('deployment_executor'), str)
+            if ((not smoke_only and project.get('deployment_guarded') is not True)
+                    or not isinstance(project.get('deployment_executor'), str)
                     or not os.path.isabs(project['deployment_executor']) or not isinstance(checks, list) or not checks
                     or any(not isinstance(c, dict) or set(c) != {'context', 'app_id'} or not isinstance(c['context'], str)
                            or not c['context'] or type(c['app_id']) is not int or c['app_id'] <= 0 for c in checks)

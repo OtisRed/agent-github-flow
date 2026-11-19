@@ -22,6 +22,8 @@ def attest(config, candidate, token, store, transport=github_request, *, recover
     if len(matches) != 1:
         return False
     project = matches[0]
+    if project.get('deployment_smoke_only') is True and normalized['target'] != 'smoke':
+        return False
     attempt = store.get_attempt(normalized)
     allowed = ('running', 'unknown') if recovery else ('running',)
     if not attempt or attempt['request'] != normalized or attempt['status'] not in allowed:

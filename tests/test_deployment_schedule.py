@@ -43,6 +43,21 @@ class ScheduleTests(unittest.TestCase):
             run_deployments(OneTurn(), self.config, b'fixture', executor_factory=lambda _: lambda _: None)
         self.assertEqual(calls, ['main'])
 
+    def test_smoke_only_does_not_bootstrap_or_dispatch_main(self):
+        self.config['projects'][0]['deployment_smoke_only'] = True
+        with tempfile.TemporaryDirectory() as folder:
+            state = DeploymentState(Path(folder) / 'state')
+            state.initialize()
+            self.config['deployment_state_path'] = str(state.path)
+            with patch('deployment_schedule.AppToken', return_value=lambda: 'fixture'), \
+                    patch('deployment_schedule.bootstrap_current_main') as bootstrap, \
+                    patch('deployment_schedule.dispatch_current', return_value='succeeded') as dispatch, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                run_deployments(OneTurn(), self.config, b'fixture', executor_factory=lambda _: lambda _: None)
+            bootstrap.assert_not_called()
+            dispatch.assert_called_once()
+            self.assertEqual(dispatch.call_args.args[5], 'smoke')
+
     def test_restart_reconciles_only_confirmed_same_attempt(self):
         with tempfile.TemporaryDirectory() as folder:
             state = DeploymentState(Path(folder) / 'state'); state.initialize()

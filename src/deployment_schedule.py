@@ -43,6 +43,7 @@ def run_deployments(stop, config, private_key, *, transport=request, executor_fa
     previous = {}
     while not stop.is_set():
         for project, token in projects:
+            smoke_only = project.get('deployment_smoke_only') is True
             required = tuple((item['context'], item['app_id']) for item in project['deployment_checks'])
             try:
                 executor = executor_factory(project['deployment_executor'])
@@ -55,6 +56,8 @@ def run_deployments(stop, config, private_key, *, transport=request, executor_fa
                     previous[key] = 'blocked'
                 continue
             if unresolved and unresolved['status'] in ('running', 'unknown'):
+                if smoke_only and unresolved['request']['target'] != 'smoke':
+                    continue
                 try:
                     reconcile_deployment(store, unresolved['request'], executor.status(unresolved['request']))
                 except Exception:
@@ -65,6 +68,8 @@ def run_deployments(stop, config, private_key, *, transport=request, executor_fa
             # because GitHub is unavailable or CI cannot be checked.
             if current and current['status'] == 'reserved':
                 pending = current['request']
+                if smoke_only and pending['target'] != 'smoke':
+                    continue
                 try:
                     head = branch_head(transport, token(), project['owner'], project['repository'], pending['target'])
                     if head != pending['commit']:
@@ -84,7 +89,8 @@ def run_deployments(stop, config, private_key, *, transport=request, executor_fa
                           + ' target=reservation', file=sys.stderr, flush=True)
                     continue
                 current = store.get(project['repository_id'])
-            if current is None or (current['status'] == 'superseded' and store.last_success(project['repository_id'], 'main') is None):
+            if not smoke_only and (current is None or (
+                    current['status'] == 'superseded' and store.last_success(project['repository_id'], 'main') is None)):
                 try:
                     baseline = bootstrap_current_main(transport, token(), project['owner'], project['repository'],
                                                       project['repository_id'], required, store, executor)
@@ -96,7 +102,7 @@ def run_deployments(stop, config, private_key, *, transport=request, executor_fa
                         print('FLOW attention: deployment-' + baseline + ' repo=' + str(key[0]) + ' target=bootstrap', file=sys.stderr, flush=True)
                         previous[key] = baseline
                     continue
-            for target in ('main', 'smoke'):
+            for target in (('smoke',) if smoke_only else ('main', 'smoke')):
                 if stop.is_set():
                     break
                 try:

@@ -50,5 +50,21 @@ class ConfigurationTests(unittest.TestCase):
             validate_config(self.config)
 
 
+    def test_smoke_only_requires_state_and_rejects_main_automation(self):
+        self.project.update(deployment_enabled=True, deployment_smoke_only=True,
+                            deployment_executor=os.path.abspath('synthetic-executor'),
+                            deployment_checks=[{'context':'verify', 'app_id':10}])
+        with self.assertRaises(ValueError):
+            validate_config(self.config)
+        self.config['deployment_state_path'] = os.path.abspath('deployment-state')
+        self.assertIs(validate_config(self.config), self.config)
+        for key in ('promotion_enabled', 'deployment_guarded'):
+            with self.subTest(key=key):
+                self.project[key] = True
+                with self.assertRaises(ValueError):
+                    validate_config(self.config)
+                del self.project[key]
+
+
 if __name__ == "__main__":
     unittest.main()
