@@ -2,6 +2,7 @@
 from urllib.parse import urlencode
 
 from promotion_plan import SHA, closed_prefix, issue_reference
+from deployment_source import approved_scope
 
 
 MAX_COMMITS = 500
@@ -130,4 +131,5 @@ def inventory(transport, token, owner, repository):
             if (not isinstance(base_commit, dict) or base_commit.get('sha') != main
                     or main_tree is None or main_tree != common_tree):
                 result = {'kind': 'blocked', 'reason': 'candidate-missing-main'}
-    return {'main': main, 'smoke': smoke, 'base': base, 'plan': result}
+    scope = approved_scope(entries, result) if result.get('kind') == 'ready' else None
+    return {'main': main, 'smoke': smoke, 'base': base, 'plan': result, 'accepted_scope': scope}

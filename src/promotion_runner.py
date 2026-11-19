@@ -27,7 +27,7 @@ def protection_ready(protection):
     return bool(configured and protection.get('enforce_admins', {}).get('enabled') is True)
 
 
-def promotion_step(transport, token, owner, repository):
+def promotion_step(transport, token, owner, repository, *, deployment_ready=None):
     """Perform at most one mutation; uncertain results are re-read next time."""
     root = f'/repos/{owner}/{repository}'
     def read(path):
@@ -46,6 +46,8 @@ def promotion_step(transport, token, owner, repository):
     plan = inventory(transport, token, owner, repository)
     if plan['plan']['kind'] != 'ready':
         return plan['plan']['kind']
+    if deployment_ready is not None and deployment_ready(plan['main']) is not True:
+        return 'deployment-blocked'
     sha = plan['plan']['sha']
     branch = 'agf-promotion/' + sha
     repo = read('')
@@ -90,5 +92,10 @@ def promotion_step(transport, token, owner, repository):
     # Re-read issue states and both heads immediately before the guarded merge.
     if inventory(transport, token, owner, repository) != plan:
         return 'changed'
+    if deployment_ready is not None:
+        capture = getattr(deployment_ready, 'capture', None)
+        if not callable(capture):
+            return 'deployment-blocked'
+        capture(plan, number)
     mutation(MERGE_PR, {'id': pr_id, 'sha': sha}, 'mergePullRequest', 'pullRequest')
     return 'merged'

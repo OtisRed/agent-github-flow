@@ -1,0 +1,11 @@
+{
+  "deployment_state_path": "/var/lib/agent-github-flow-mvp/deployment-state.sqlite",
+  "project_patch": {
+    "deployment_enabled": true,
+    "deployment_guarded": true,
+    "deployment_executor": "/usr/local/libexec/chef-deploy-client",
+    "deployment_checks": [
+      {"context": "verify", "app_id": 15368}
+    ]
+  }
+}

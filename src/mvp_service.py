@@ -24,6 +24,8 @@ from mvp_scan import collect_in_background, stage_one
 from mvp_store import Store
 from mvp_worker import process_one
 from promotion_schedule import run_promotions
+from deployment_schedule import run_deployments
+from deployment_state import DeploymentState
 from pr_admission_service import build_readers, run_admission
 from pr_admission_github import normalize_retry_targets
 from webhook_ingress import validate_registry
@@ -53,6 +55,8 @@ def validate_config(config):
         raise ValueError("Invalid config")
     if 'archive_enabled' in config and type(config['archive_enabled']) is not bool:
         raise ValueError("Invalid archive setting")
+    if 'deployment_state_path' in config and (not isinstance(config['deployment_state_path'], str) or not os.path.isabs(config['deployment_state_path'])):
+        raise ValueError("Invalid deployment state path")
     for name in ("app_id", "installation_id", "port"):
         if type(config.get(name)) is not int or config[name] <= 0:
             raise ValueError("Invalid config")
@@ -70,6 +74,28 @@ def validate_config(config):
             raise ValueError("Invalid project")
         if 'promotion_enabled' in project and type(project['promotion_enabled']) is not bool:
             raise ValueError("Invalid promotion setting")
+        if 'deployment_guarded' in project and type(project['deployment_guarded']) is not bool:
+            raise ValueError("Invalid deployment guard setting")
+        if project.get('deployment_guarded') is True and ('deployment_state_path' not in config or project.get('promotion_enabled') is not True):
+            raise ValueError("Deployment guard requires promotion and deployment state")
+        if project.get('deployment_guarded') is True and project.get('deployment_enabled') is not True:
+            raise ValueError("Deployment guard requires the live version checker")
+        if 'deployment_enabled' in project and type(project['deployment_enabled']) is not bool:
+            raise ValueError("Invalid deployment setting")
+        smoke_only = project.get('deployment_smoke_only', False)
+        if type(smoke_only) is not bool or (smoke_only and (
+                project.get('deployment_enabled') is not True or 'deployment_state_path' not in config
+                or project.get('deployment_guarded') is True or project.get('promotion_enabled') is True)):
+            raise ValueError("Smoke-only deployment requires a ledger and disables main promotion")
+        if project.get('deployment_enabled') is True:
+            checks = project.get('deployment_checks')
+            if ((not smoke_only and project.get('deployment_guarded') is not True)
+                    or not isinstance(project.get('deployment_executor'), str)
+                    or not os.path.isabs(project['deployment_executor']) or not isinstance(checks, list) or not checks
+                    or any(not isinstance(c, dict) or set(c) != {'context', 'app_id'} or not isinstance(c['context'], str)
+                           or not c['context'] or type(c['app_id']) is not int or c['app_id'] <= 0 for c in checks)
+                    or len({(c['context'], c['app_id']) for c in checks}) != len(checks)):
+                raise ValueError("Invalid deployment configuration")
         if 'status_enabled' in project and type(project['status_enabled']) is not bool:
             raise ValueError("Invalid status setting")
         if 'admission_enabled' in project and type(project['admission_enabled']) is not bool:
@@ -152,6 +178,7 @@ def run(config):
     server = None
     thread = None
     promotion_thread = None
+    deployment_thread = None
     admission_thread = None
     stop = threading.Event()
     wake_admission = threading.Event()
@@ -199,6 +226,9 @@ def run(config):
         if any(p.get('promotion_enabled') is True for p in config['projects']):
             promotion_thread = threading.Thread(target=run_promotions, args=(stop, config, private_key), daemon=True)
             promotion_thread.start()
+        if any(p.get('deployment_enabled') is True for p in config['projects']):
+            deployment_thread = threading.Thread(target=run_deployments, args=(stop, config, private_key), daemon=True)
+            deployment_thread.start()
         if readers:
             admission_thread = threading.Thread(target=run_admission, args=(stop, wake_admission, readers), daemon=True)
             admission_thread.start()
@@ -223,6 +253,8 @@ def run(config):
                 raise RuntimeError("Webhook listener stopped")
             if promotion_thread is not None and not promotion_thread.is_alive():
                 raise RuntimeError("Promotion worker stopped")
+            if deployment_thread is not None and not deployment_thread.is_alive():
+                raise RuntimeError("Deployment worker stopped")
             if admission_thread is not None and not admission_thread.is_alive():
                 raise RuntimeError("Admission worker stopped")
             now = datetime.now(zone)
@@ -333,6 +365,8 @@ def run(config):
             admission_thread.join(timeout=30)
         if promotion_thread is not None:
             promotion_thread.join(timeout=10)
+        if deployment_thread is not None:
+            deployment_thread.join(timeout=30)
         if server is not None:
             if thread is not None and thread.is_alive():
                 server.shutdown()
@@ -343,13 +377,19 @@ def run(config):
 
 def main():
     parser = argparse.ArgumentParser(description="Private agent-github-flow MVP service")
-    parser.add_argument("action", choices=("initialize", "migrate-v1", "run"))
+    parser.add_argument("action", choices=("initialize", "initialize-deployment", "migrate-v1", "run"))
     parser.add_argument("config", help="Path to a private service-owned JSON config")
     args = parser.parse_args()
     try:
         config = _load(args.config)
         if args.action == "initialize":
             initialize(config)
+        elif args.action == "initialize-deployment":
+            path = config.get('deployment_state_path')
+            if not isinstance(path, str):
+                raise ValueError('Missing deployment state path')
+            _private_directory(Path(path).parent)
+            DeploymentState(path).initialize()
         elif args.action == "migrate-v1":
             migrate_v1(config)
         else:

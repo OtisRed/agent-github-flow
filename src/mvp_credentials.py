@@ -56,6 +56,7 @@ class AppToken:
                        "pr_handoff": {"issues": "write", "pull_requests": "read"},
                        "admission": {"issues": "read", "contents": "write", "pull_requests": "write",
                                      "checks": "write", "actions": "write", "administration": "read"},
+                       "deployment": {"contents": "read", "checks": "read", "pull_requests": "read"},
                        "promotion": {"issues": "read", "contents": "write",
                                      "pull_requests": "write", "administration": "read"}}
         if purpose not in permissions:

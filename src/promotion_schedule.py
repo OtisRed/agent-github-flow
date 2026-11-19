@@ -6,6 +6,9 @@ from zoneinfo import ZoneInfo
 from mvp_credentials import AppToken
 from mvp_github import request
 from promotion_runner import promotion_step
+from deployment_state import DeploymentState
+from deployment_schedule import trusted_executor
+from deployment_worker import _result
 
 
 def run_promotions(stop, config, private_key, *, transport=request):
@@ -25,11 +28,28 @@ def run_promotions(stop, config, private_key, *, transport=request):
                 if stop.is_set():
                     break
                 try:
-                    result = promotion_step(transport, token(), project['owner'], project['repository'])
+                    if project.get('deployment_guarded') is True:
+                        store = DeploymentState(config['deployment_state_path'])
+                        with store.promotion_guard(project['repository_id']) as ready:
+                            executor = trusted_executor(project['deployment_executor'])
+                            def guarded_ready(sha):
+                                if not ready(sha):
+                                    return False
+                                previous = store.last_success(project['repository_id'], 'main')
+                                if previous is None or previous['commit'] != sha:
+                                    return False
+                                try:
+                                    return _result(previous, executor.status(previous)) == 'succeeded'
+                                except Exception:
+                                    return False
+                            guarded_ready.capture = ready.capture
+                            result = promotion_step(transport, token(), project['owner'], project['repository'], deployment_ready=guarded_ready)
+                    else:
+                        result = promotion_step(transport, token(), project['owner'], project['repository'])
                 except Exception:
                     result = 'failed'
                 if previous.get(project['repository_id']) != result:
-                    alert = result in ('failed', 'protection-required', 'blocked')
+                    alert = result in ('failed', 'protection-required', 'blocked', 'deployment-blocked')
                     print(('FLOW attention: promotion-' if alert else 'FLOW promotion: ') + result
                           + ' repo=' + str(project['repository_id']),
                           file=sys.stderr if alert else sys.stdout, flush=True)

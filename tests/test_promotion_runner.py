@@ -1,10 +1,12 @@
 import sys
 import unittest
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from promotion_runner import promotion_step, protection_ready
+from deployment_state import DeploymentState
 
 
 class RunnerTests(unittest.TestCase):
@@ -93,6 +95,25 @@ class RunnerTests(unittest.TestCase):
         with patch('promotion_runner.inventory', return_value=self.plan):
             self.assertEqual(self.run_step(), 'merged')
         self.assertEqual(self.mutations[0]['variables'], {'id': 'pr', 'sha': self.sha})
+
+    def test_deployment_gate_blocks_before_any_github_mutation(self):
+        with patch('promotion_runner.inventory', return_value=self.plan):
+            outcome = promotion_step(self.transport, 'test-token', 'example', 'repo', deployment_ready=lambda sha: False)
+        self.assertEqual(outcome, 'deployment-blocked')
+        self.assertFalse(self.mutations)
+
+    def test_promotion_records_scope_before_merge(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = DeploymentState(Path(folder) / 'state'); store.initialize()
+            request = {'id': 'old', 'repository_id': 20, 'target': 'main', 'commit': self.main, 'changes': []}
+            store.reserve(request); store.transition(request, 'reserved', 'running'); store.transition(request, 'running', 'succeeded')
+            self.plan['accepted_scope'] = {'changes': ['issue-1'], 'commits': [self.sha]}
+            with store.promotion_guard(20) as ready, patch('promotion_runner.inventory', return_value=self.plan):
+                def verified_transport(path, token, *, body=None):
+                    if path == '/graphql':
+                        self.assertEqual(store.promotion_receipt(20, self.sha)['scope'], self.plan['accepted_scope'])
+                    return self.transport(path, token, body=body)
+                self.assertEqual(promotion_step(verified_transport, 'test-token', 'example', 'repo', deployment_ready=ready), 'merged')
 
 
 if __name__ == '__main__':
