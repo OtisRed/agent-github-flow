@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from deployment_state import _request
-from deployment_worker import _result
+from deployment_worker import _result, validate_unstarted_proof
 
 REGISTRY = '/etc/agf-deployer/projects.json'
 LOCK = '/run/agf-deployer.lock'
@@ -69,7 +69,7 @@ def _lock(path=LOCK):
 
 
 def dispatch(envelope, projects, *, run=subprocess.run, lock_path=LOCK):
-    if not isinstance(envelope, dict) or set(envelope) != {'action', 'request'} or envelope['action'] not in ('deploy', 'status'):
+    if not isinstance(envelope, dict) or set(envelope) != {'action', 'request'} or envelope['action'] not in ('deploy', 'status', 'retry-status'):
         raise ValueError('Invalid request')
     request = json.loads(_request(envelope['request']))
     command = projects.get(str(request['repository_id']))
@@ -85,7 +85,10 @@ def dispatch(envelope, projects, *, run=subprocess.run, lock_path=LOCK):
         if len(result.stdout) > MAX_RESPONSE:
             raise ValueError('Oversized project response')
         response = json.loads(result.stdout)
-        _result(request, response)
+        if envelope['action'] == 'retry-status':
+            validate_unstarted_proof(request, response)
+        else:
+            _result(request, response)
         return response
     finally:
         if guard is not None:

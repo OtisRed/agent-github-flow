@@ -22,7 +22,7 @@ class ProjectExecutor:
         normalized = json.loads(_request(request))
         payload = json.dumps({'action': action, 'request': normalized}, separators=(',', ':')).encode('utf-8')
         result = subprocess.run(self.command, input=payload, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                timeout=min(self.timeout, 15) if action == 'status' else self.timeout,
+                                timeout=min(self.timeout, 15) if action in ('status', 'retry-status') else self.timeout,
                                 check=True, env={'PATH': os.defpath})
         if len(result.stdout) > 8192:
             raise ValueError('Oversized executor response')
@@ -36,3 +36,6 @@ class ProjectExecutor:
 
     def status(self, request):
         return self._call('status', request)
+
+    def retry_status(self, request):
+        return self._call('retry-status', request)
