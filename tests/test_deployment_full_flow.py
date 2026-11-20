@@ -33,6 +33,12 @@ class FullFlowTests(unittest.TestCase):
         def github(path, token, *, body=None):
             root = '/repos/example/repo'
             if path == '/graphql':
+                if 'number' in body['variables']:
+                    self.assertTrue(current['merged'])
+                    self.assertEqual(body['variables']['number'], 17)
+                    return {'data': {'repository': {'pullRequest': {
+                        'number': 17, 'merged': True, 'mergeCommit': {'oid': merged},
+                    }}}}, None
                 self.assertEqual(store.promotion_receipt(20, candidate)['scope'], scope)
                 current.update(main=merged, merged=True)
                 return {'data': {'mergePullRequest': {'pullRequest': {'merged': True}}}}, None
@@ -46,7 +52,7 @@ class FullFlowTests(unittest.TestCase):
             if suffix == '/branches/main/protection':
                 return {'required_status_checks': {'strict': True, 'contexts': ['verify']}, 'enforce_admins': {'enabled': True}}, None
             if suffix == '/pulls/17':
-                return ({**pr, 'merged': True, 'merge_commit_sha': merged} if current['merged'] else pr), None
+                return ({**pr, 'merged': True} if current['merged'] else pr), None
             if suffix == '/commits/' + merged:
                 return {'sha': merged, 'parents': [{'sha': base}, {'sha': candidate}]}, None
             if '/check-runs?' in suffix:

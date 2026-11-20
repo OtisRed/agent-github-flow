@@ -61,13 +61,19 @@ class IntegrationTests(unittest.TestCase):
         inventory = {'main': base, 'plan': self.plan, 'accepted_scope': scope}
         with self.store.promotion_guard(20) as ready:
             self.assertTrue(ready(base)); ready.capture(inventory, 17)
-        def github(path, token):
+        merge_oid = 'e'*40
+        def github(path, token, *, body=None):
+            if path == '/graphql':
+                self.assertEqual(body['variables'], {'owner': 'example', 'repo': 'repo', 'number': 17})
+                return {'data': {'repository': {'pullRequest': {
+                    'number': 17, 'merged': True, 'mergeCommit': {'oid': merge_oid},
+                }}}}, None
             if path == '/repos/example/repo': return {'id': 20}, None
             if path.endswith('/branches/main'): return {'commit': {'sha': self.commit}}, None
             if path.endswith('/commits/' + self.commit):
                 return {'sha': self.commit, 'parents': [{'sha': base}, {'sha': candidate}]}, None
             if path.endswith('/pulls/17'):
-                return {'number': 17, 'merged': True, 'merge_commit_sha': self.commit,
+                return {'number': 17, 'merged': True, 'merge_commit_sha': None,
                         'base': {'ref': 'main', 'repo': {'id': 20}},
                         'head': {'ref': 'agf-promotion/' + candidate, 'sha': candidate, 'repo': {'id': 20}}}, None
             if '/check-runs?' in path: return {'total_count': 1, 'check_runs': [self.run]}, None
@@ -79,6 +85,11 @@ class IntegrationTests(unittest.TestCase):
                     'observed_commit': req['commit'], 'status': 'succeeded'}
         execute.status = lambda req: {'id': req['id'], 'target': req['target'], 'commit': req['commit'],
                                       'observed_commit': req['commit'], 'status': 'succeeded'}
+        with self.assertRaisesRegex(ValueError, 'Promotion pull request does not match merge'):
+            dispatch_current(github, 'fixture', 'example', 'repo', 20, 'main',
+                             (('verify', 7),), self.store, execute)
+        self.assertEqual(received, [])
+        merge_oid = self.commit
         self.assertEqual(dispatch_current(github, 'fixture', 'example', 'repo', 20, 'main',
                                           (('verify', 7),), self.store, execute), 'succeeded')
         self.assertEqual(received[0]['changes'], ['issue-1', 'issue-2'])

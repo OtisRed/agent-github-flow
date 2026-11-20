@@ -5,6 +5,28 @@ from promotion_plan import SHA
 from pr_admission_checks import tests_state
 
 MAX_PAGES = 10
+MERGE_COMMIT_QUERY = '''query($owner:String!,$repo:String!,$number:Int!){
+ repository(owner:$owner,name:$repo){pullRequest(number:$number){number merged mergeCommit{oid}}}}'''
+
+
+def pull_request_merge_oid(transport, token, owner, repository, number):
+    """Read the exact merge OID, which GitHub REST may omit for App tokens."""
+    if type(number) is not int or number <= 0:
+        raise ValueError('Invalid pull request identity')
+    result, _ = transport('/graphql', token, body={
+        'query': MERGE_COMMIT_QUERY,
+        'variables': {'owner': owner, 'repo': repository, 'number': number},
+    })
+    try:
+        detail = result['data']['repository']['pullRequest']
+        if result.get('errors') or detail['number'] != number or detail['merged'] is not True:
+            raise ValueError('Invalid pull request detail')
+        oid = detail['mergeCommit']['oid']
+        if not isinstance(oid, str) or not SHA.fullmatch(oid):
+            raise ValueError('Invalid merge commit')
+    except (KeyError, TypeError):
+        raise ValueError('Invalid pull request detail') from None
+    return oid
 
 
 def deployment_checks(project, target):
@@ -123,11 +145,12 @@ def promoted_scope(transport, token, owner, repository, repository_id, commit, s
     base_repo = base.get('repo') if isinstance(base, dict) else None
     head_repo = head.get('repo') if isinstance(head, dict) else None
     if (not isinstance(pr, dict) or pr.get('number') != number or pr.get('merged') is not True
-            or pr.get('merge_commit_sha') != commit or not isinstance(base, dict) or base.get('ref') != 'main'
+            or not isinstance(base, dict) or base.get('ref') != 'main'
             or not isinstance(base_repo, dict) or base_repo.get('id') != repository_id
             or not isinstance(head, dict) or head.get('sha') != parents[1]
             or not isinstance(head_repo, dict) or head_repo.get('id') != repository_id
-            or head.get('ref') != 'agf-promotion/' + parents[1]):
+            or head.get('ref') != 'agf-promotion/' + parents[1]
+            or pull_request_merge_oid(transport, token, owner, repository, number) != commit):
         raise ValueError('Promotion pull request does not match merge')
     scope = receipt.get('scope')
     if (not isinstance(scope, dict) or set(scope) != {'changes', 'commits'}
