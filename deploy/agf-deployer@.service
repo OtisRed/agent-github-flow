@@ -1,0 +1,17 @@
+[Unit]
+Description=One on-demand AGF project deployment request
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+ExecStart=/usr/bin/python3 /opt/agent-github-flow-mvp/current/src/ondemand_executor.py
+NoNewPrivileges=true
+RuntimeMaxSec=21min
+TimeoutStopSec=30s
+KillMode=control-group

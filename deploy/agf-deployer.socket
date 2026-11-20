@@ -1,0 +1,14 @@
+[Unit]
+Description=Local on-demand deployment socket for AGF
+
+[Socket]
+ListenStream=/run/agf-deployer.sock
+SocketUser=root
+SocketGroup=agent-flow
+SocketMode=0660
+Accept=yes
+MaxConnections=16
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target
