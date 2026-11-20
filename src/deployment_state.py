@@ -109,6 +109,20 @@ class DeploymentState:
             row = db.execute('SELECT request,status,result FROM deployment WHERE repository_id=? ORDER BY sequence DESC LIMIT 1', (repository_id,)).fetchone()
         return None if row is None else {'request': json.loads(row[0]), 'status': row[1], 'result': row[2]}
 
+    def requeue_unstarted(self, request):
+        """Apply an operator-authorized retry to the exact unresolved dispatch."""
+        encoded = _request(request)
+        with closing(self._connect()) as db, db:
+            db.execute('BEGIN IMMEDIATE')
+            changed = db.execute(
+                "UPDATE deployment SET status='reserved',result=NULL "
+                "WHERE repository_id=? AND deployment_id=? AND request=? AND status='unknown' "
+                "AND result IS NULL AND sequence=(SELECT MAX(sequence) FROM deployment WHERE repository_id=?)",
+                (request['repository_id'], request['id'], encoded, request['repository_id']))
+            if changed.rowcount != 1:
+                raise ValueError('Deployment is no longer eligible for retry')
+        return 'reserved'
+
     def get_attempt(self, request):
         encoded = _request(request)
         with closing(self._connect()) as db:

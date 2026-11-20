@@ -24,7 +24,9 @@ class OnDemandTests(unittest.TestCase):
         self.command.write_text('''#!/usr/bin/python3
 import json,sys
 e=json.load(sys.stdin);r=e['request']
-print(json.dumps({'id':r['id'],'target':r['target'],'commit':r['commit'],'observed_commit':r['commit'],'status':'succeeded'}))
+out = {'request':r,'status':'not-started'} if e['action']=='retry-status' else {
+    'id':r['id'],'target':r['target'],'commit':r['commit'],'observed_commit':r['commit'],'status':'succeeded'}
+print(json.dumps(out))
 ''')
         self.command.chmod(0o755)
         self.registry = self.root / 'projects.json'
@@ -62,6 +64,14 @@ print(json.dumps({'id':r['id'],'target':r['target'],'commit':r['commit'],'observ
     def test_forged_project_response_is_not_forwarded(self):
         self.command.write_text('#!/usr/bin/python3\nprint("{}")\n')
         self.assertFalse(self.serve({'action': 'status', 'request': self.request})['ok'])
+
+    def test_retry_status_accepts_only_proof_for_exact_request(self):
+        envelope = {'action': 'retry-status', 'request': self.request}
+        self.assertEqual(self.serve(envelope), {
+            'ok': True, 'response': {'request': self.request, 'status': 'not-started'}})
+        forged = {'request': {**self.request, 'changes': []}, 'status': 'not-started'}
+        self.command.write_text(f'#!/usr/bin/python3\nimport json\nprint(json.dumps({forged!r}))\n')
+        self.assertFalse(self.serve(envelope)['ok'])
 
     def test_two_connections_start_and_exit_as_independent_processes(self):
         pids = []

@@ -3,7 +3,7 @@
 The caller supplies authenticated GitHub verification and a fixed trusted
 executor. An exception after dispatch is uncertain, not a reason to retry.
 """
-from deployment_state import SHA
+from deployment_state import SHA, _request
 
 
 def _result(request, result):
@@ -15,6 +15,12 @@ def _result(request, result):
                 and (not isinstance(result['observed_commit'], str) or not SHA.fullmatch(result['observed_commit'])))):
         raise ValueError('Unconfirmed executor result')
     return result['status']
+
+
+def validate_unstarted_proof(request, proof):
+    if (not isinstance(proof, dict) or set(proof) != {'request', 'status'}
+            or proof['status'] != 'not-started' or _request(proof['request']) != _request(request)):
+        raise ValueError('No proof that the exact dispatch can be retried')
 
 
 def run_deployment_once(store, request, verify, execute):

@@ -16,3 +16,8 @@ Tryb pilota `deployment_smoke_only: true` wymaga `deployment_enabled: true` i sk
 `deployment_checks` może zawierać oddzielne listy dla `smoke` i `main`. Dla trybu smoke-only podajemy tylko `smoke`. Dotychczasowa płaska lista nadal obowiązuje na wszystkich włączonych gałęziach. Atestacja używa kontroli gałęzi wdrażanej, a pobranie źródeł dodatkowo sprawdza kontrole pobieranej gałęzi.
 
 Przy włączeniu wdrożeń `main` po pilocie AGF potwierdza pierwszy punkt odniesienia dla produkcji nawet wtedy, gdy dziennik zawiera już sukces `smoke`. Sprawdza bieżący commit, CI dla `main` i rzeczywiście działającą wersję przez `status` wykonawcy. Ta operacja zapisuje potwierdzenie w dzienniku AGF i nie uruchamia wdrożenia. Nierozstrzygnięta próba nadal blokuje dalszą pracę.
+## Operatorskie wznowienie przerwanego zlecenia
+
+Po zainstalowaniu zgodnych wersji kontrolera, dyspozytora i projektowego wykonawcy operator uruchamia `python3 /opt/agent-github-flow-mvp/current/src/deployment_retry.py KONFIG ID_REPO ID_PRÓBY` jako użytkownik usługi AGF. Identyfikator próby bierze z dziennika wdrożeń. Polecenie przyjmuje tylko dokładnie wskazaną próbę o nieznanym wyniku wywołania. Potwierdza aktualny SHA, CI i zakres promocji, a potem wymaga od wykonawcy odczytowej odpowiedzi `retry-status` z pełnym żądaniem i statusem `not-started`.
+
+Po potwierdzeniu stan zmienia się na `reserved`. Zwykły kontroler ponownie sprawdza GitHub i uruchamia to samo zlecenie. Rezerwacja nadal blokuje następną promocję aż do uzyskania potwierdzenia wdrożenia. Utrata odpowiedzi statusu dla wcześniej zakończonego wydania, aktywne `running`, rozpoczęta migracja i wykonawca bez obsługi dowodu wymagają uzgodnienia stanu bez ponownego kolejkowania tym poleceniem.
