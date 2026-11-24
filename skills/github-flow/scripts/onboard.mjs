@@ -1,4 +1,5 @@
 import path from 'node:path';
+import {declare} from './deployment-profile.mjs';
 import {fileURLToPath} from 'node:url';
 import {diagnose,parseProjectArgument} from './diagnose.mjs';
 import {ensureBoard,githubClient,parseProject} from './project-board.mjs';
@@ -61,6 +62,7 @@ export function prepare({repo,project,apply=false,initializeEmpty=false,createSm
    durationMs:Math.max(0,now()-start),
    diagnostic:{checks,projectLink,blockers},
    projectLinkResult:linkResult,
+   deploymentProfile:report.inventory?.deploymentProfile ?? {state:'unverified'},
    smokeBranch,
    firstView:view,
    remaining:['visible-kanban-columns-check','app-installation-access','project-auto-add-and-status-writers','repository-instructions-ci-and-protection','controller-enrollment-and-promotion','actual-issue-pr-and-owner-smoke'],
@@ -68,6 +70,12 @@ export function prepare({repo,project,apply=false,initializeEmpty=false,createSm
  };
 }
 function main(args) {
+ if(args.includes('--declare-deployment')) {
+   const [repoFlag,repo,profileFlag,input,mode,...extra]=args;
+   if(repoFlag!=='--repo' || !repo || profileFlag!=='--declare-deployment' || !input || (mode!==undefined && mode!=='--apply') || extra.length) throw Error('Use --repo PATH --declare-deployment FILE [--apply]');
+   console.log(JSON.stringify({deploymentProfile:declare(repo,input,mode==='--apply')}));
+   return;
+ }
  let repo,project,apply=false,initializeEmpty=false,createSmoke=false,linkProject=false;
  for(let i=0;i<args.length;i++) {
    if(args[i]==='--repo' && args[i+1] && !repo) repo=args[++i];
