@@ -218,15 +218,24 @@ def run(config):
                                  app_token=scan_token, project_token=project_token)
             scan_clients[repository_id] = (scan_client, project["enrolled_at"])
         readers = build_readers(config, private_key, store=store, clients=clients)
+        quickfix_queue = queue.SimpleQueue()
+        promotion_authors = {p['repository_id']: p['trusted_author_ids'] for p in config['projects']
+                             if p.get('promotion_enabled') is True}
+
+        def quickfix_closed(repository_id, sender_id):
+            if sender_id in promotion_authors.get(repository_id, ()):
+                quickfix_queue.put(repository_id)
+
         server = make_server(store, webhook_secret, registry, port=config["port"],
                              wake_admission=wake_admission.set if readers else None,
-                             status_repositories=frozenset(clients))
+                             status_repositories=frozenset(clients), quickfix_closed=quickfix_closed)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         signal.signal(signal.SIGTERM, lambda *_: stop.set())
         signal.signal(signal.SIGINT, lambda *_: stop.set())
         if any(p.get('promotion_enabled') is True for p in config['projects']):
-            promotion_thread = threading.Thread(target=run_promotions, args=(stop, config, private_key), daemon=True)
+            promotion_thread = threading.Thread(target=run_promotions, args=(stop, config, private_key),
+                                                kwargs={"quickfix_queue": quickfix_queue}, daemon=True)
             promotion_thread.start()
         if any(p.get('deployment_enabled') is True for p in config['projects']):
             deployment_thread = threading.Thread(target=run_deployments, args=(stop, config, private_key), daemon=True)

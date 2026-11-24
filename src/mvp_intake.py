@@ -13,7 +13,7 @@ from webhook_ingress import ACTIONS, IGNORED_ISSUE_ACTIONS, MAX_BODY, SIGNATURE,
 from pr_admission import pr_issue_number
 
 
-def receive(store, secret, registry, event, signature, body, *, wake_admission=None, status_repositories=None):
+def receive(store, secret, registry, event, signature, body, *, wake_admission=None, status_repositories=None, quickfix_closed=None):
     """Return 'accepted' only after the store commits; never persist a payload."""
     if not isinstance(secret, bytes) or len(secret) < 32 or not isinstance(registry, frozenset) or not registry:
         return "configuration_error"
@@ -96,6 +96,12 @@ def receive(store, secret, registry, event, signature, body, *, wake_admission=N
         store.enqueue(repository_id, issue["number"])
     except (sqlite3.Error, OSError, ValueError):
         return "storage_unavailable"
+    if (quickfix_closed is not None and event == "issues" and action == "closed"
+            and isinstance(issue.get("labels"), list)
+            and any(isinstance(label, dict) and label.get("name") == "quickfix" for label in issue["labels"])):
+        sender = payload.get("sender")
+        if isinstance(sender, dict) and positive_id(sender.get("id")):
+            quickfix_closed(repository_id, sender["id"])
     if callable(wake_admission) and event == "issues":
         wake_admission()
     return "accepted"

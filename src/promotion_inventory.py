@@ -114,5 +114,7 @@ def inventory(transport, token, owner, repository):
             if (not isinstance(base_commit, dict) or base_commit.get('sha') != main
                     or main_tree is None or main_tree != common_tree):
                 result = {'kind': 'blocked', 'reason': 'candidate-missing-main'}
+    if result.get('kind') == 'waiting' and entries:
+        print('FLOW promotion: queue waits for ' + owner + '/' + repository + '#' + str(entries[0]['issue']), flush=True)
     scope = approved_scope(entries, result) if result.get('kind') == 'ready' else None
     return {'main': main, 'smoke': smoke, 'base': base, 'plan': result, 'accepted_scope': scope}

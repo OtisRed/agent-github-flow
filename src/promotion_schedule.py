@@ -1,4 +1,5 @@
 """Nightly promotion on the existing controller host."""
+import queue
 import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -11,7 +12,7 @@ from deployment_schedule import trusted_executor
 from deployment_worker import _result
 
 
-def run_promotions(stop, config, private_key, *, transport=request):
+def run_promotions(stop, config, private_key, *, transport=request, quickfix_queue=None):
     """Resume night work from GitHub state; never run two attempts in parallel."""
     projects = []
     for project in config['projects']:
@@ -21,12 +22,23 @@ def run_promotions(stop, config, private_key, *, transport=request):
             projects.append((project, token))
     zone = ZoneInfo('Europe/Warsaw')
     previous = {}
+    requested = set()
     while not stop.is_set():
         now = datetime.now(zone)
-        if 3 <= now.hour < 5:
+        nightly = 3 <= now.hour < 5
+        if quickfix_queue is not None:
+            while True:
+                try:
+                    requested.add(quickfix_queue.get_nowait())
+                except queue.Empty:
+                    break
+        if nightly or requested:
             for project, token in projects:
                 if stop.is_set():
                     break
+                repository_id = project['repository_id']
+                if not nightly and repository_id not in requested:
+                    continue
                 try:
                     if project.get('deployment_guarded') is True:
                         store = DeploymentState(config['deployment_state_path'])
@@ -48,6 +60,8 @@ def run_promotions(stop, config, private_key, *, transport=request):
                         result = promotion_step(transport, token(), project['owner'], project['repository'])
                 except Exception:
                     result = 'failed'
+                if result not in ('branch-created', 'pull-request-created', 'waiting-checks', 'changed', 'merged'):
+                    requested.discard(repository_id)
                 if previous.get(project['repository_id']) != result:
                     alert = result in ('failed', 'protection-required', 'blocked', 'deployment-blocked')
                     print(('FLOW attention: promotion-' if alert else 'FLOW promotion: ') + result

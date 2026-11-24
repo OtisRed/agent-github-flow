@@ -57,6 +57,19 @@ class IntakeTests(unittest.TestCase):
         self.assertEqual(self.send(self.payload(), store=missing), "storage_unavailable")
         self.assertFalse(missing.path.exists())
 
+    def test_only_signed_closed_quickfix_wakes_promotion(self):
+        calls = []
+        for action,label,signed in [('closed','quickfix',True), ('edited','quickfix',True),
+                                    ('closed','ordinary',True), ('closed','quickfix',False)]:
+            event = self.payload()
+            event.update(action=action, sender={'id': 77})
+            event['issue']['labels'] = [{'name': label}]
+            body = json.dumps(event).encode()
+            sig = 'sha256=' + hmac.new(self.secret, body, hashlib.sha256).hexdigest()
+            mvp_intake.receive(self.store, self.secret, self.registry, 'issues', sig if signed else '', body,
+                               quickfix_closed=lambda repo,sender: calls.append((repo,sender)))
+        self.assertEqual(calls, [(20,77)])
+
     def test_pull_request_comment_is_ignored(self):
         payload = self.payload()
         payload["issue"]["pull_request"] = {}
