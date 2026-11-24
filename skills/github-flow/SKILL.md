@@ -5,6 +5,8 @@ description: Apply and diagnose Krzysztof's GitHub issue-to-delivery workflow ac
 
 # GitHub flow
 
+For a read-only cross-project delivery audit, run `python <skill-directory>/scripts/delivery_inventory.py`. See `references/diagnostics.md` for evidence boundaries. This reads the registered fleet on Mikrus and GitHub branch heads; it does not contact product runtimes.
+
 Apply the common delivery model in `references/contract.md`. The VSone model is the target for other projects, not permission to replace their existing workflow. Existing repository instructions and automation remain authoritative until an agreed migration. Respect higher-priority instructions and the user's current scope.
 
 The current MVP uses one GitHub App webhook and one controller on Mikrus with a private SQLite checkpoint; it does not require a relay token in each new project. One shared controller release serves enrolled projects; there are no separate project-selected flow versions. For onboarding or migration, read `references/mvp-onboarding.md`. Treat existing relay configuration as historical until its replacement is verified; use `references/relay-credentials.md` only when maintaining such an existing sender.
@@ -24,3 +26,7 @@ For a targeted PR, `node <skill-directory>/scripts/pr-evidence.mjs --repository 
 Report facts with source and scope. Distinguish `ok`, `missing`, `conflict`, and `unverified`; a missing local file is not proof that its GitHub counterpart is absent. Follow local workflow owners for actual operations. A diagnostic read never authorizes repository or GitHub mutations. Do not create competing status owners or copy VSone-specific paths, tools, identities, tests, or credentials into another project.
 
 When the project is unconfigured, recommend a bounded path toward the common model. For existing projects, inventory issues, PRs, branches, CI, Project automations, access, and state before proposing migration; preserve existing state and plan an observable, reversible handover. Support either one Project per repository or a shared Project without presuming the user's unresolved choice. Avoid a full audit for unrelated or trivial work.
+
+## Quickfix without an issue
+
+When asked for a quick fix without a ticket, reserve a fresh task branch from fetched smoke and its own worktree before editing. Use the host worktree tool where applicable. Choose a unique task identifier even for two requests with identical titles. Never reuse another chat's primary checkout or workspace. Keep the branch and worktree when an issue is supplied later. A draft may start without Refs. Before review, use the owner's issue or create a short issue with scope, acceptance and required review count. Mark it with the repository label quickfix (create that label when missing), place one standalone Refs #N in the PR body, and resume the ordinary review, DA, admission, tests and owner smoke. Label an issue only for an actual quickfix. Closing a labeled issue by a trusted owner wakes the existing prefix scheduler on the next service tick. Its GitHub reads, deployment guards, branch protections and ordering still apply. Read the blocker in the promotion log when waiting. Missed signals are reconciled by normal nightly promotion. Clean up the recorded worktree only after verified integration and done.

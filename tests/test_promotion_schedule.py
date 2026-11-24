@@ -24,6 +24,22 @@ class StopAfterTwoWaits:
 
 
 class PromotionScheduleTests(unittest.TestCase):
+    def test_daytime_quickfix_runs_only_in_selected_repo_and_coalesces_duplicates(self):
+        import queue
+        work = queue.SimpleQueue()
+        work.put(3)
+        work.put(3)
+        config = {'app_id': 1, 'installation_id': 2, 'projects': [
+            {'repository_id': n, 'owner': 'example', 'repository': str(n), 'promotion_enabled': True}
+            for n in (3, 4)]}
+        with patch('promotion_schedule.AppToken', return_value=lambda: 'fixture'), \
+                patch('promotion_schedule.promotion_step', return_value='waiting') as step, \
+                patch('promotion_schedule.datetime') as clock:
+            clock.now.return_value = SimpleNamespace(hour=12)
+            run_promotions(StopAfterTwoWaits(), config, b'fixture', quickfix_queue=work)
+        self.assertEqual(step.call_count, 1)
+        self.assertEqual(step.call_args.args[-1], '3')
+
     def test_incomplete_night_is_reported(self):
         stop = StopAfterTwoWaits()
         config = {'app_id': 1, 'installation_id': 2, 'projects': [
