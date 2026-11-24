@@ -96,6 +96,14 @@ Dokładny [format maszynowy i parser](flow.md) dostarczono w tym repozytorium. P
 
 Dokumentacyjny bootstrap i parser `[FLOW]` zostały dostarczone oraz sprawdzone z właścicielem. Na `smoke` są też początkowe CI i odczytowe preflighty dostępu. Nie oznacza to pełnego zakończenia [bootstrapu automatyzacji](bootstrap.md): reakcja na komentarze, nocna samonaprawa i kolejka promocji nadal wymagają implementacji i wspólnego smoke. Przed pracą sprawdź faktyczny stan gałęzi, uprawnień i kontroli.
 
+## Incydent wymagający uwagi właściciela
+
+Projekt określa, jaki stan wymaga interwencji, jak często go sprawdzać i po czym poznać odzyskanie sprawności. Jeżeli ma wykrywać również niedostępność hosta, kontrolę uruchamia się poza tym hostem, niezależnie od komputera właściciela. Po utworzeniu issue monitor zapamiętuje zwrócony numer. Gdy wynik zapisu jest niepewny, najpierw uzgadnia go z GitHubem. Świeżo utworzone zgłoszenie może pojawić się na liście z opóźnieniem.
+
+Pierwsze wykrycie problemu otwiera issue w repozytorium projektu. Automat rozpoznaje własne zgłoszenie po trwałym identyfikatorze monitora oraz autorze. Kontrole wykonują zapis kolejno. Powtórzenie tej samej obserwacji pozostawia wpis bez zmian. Zmiana rodzaju awarii lub jej powrót po odzyskaniu sprawności dopisuje nową informację. Przy odzyskaniu automat zapisuje w tym samym issue czas, sprawdzony warunek i odnośnik do przebiegu. Issue zamyka właściciel.
+
+Monitor przekazuje wyłącznie metadane potrzebne do diagnozy i pierwszy krok naprawy. Próbę odbiorową wykonuje się na osobnym oznaczonym incydencie: wymusza się awarię, powtarza kontrolę i potwierdza zdrowy stan rzeczywistego źródła. Należy sprawdzić liczbę issue i wpisów po ponowieniu. Wycofanie poprzedniego kanału wymaga działającego następcy. Termin pierwszej naturalnej kontroli i jej wynik zapisuje się osobno. [Pilot Dydaktyki](https://github.com/OtisRed/dydaktyka/issues/220)
+
 ## Otwarte zagadnienia
 
 1. Dokończenie bootstrapu tego repozytorium: rzeczywiste wdrożenie i sprawdzenie brakujących automatów oraz ścieżki promocji.
