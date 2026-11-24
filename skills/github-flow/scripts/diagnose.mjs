@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
+import {profileAt, compareVersion, fullSha} from './deployment-profile.mjs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -84,7 +85,7 @@ function localGuidance(root, requested) {
   return { found: [...new Set(found)], unreadable };
 }
 
-export function diagnose(requestedPath, live = false, explicitProject = null) {
+export function diagnose(requestedPath, live = false, explicitProject = null, observed = {}) {
   const requested = path.resolve(requestedPath);
   const report = { schemaVersion: 1, observedAt: new Date().toISOString(), scope: { requestedPath: requested, liveRequested: live }, checks: [], inventory: {}, limitations: [
     'Local presence does not prove a rule is current or deployed.',
@@ -96,6 +97,15 @@ export function diagnose(requestedPath, live = false, explicitProject = null) {
   const rootRead = run('git', ['rev-parse', '--show-toplevel'], requested);
   if (!rootRead.ok) { add('repository', 'unverified', `Git root unavailable: ${rootRead.code}.`, 'Check Git access or initialize a repository if appropriate.'); return report; }
   const root = path.resolve(rootRead.text); report.scope.repositoryRoot = root;
+  const profile = profileAt(root);
+  report.inventory.deploymentProfile = profile;
+  add('deployment-profile', profile.state, 'Project-owned declaration in agf-deployment.json.', 'Read start and verify for each target; collect a fresh runtime observation.');
+  if (profile.state === 'ok') {
+    profile.runtime = {};
+    for (const target of ['smoke', 'main']) {
+      profile.runtime[target] = {expected: null, observed: observed[target] ?? null, state: compareVersion(null, observed[target])};
+    }
+  }
   if (path.relative(root, requested).split(path.sep).includes('..')) { add('repository', 'unverified', 'Requested directory is outside the resolved repository.', 'Choose an unambiguous repository path.'); return report; }
   add('repository', 'ok', 'Git root resolved locally.', 'Read the applicable repository instructions.');
   const guidance = localGuidance(root, requested);
@@ -152,6 +162,13 @@ export function diagnose(requestedPath, live = false, explicitProject = null) {
   if (!live) { add('github-live', 'unverified', 'Live GitHub reads were not requested.', 'Use --live when appropriate and allowed.'); return report; }
   if (!identity) { add('github-live', 'unverified', 'A unique GitHub remote is required for live reads.', 'Resolve repository identity before retrying.'); return report; }
   const api = `repos/${identity.owner}/${identity.repo}`;
+  if (profile.runtime) {
+    for (const [target, evidence] of Object.entries(profile.runtime)) {
+      const head = json(run('gh', ['api', api + '/branches/' + target], root));
+      evidence.expected = head.ok && fullSha.test(head.data?.commit?.sha ?? '') ? head.data.commit.sha : null;
+      evidence.state = compareVersion(evidence.expected, evidence.observed);
+    }
+  }
   const repository = json(run('gh', ['api', api], root));
   if (!repository.ok || !repository.data?.default_branch) { add('github-live', 'unverified', `Repository metadata unavailable: ${repository.code || 'incomplete-response'}.`, 'Check network and GitHub access.'); return report; }
   report.inventory.liveRepository = { defaultBranch: repository.data.default_branch, private: repository.data.private, issuesEnabled: repository.data.has_issues };
@@ -181,8 +198,17 @@ export function diagnose(requestedPath, live = false, explicitProject = null) {
 
 function main(args) {
   let repo = process.cwd(), live = false, project = null;
+  const observed = {};
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--live') live = true;
+    else if (['--observed-smoke', '--observed-main'].includes(args[i])) {
+      const target = args[i].slice('--observed-'.length);
+      const value = args[++i];
+      if (observed[target] || !(value === 'stopped' || fullSha.test(value ?? ''))) {
+        process.stderr.write('Supply one full runtime SHA or stopped for each observed target.\n'); process.exitCode = 2; return;
+      }
+      observed[target] = value;
+    }
     else if (args[i] === '--repo' && args[i + 1] && !args[i + 1].startsWith('--')) repo = args[++i];
     else if (args[i] === '--project' && args[i + 1] && !project) {
       project = parseProjectArgument(args[++i]);
@@ -190,6 +216,6 @@ function main(args) {
     }
     else { process.stderr.write('Usage: node diagnose.mjs [--repo <path>] [--live] [--project user:OWNER/NUMBER|organization:OWNER/NUMBER]\n'); process.exitCode = 2; return; }
   }
-  process.stdout.write(JSON.stringify(diagnose(repo, live, project), null, 2) + '\n');
+  process.stdout.write(JSON.stringify(diagnose(repo, live, project, observed), null, 2) + '\n');
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) main(process.argv.slice(2));
