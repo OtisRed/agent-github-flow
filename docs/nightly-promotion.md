@@ -80,3 +80,9 @@ Przed opt-in trzeba podłączyć nadrzędny obieg do rzeczywistych odczytów ora
 Uruchom `python src/selective_promotion_github.py INPUT.json` z odczytową sesją GitHub CLI. Wejście operatora podaje `repository`, `project_id`, `manifest` kandydata, `pr` oraz `app_id` producenta verify. Program potwierdza domknięty cykl i kartę done, kompletny zestaw PR w ograniczonej inwentaryzacji oraz obecność merge commitów na smoke. Ochronę uznaje tylko przy jednym wymaganym verify od wskazanej aplikacji, egzekwowaniu ochrony administratorów, strict i braku dodatkowych aktywnych reguł na main. Inne konfiguracje wymagają osobnej weryfikacji. Kod zwraca 1 przy blokadzie, także gdy odczyt dostarczył użyteczne dane diagnostyczne.
 
 Pierwszy odczyt obsługuje potwierdzone scalenia z dwoma rodzicami. Pełne pokrycie squash/rebase, ustalenie śladu wcześniejszej wybiórczej promocji i podpięcie strzeżonego zapisu pozostają przed opt-in. Draft lub zmieniony main albo smoke blokuje kandydaturę. Publikacja forward-sync wymaga faktycznego i potwierdzonego squasha na main.
+
+### Synchronizacja historii w planerze prefiksu
+
+Planer pomija techniczny PR `sync-main/<SHA>` tylko wtedy, gdy historia potwierdza dołączenie commita już osiągalnego z main, a pełne drzewo jest identyczne z pierwszym rodzicem. Obsługuje także zwykłe scalenie przez GitHub, które opakowuje taki commit w drugi merge o tym samym drzewie i tym samym pierwszym rodzicu. Jeżeli deklaracja, rodzice lub drzewa się nie zgadzają, plan zatrzymuje się.
+
+Pomijanie synchronizacji dotyczy wpisu w kolejce. Starszy zamknięty prefiks może nadal wskazywać commit sprzed synchronizacji. Włączenie strict wymaga osobnego sprawdzenia, czy kandydat starego planera zawiera aktualny main. Nie wyłączaj wymagań CI dla chronionego PR synchronizacji.

@@ -1,4 +1,5 @@
 """Read the promotion queue from GitHub without changing repository state."""
+import re
 from urllib.parse import urlencode
 
 from promotion_plan import SHA, closed_prefix, issue_reference
@@ -6,6 +7,50 @@ from deployment_source import approved_scope, pull_request_merge_oid
 
 
 MAX_COMMITS = 500
+SYNC_REF = re.compile(r"sync-main/([0-9a-f]{40})")
+
+
+def _tree_id(entry):
+    meta = entry.get('commit') if isinstance(entry, dict) else None
+    tree = meta.get('tree') if isinstance(meta, dict) else None
+    value = tree.get('sha') if isinstance(tree, dict) else None
+    return value if isinstance(value, str) and SHA.fullmatch(value) else None
+
+
+def _parents(entry):
+    parents = entry.get('parents')
+    if not isinstance(parents, list):
+        return []
+    return [parent.get('sha') if isinstance(parent, dict) else None for parent in parents]
+
+
+def _technical_sync(sha, pr, ahead, commit_at):
+    head = pr.get('head') or {}
+    ref = head.get('ref')
+    if not isinstance(ref, str) or not ref.startswith('sync-main/'):
+        return False
+
+    match = SYNC_REF.fullmatch(ref)
+    commit = commit_at(sha)
+    parents = _parents(commit)
+    if not match or len(parents) != 2:
+        raise ValueError('Invalid forward sync')
+    first, second = parents
+    main = match[1]
+    tree = _tree_id(commit)
+    if (not isinstance(second, str) or not SHA.fullmatch(second) or main in ahead
+            or tree is None or tree != _tree_id(commit_at(first))):
+        raise ValueError('Unverified forward sync')
+    # A parent reachable from smoke and absent from the complete comparison
+    # is already reachable from main. Allow either a direct merge or the
+    # extra GitHub merge commit around the same two-parent sync.
+    if head.get('sha') == sha and second == main:
+        return True
+    if head.get('sha') == second and second in ahead:
+        inner = commit_at(second)
+        if _parents(inner) == [first, main] and _tree_id(inner) == tree:
+            return True
+    raise ValueError('Unverified forward sync parents')
 
 
 def inventory(transport, token, owner, repository):
@@ -51,11 +96,22 @@ def inventory(transport, token, owner, repository):
         page += 1
     if expected and smoke not in ahead:
         raise ValueError('Incomplete comparison')
+    commits = {}
+    def commit_at(sha):
+        if not isinstance(sha, str) or not SHA.fullmatch(sha):
+            raise ValueError('Invalid commit identity')
+        if sha not in commits:
+            entry = read('/commits/' + sha)
+            if not isinstance(entry, dict) or entry.get('sha') != sha:
+                raise ValueError('Invalid commit identity')
+            commits[sha] = entry
+        return commits[sha]
+
     chain, cursor = [], smoke
     while cursor in ahead:
         if len(chain) >= MAX_COMMITS or cursor in chain:
             raise ValueError('Incomplete first-parent history')
-        commit = read('/commits/' + cursor)
+        commit = commit_at(cursor)
         if commit.get('sha') != cursor or not isinstance(commit.get('parents'), list) or not commit['parents']:
             raise ValueError('Invalid commit history')
         chain.append(cursor)
@@ -81,6 +137,8 @@ def inventory(transport, token, owner, repository):
         if len(matching) != 1:
             raise ValueError('Ambiguous pull request mapping')
         pr = matching[0]
+        if _technical_sync(sha, pr, ahead, commit_at):
+            continue
         number = issue_reference(pr.get('body'))
         if number is None:
             raise ValueError('Ambiguous issue reference')
@@ -100,17 +158,9 @@ def inventory(transport, token, owner, repository):
         if candidate['merge_base_commit']['sha'] != main:
             # A prior promotion can add only a merge commit to main. Permit
             # that history difference only when both complete trees match.
-            def tree_id(entry):
-                if not isinstance(entry, dict):
-                    return None
-                commit = entry.get('commit')
-                tree = commit.get('tree') if isinstance(commit, dict) else None
-                value = tree.get('sha') if isinstance(tree, dict) else None
-                return value if isinstance(value, str) and SHA.fullmatch(value) else None
-
             base_commit = candidate.get('base_commit')
-            main_tree = tree_id(base_commit)
-            common_tree = tree_id(candidate['merge_base_commit'])
+            main_tree = _tree_id(base_commit)
+            common_tree = _tree_id(candidate['merge_base_commit'])
             if (not isinstance(base_commit, dict) or base_commit.get('sha') != main
                     or main_tree is None or main_tree != common_tree):
                 result = {'kind': 'blocked', 'reason': 'candidate-missing-main'}
