@@ -66,3 +66,11 @@ Pilot #241 pokazał, że check GitHuba wskazuje SHA head PR, podczas gdy workflo
 Próbę AGF uruchom poleceniem `python src/selective_promotion_ci.py INPUT.json`, z istniejącą odczytową sesją `gh`. Wejście zawiera `repository` (OWNER/REPO), `expected` (repository_id, pr, main, candidate, tree), `policy` (workflow_id, app_id, workflow_path, workflow_blob, checkout_sha), `run_id` i `job_id`. Politykę ustala operator na podstawie przejrzanej wersji workflow. Nie pobieraj jej z opisu PR.
 
 Kontrola jest ograniczona do workflow AGF `.github/workflows/ci.yml`, joba verify i jego pierwszego przypiętego checkoutu. Wiąże ostatni check z jobem i próbą workflow. Pełny SHA checkoutu porównuje z rodzicami i drzewem testowanego commita. Kończy ponownym odczytem checka, PR i main. Brak logu, inny checkout, inna definicja workflow lub zmiana bazy blokują wynik. Raport jest odczytowy i nie jest wywoływany przez scheduler.
+
+### Próba kompletnej ścieżki i forward-sync
+
+`verify_and_squash` łączy odczyt dowodu CI z rejestrem i zabezpieczeniem squasha. Adapter odczytu musi niezależnie potwierdzić aktualne źródła, PR i ochronę gałęzi. Przed zapisem funkcja ponownie odczytuje te dane po zweryfikowaniu CI. W próbie odtwarzamy zdarzenia GitHuba na osobnym repozytorium Git bez kontaktu z usługą produkcyjną.
+
+`prepare_forward_sync` przygotowuje commit w odizolowanym repozytorium po potwierdzeniu squasha w rejestrze. Używa aktualnej pary refów i zachowuje drzewo smoke. Pierwszym rodzicem jest smoke, drugim potwierdzony commit main. Zmiana refów, konflikt lub wynik zmieniający zawartość smoke wymagają osobnego rozliczenia. Dotyczy to również poprawki bezpośrednio na main, której nie ma w smoke. Funkcja przygotowuje obiekt Git, a chroniona publikacja ma należeć do jednego właściciela flow.
+
+Przed opt-in trzeba podłączyć nadrzędny obieg do rzeczywistych odczytów oraz sprawdzić publikację forward-sync i wykluczanie już promowanych zmian. Jedno repozytorium ma w danej chwili jednego wykonawcę promocji. Przed powrotem trzeba uzgodnić oczekujące squashe i domknąć forward-sync; stary planer nie może zakładać, że wcześniejsze squashowane źródła są niepromowane.
