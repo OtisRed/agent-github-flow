@@ -5,6 +5,8 @@ description: Apply and diagnose Krzysztof's GitHub issue-to-delivery workflow ac
 
 # GitHub flow
 
+For deployment questions start with `node <skill-directory>/scripts/diagnose.mjs --repo PATH` and read `inventory.deploymentProfile`. Each project's tracked `agf-deployment.json` identifies where smoke and main run, who starts them and how to measure the serving version. Missing means undeclared. Follow the project verification method; pass a freshly observed full SHA or confirmed `stopped` with `--observed-smoke` or `--observed-main` and `--live` to compare with GitHub. The helper never starts targets or executes declaration text. See [deployment profiles](references/deployment-profile.md) for onboarding.
+
 For a read-only cross-project delivery audit, run `python <skill-directory>/scripts/delivery_inventory.py`. See `references/diagnostics.md` for evidence boundaries. This reads the registered fleet on Mikrus and GitHub branch heads; it does not contact product runtimes.
 
 Apply the common delivery model in `references/contract.md`. The VSone model is the target for other projects, not permission to replace their existing workflow. Existing repository instructions and automation remain authoritative until an agreed migration. Respect higher-priority instructions and the user's current scope.

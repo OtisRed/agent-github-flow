@@ -53,3 +53,5 @@ Before enabling promotion, inspect the existing closed prefix and what could rea
 Use a real, bounded issue: verify App and Project reads, an observed `[FLOW]` status change, and one clear status owner. Verify a newly created issue reaches the intended Project and `needs-design`; a manually inserted card does not prove Auto-add. For PR flow, verify the current-head review with DA, `flow-admission`, the CI wait and actual project checks, App merge to `smoke`, and the resulting issue status. Record separately what was observed, what was only tested synthetically, and any missing nightly, rollback or new-project evidence.
 
 Leave older backlog cards and product work to their proper owners; record any uncompleted migration as actionable follow-up. Report missing access or a blocked setup honestly. The owner and agent perform smoke together, and only the owner decides whether to close the issue; promotion and deployment remain separate facts.
+
+During project preparation record both runtime targets following [deployment profiles](deployment-profile.md). Verify what is actually running before delivery.
