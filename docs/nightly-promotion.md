@@ -33,3 +33,14 @@ between the final read and GitHub's merge remains a race; branch protection
 still applies at merge time. The owner accepted the reopen risk on 5 November
 2026 and chose the final check followed by automatic promotion. Issue #24 covers validating the actual project CI
 and setting protection before production promotion. A merge is not a release.
+
+## Odczytowy pilot wybiórczej promocji (#197)
+
+Uruchom ręcznie `python src/selective_promotion_plan.py observation.json`. Program czyta jeden lokalny plik JSON i wypisuje porównanie planów. Pierwszy pilot korzysta z danych syntetycznych.
+
+- `repository_id` identyfikuje repozytorium. `before` i `after` zawierają pełne SHA pól `main` i `smoke`. `complete` oznacza potwierdzoną kompletność dostarczonego odczytu.
+- `entries` to uporządkowane po integracji wpisy `issue`, `pr`, `sha` (commit scalenia), `merged_at`, `cycle` i `body` (opis PR). Jeden zamknięty cykl wymaga zgodności wszystkich jego PR. `Depends-on: #123, #124` dotyczy tego samego repozytorium.
+- `issues` mapuje numery issue na `state`, `status`, `cycle` (ID zdarzenia zamknięcia), `closed_at`, kompletną listę `prs` bieżącego cyklu i `published`. W próbce `published: null` oznacza potwierdzony brak wcześniejszej promocji tego cyklu. Potwierdzony wpis zawiera ten sam `cycle`, SHA sprawdzonego `main` oraz `commits`, mapę numerów PR na źródłowe SHA scaleń tego cyklu.
+- `closed_prefix` odtwarza obecny wybór na przekazanych danych. `selected` i `excluded` opisują propozycję wybiórczą i powody wykluczeń. Raport zależy od wiarygodności danych wejściowych. Sam program nie pobiera dowodów z GitHuba. Następny etap #195 sprawdzi składanie kandydata na podanym `main`.
+
+Przykład wejścia stanowi funkcja `sample()` w [testach planera](../tests/test_selective_promotion_plan.py).
