@@ -44,3 +44,11 @@ Uruchom ręcznie `python src/selective_promotion_plan.py observation.json`. Prog
 - `closed_prefix` odtwarza obecny wybór na przekazanych danych. `selected` i `excluded` opisują propozycję wybiórczą i powody wykluczeń. Raport zależy od wiarygodności danych wejściowych. Sam program nie pobiera dowodów z GitHuba. Następny etap #195 sprawdzi składanie kandydata na podanym `main`.
 
 Przykład wejścia stanowi funkcja `sample()` w [testach planera](../tests/test_selective_promotion_plan.py).
+
+## Składanie kandydata bez promocji (#195)
+
+Uruchom `python src/selective_promotion_candidate.py REPO INPUT.json --check POLECENIE ARGUMENTY`. `INPUT.json` zawiera `plan` z #197 oraz `methods`, czyli mapę numerów PR na potwierdzoną metodę scalenia (`merge` albo `squash`). Liczba rodziców służy sprawdzeniu deklarowanej metody. Pojedynczy rodzic sam nie rozróżnia squasha od rebase. Rebase i niepewne metadane blokują przygotowanie.
+
+Przed próbą odśwież referencje `origin/main` i `origin/smoke` w podanym repozytorium. Program porównuje te lokalne referencje z planem przed złożeniem i po testach. Gdy próbę prowadzi się na prawdziwych danych, potrzebna jest jeszcze niezależna kontrola aktualności GitHuba przed użyciem wyniku. Próby w tym etapie używają syntetycznego repozytorium.
+
+Program uruchamia jawnie podane polecenie testowe w tymczasowym checkoucie dokładnego kandydata. Polecenie musi być zaufane i działać na izolowanych danych. Kandydat powstaje na `main` przez nałożenie delt zatwierdzonych PR. Konflikt, błąd testu, zmiana refów albo modyfikacja śledzonych plików przez test powoduje brak manifestu. Wynik zawiera pełne SHA bazy, drzewa i kandydata oraz numery issue, cykli, PR i commity źródłowe do opisu przyszłego PR promocyjnego. Tymczasowa kopia jest usuwana; identyczny wynik można odtworzyć przy tych samych wejściach. Ten etap sam nie kontaktuje się z GitHubem.
