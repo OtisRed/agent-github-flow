@@ -31,3 +31,4 @@
 - [Roboczy przegląd wdrożenia](docs/review-wdrozenia-189-56.md) — wykryte blokady i zakres dowodów przed finalnym review.
 
 - [Odzyskanie dostępu kontrolera](docs/credential-recovery.md) — poświadczenia App i Projectów, wymiana oraz ograniczenia odtwarzania.
+- [Alerty operacyjne](docs/runtime-alerts.md) — lokalny protokół, konfiguracja i odzyskanie po utracie odpowiedzi.

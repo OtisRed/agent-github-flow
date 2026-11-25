@@ -1,0 +1,21 @@
+[Unit]
+Description=Report one operational GitHub issue
+After=network-online.target
+
+[Service]
+Type=exec
+User=agent-flow
+Group=agent-flow
+StandardInput=socket
+StandardOutput=null
+StandardError=journal
+ExecStart=/usr/bin/python3 /opt/agent-github-flow-mvp/current/src/runtime_alerts.py --routes /etc/agent-github-flow-mvp/alerts.json --app-config /etc/agent-github-flow-mvp/config.json --state /var/lib/agent-github-flow-alerts
+StateDirectory=agent-github-flow-alerts
+StateDirectoryMode=0700
+UMask=0077
+RuntimeMaxSec=40s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
