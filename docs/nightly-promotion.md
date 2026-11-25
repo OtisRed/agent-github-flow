@@ -33,3 +33,22 @@ between the final read and GitHub's merge remains a race; branch protection
 still applies at merge time. The owner accepted the reopen risk on 5 November
 2026 and chose the final check followed by automatic promotion. Issue #24 covers validating the actual project CI
 and setting protection before production promotion. A merge is not a release.
+
+## Odczytowy pilot wybiórczej promocji (#197)
+
+Uruchom ręcznie `python src/selective_promotion_plan.py observation.json`. Program czyta jeden lokalny plik JSON i wypisuje porównanie planów. Pierwszy pilot korzysta z danych syntetycznych.
+
+- `repository_id` identyfikuje repozytorium. `before` i `after` zawierają pełne SHA pól `main` i `smoke`. `complete` oznacza potwierdzoną kompletność dostarczonego odczytu.
+- `entries` to uporządkowane po integracji wpisy `issue`, `pr`, `sha` (commit scalenia), `merged_at`, `cycle` i `body` (opis PR). Jeden zamknięty cykl wymaga zgodności wszystkich jego PR. `Depends-on: #123, #124` dotyczy tego samego repozytorium.
+- `issues` mapuje numery issue na `state`, `status`, `cycle` (ID zdarzenia zamknięcia), `closed_at`, kompletną listę `prs` bieżącego cyklu i `published`. W próbce `published: null` oznacza potwierdzony brak wcześniejszej promocji tego cyklu. Potwierdzony wpis zawiera ten sam `cycle`, SHA sprawdzonego `main` oraz `commits`, mapę numerów PR na źródłowe SHA scaleń tego cyklu.
+- `closed_prefix` odtwarza obecny wybór na przekazanych danych. `selected` i `excluded` opisują propozycję wybiórczą i powody wykluczeń. Raport zależy od wiarygodności danych wejściowych. Sam program nie pobiera dowodów z GitHuba. Następny etap #195 sprawdzi składanie kandydata na podanym `main`.
+
+Przykład wejścia stanowi funkcja `sample()` w [testach planera](../tests/test_selective_promotion_plan.py).
+
+## Składanie kandydata bez promocji (#195)
+
+Uruchom `python src/selective_promotion_candidate.py REPO INPUT.json --check POLECENIE ARGUMENTY`. `INPUT.json` zawiera `plan` z #197 oraz `methods`, czyli mapę numerów PR na potwierdzoną metodę scalenia (`merge` albo `squash`). Liczba rodziców służy sprawdzeniu deklarowanej metody. Pojedynczy rodzic sam nie rozróżnia squasha od rebase. Rebase i niepewne metadane blokują przygotowanie.
+
+Przed próbą odśwież referencje `origin/main` i `origin/smoke` w podanym repozytorium. Program porównuje te lokalne referencje z planem przed złożeniem i po testach. Gdy próbę prowadzi się na prawdziwych danych, potrzebna jest jeszcze niezależna kontrola aktualności GitHuba przed użyciem wyniku. Próby w tym etapie używają syntetycznego repozytorium.
+
+Program uruchamia jawnie podane polecenie testowe w tymczasowym checkoucie dokładnego kandydata. Polecenie musi być zaufane i działać na izolowanych danych. Kandydat powstaje na `main` przez nałożenie delt zatwierdzonych PR. Konflikt, błąd testu, zmiana refów albo modyfikacja śledzonych plików przez test powoduje brak manifestu. Wynik zawiera pełne SHA bazy, drzewa i kandydata oraz numery issue, cykli, PR i commity źródłowe do opisu przyszłego PR promocyjnego. Tymczasowa kopia jest usuwana; identyczny wynik można odtworzyć przy tych samych wejściach. Ten etap sam nie kontaktuje się z GitHubem.
