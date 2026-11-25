@@ -60,3 +60,9 @@ Program uruchamia jawnie podane polecenie testowe w tymczasowym checkoucie dokł
 Rejestr zapisuje zamiar przed wysłaniem i blokuje drugi PR w tym repozytorium do potwierdzenia wyniku. Po niepewnej odpowiedzi ponowny przebieg weryfikuje wynik, a brak jednoznacznego dowodu zostawia rejestr w oczekiwaniu. Po zatrzymaniu procesu między zapisem zamiaru a żądaniem również potrzebne jest uzgodnienie. Przy włączaniu automatu musi istnieć jeden wspólny rejestr i jeden właściciel promocji na repozytorium.
 
 Pilot #241 pokazał, że check GitHuba wskazuje SHA head PR, podczas gdy workflow pobiera commit testowego scalenia. Odczyt produkcyjny musi powiązać te dwa dowody: zaufany przebieg i jego faktycznie testowany commit z aktualną bazą, kandydatem oraz oczekiwanym drzewem. Sama lista zielonych checków head nie potwierdza testów na właściwej bazie. Przed aktywacją trzeba przygotować zaufany odczyt, ustalić forward-sync po squashu i sprawdzić przełączenie jednego repozytorium z możliwością powrotu. Obecny scheduler nie wywołuje tej ścieżki.
+
+### Odczytowe sprawdzenie CI kandydata
+
+Próbę AGF uruchom poleceniem `python src/selective_promotion_ci.py INPUT.json`, z istniejącą odczytową sesją `gh`. Wejście zawiera `repository` (OWNER/REPO), `expected` (repository_id, pr, main, candidate, tree), `policy` (workflow_id, app_id, workflow_path, workflow_blob, checkout_sha), `run_id` i `job_id`. Politykę ustala operator na podstawie przejrzanej wersji workflow. Nie pobieraj jej z opisu PR.
+
+Kontrola jest ograniczona do workflow AGF `.github/workflows/ci.yml`, joba verify i jego pierwszego przypiętego checkoutu. Wiąże ostatni check z jobem i próbą workflow. Pełny SHA checkoutu porównuje z rodzicami i drzewem testowanego commita. Kończy ponownym odczytem checka, PR i main. Brak logu, inny checkout, inna definicja workflow lub zmiana bazy blokują wynik. Raport jest odczytowy i nie jest wywoływany przez scheduler.
