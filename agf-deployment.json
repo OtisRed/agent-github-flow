@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "smoke": {
+    "location": "server",
+    "start": "On Mikrus run the isolated test suite on demand from a private temporary archive of origin/smoke, with synthetic state and networking disabled. Use the controller profile runbook; no persistent smoke service.",
+    "verify": "Record the full archived commit and test result from the same isolated run. In the absence of a run use stopped only when verified; fixture results do not attest a serving controller."
+  },
+  "main": {
+    "location": "server",
+    "start": "The operator activates a reviewed immutable main release for agent-github-flow-mvp.service on Mikrus. GitHub promotion changes the branch; service activation is a separate operation.",
+    "verify": "Check the running service PID and start time, resolve its current release and verify the full revision against origin/main as described in docs/controller-deployment-profile.md. Check operational alerts separately."
+  }
+}

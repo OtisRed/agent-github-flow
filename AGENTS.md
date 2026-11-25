@@ -7,3 +7,5 @@ Repozytorium jest w fazie bootstrapu: [standard](docs/standard.md) opisuje uzgod
 Docelowo samo repozytorium korzysta ze wspólnego flow: gałąź zadania od `smoke`, draft PR do `smoke`, review i właściwe kontrole, wspólny smoke właściciela i agenta, decyzja właściciela o zamknięciu issue oraz nocna promocja do `main`. Jednorazowy bootstrap wymaga osobnego opisania, zanim ten mechanizm może sam się obsługiwać.
 
 Nie publikuj sekretów, tokenów, kluczy ani prywatnych danych projektów. Zmiany wykonuj proporcjonalnie do zakresu i raportuj rzeczywiste wyniki weryfikacji.
+
+Profil wdrożenia AGF opisuje [agf-deployment.json](agf-deployment.json). [Instrukcja kontrolera](docs/controller-deployment-profile.md) opisuje izolowany smoke na żądanie na Mikrusie oraz weryfikację pełnego SHA działającego main.
