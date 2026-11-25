@@ -1,0 +1,14 @@
+[Unit]
+Description=Local socket for operational GitHub issues
+
+[Socket]
+ListenStream=/run/agent-github-flow-alerts/submit.sock
+SocketUser=agent-flow
+SocketGroup=agf-alert-submit
+SocketMode=0660
+Accept=yes
+MaxConnections=8
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target
