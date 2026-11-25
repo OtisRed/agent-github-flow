@@ -74,3 +74,9 @@ Kontrola jest ograniczona do workflow AGF `.github/workflows/ci.yml`, joba verif
 `prepare_forward_sync` przygotowuje commit w odizolowanym repozytorium po potwierdzeniu squasha w rejestrze. Używa aktualnej pary refów i zachowuje drzewo smoke. Pierwszym rodzicem jest smoke, drugim potwierdzony commit main. Zmiana refów, konflikt lub wynik zmieniający zawartość smoke wymagają osobnego rozliczenia. Dotyczy to również poprawki bezpośrednio na main, której nie ma w smoke. Funkcja przygotowuje obiekt Git, a chroniona publikacja ma należeć do jednego właściciela flow.
 
 Przed opt-in trzeba podłączyć nadrzędny obieg do rzeczywistych odczytów oraz sprawdzić publikację forward-sync i wykluczanie już promowanych zmian. Jedno repozytorium ma w danej chwili jednego wykonawcę promocji. Przed powrotem trzeba uzgodnić oczekujące squashe i domknąć forward-sync; stary planer nie może zakładać, że wcześniejsze squashowane źródła są niepromowane.
+
+### Odczyt zakresu z rzeczywistego GitHuba
+
+Uruchom `python src/selective_promotion_github.py INPUT.json` z odczytową sesją GitHub CLI. Wejście operatora podaje `repository`, `project_id`, `manifest` kandydata, `pr` oraz `app_id` producenta verify. Program potwierdza domknięty cykl i kartę done, kompletny zestaw PR w ograniczonej inwentaryzacji oraz obecność merge commitów na smoke. Ochronę uznaje tylko przy jednym wymaganym verify od wskazanej aplikacji, egzekwowaniu ochrony administratorów, strict i braku dodatkowych aktywnych reguł na main. Inne konfiguracje wymagają osobnej weryfikacji. Kod zwraca 1 przy blokadzie, także gdy odczyt dostarczył użyteczne dane diagnostyczne.
+
+Pierwszy odczyt obsługuje potwierdzone scalenia z dwoma rodzicami. Pełne pokrycie squash/rebase, ustalenie śladu wcześniejszej wybiórczej promocji i podpięcie strzeżonego zapisu pozostają przed opt-in. Draft lub zmieniony main albo smoke blokuje kandydaturę. Publikacja forward-sync wymaga faktycznego i potwierdzonego squasha na main.
