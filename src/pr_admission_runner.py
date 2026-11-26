@@ -37,10 +37,21 @@ def admission_step(gateway, pr_number, trusted_authors):
         raise ValueError("Invalid pull request number")
     first = gateway.read_snapshot(pr_number)
     pr = first.get("pr") if isinstance(first, dict) else None
+    if isinstance(pr, dict) and pr.get("state") == "closed":
+        return "pr-closed"
     head = pr.get("head_sha") if isinstance(pr, dict) else None
     sync_status = gateway.sync_status(first)
     if sync_status == "sync-wait":
         return sync_status
+    if sync_status == "sync-invalid":
+        # Auto-merge can close a PR between inventory and the check write.
+        latest = gateway.read_snapshot(pr_number)
+        latest_pr = latest.get("pr") if isinstance(latest, dict) else None
+        if isinstance(latest_pr, dict) and latest_pr.get("state") == "closed":
+            return "pr-closed"
+        if (not isinstance(latest_pr, dict) or latest_pr != pr or latest.get("complete") is not True
+                or gateway.sync_status(latest) != sync_status):
+            return "sync-changed"
     if sync_status in ("sync-verified", "sync-invalid"):
         if isinstance(head, str):
             gateway.publish(head, sync_status)
@@ -55,9 +66,11 @@ def admission_step(gateway, pr_number, trusted_authors):
     if first.get("checks") != "success":
         return "waiting-tests" if first.get("checks") == "pending" else "tests-not-green"
     second = gateway.read_snapshot(pr_number)
+    second_pr = second.get("pr") if isinstance(second, dict) else None
+    if isinstance(second_pr, dict) and second_pr.get("state") == "closed":
+        return "pr-closed"
     verdict = _decision(second, trusted_authors)
     if verdict != "ready":
-        second_pr = second.get("pr") if isinstance(second, dict) else None
         second_head = second_pr.get("head_sha") if isinstance(second_pr, dict) else None
         if isinstance(second_head, str):
             gateway.publish(second_head, verdict)
