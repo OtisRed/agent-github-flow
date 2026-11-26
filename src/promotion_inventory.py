@@ -149,6 +149,7 @@ def inventory(transport, token, owner, repository):
                 raise ValueError('Invalid issue')
             issues[number] = {'state': issue.get('state'), 'closed_at': issue.get('closed_at')}
     result = closed_prefix(entries, issues)
+    requires_main_parent = False
     if result.get('kind') == 'ready' and result['sha'] != main:
         candidate = read(f"/compare/{main}...{result['sha']}?per_page=1")
         if (not isinstance(candidate, dict) or not isinstance(candidate.get('merge_base_commit'), dict)
@@ -164,7 +165,10 @@ def inventory(transport, token, owner, repository):
             if (not isinstance(base_commit, dict) or base_commit.get('sha') != main
                     or main_tree is None or main_tree != common_tree):
                 result = {'kind': 'blocked', 'reason': 'candidate-missing-main'}
+            else:
+                requires_main_parent = True
     if result.get('kind') == 'waiting' and entries:
         print('FLOW promotion: queue waits for ' + owner + '/' + repository + '#' + str(entries[0]['issue']), flush=True)
     scope = approved_scope(entries, result) if result.get('kind') == 'ready' else None
-    return {'main': main, 'smoke': smoke, 'base': base, 'plan': result, 'accepted_scope': scope}
+    return {'main': main, 'smoke': smoke, 'base': base, 'plan': result, 'accepted_scope': scope,
+            'requires_main_parent': requires_main_parent}

@@ -86,3 +86,9 @@ Pierwszy odczyt obsługuje potwierdzone scalenia z dwoma rodzicami. Pełne pokry
 Planer pomija techniczny PR `sync-main/<SHA>` tylko wtedy, gdy historia potwierdza dołączenie commita już osiągalnego z main, a pełne drzewo jest identyczne z pierwszym rodzicem. Obsługuje także zwykłe scalenie przez GitHub, które opakowuje taki commit w drugi merge o tym samym drzewie i tym samym pierwszym rodzicu. Jeżeli deklaracja, rodzice lub drzewa się nie zgadzają, plan zatrzymuje się.
 
 Pomijanie synchronizacji dotyczy wpisu w kolejce. Starszy zamknięty prefiks może nadal wskazywać commit sprzed synchronizacji. Włączenie strict wymaga osobnego sprawdzenia, czy kandydat starego planera zawiera aktualny main. Nie wyłączaj wymagań CI dla chronionego PR synchronizacji.
+
+## Zwykła promocja przy wymaganiu aktualnego main
+
+W trybie strict GitHub wymaga aktualnego main w historii kandydata. Jeśli wybrany zamknięty prefiks już go zawiera, kontroler używa powiązanego commita. Jeżeli main i wspólna baza mają identyczne drzewa, kontroler składa techniczny commit z rodzicami main i końcem prefiksu oraz drzewem tego prefiksu. Zmiana zawartości na main nadal blokuje promocję.
+
+Gałąź techniczna identyfikuje bazę i źródło. Zmiana bazy wymaga nowego kandydata i własnego CI. Potwierdzenie wdrożenia wiąże rzeczywisty head PR ze źródłami i ponownie sprawdza rodziców oraz drzewo. Ustawienie strict jest osobnym krokiem operacyjnym po potwierdzeniu ścieżki. Przy strict=false nadal obowiązuje dotychczasowy sposób tworzenia kandydata.

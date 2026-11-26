@@ -1,3 +1,4 @@
+import subprocess
 import sys
 import unittest
 import tempfile
@@ -7,6 +8,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from promotion_runner import promotion_step, protection_ready
 from deployment_state import DeploymentState
+from deployment_source import promoted_scope
 
 
 class RunnerTests(unittest.TestCase):
@@ -101,6 +103,133 @@ class RunnerTests(unittest.TestCase):
             outcome = promotion_step(self.transport, 'test-token', 'example', 'repo', deployment_ready=lambda sha: False)
         self.assertEqual(outcome, 'deployment-blocked')
         self.assertFalse(self.mutations)
+
+    def test_strict_promotion_preserves_two_successive_closed_prefixes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            def git(*args):
+                return subprocess.check_output(
+                    ['git', '-C', folder, '-c', 'user.name=AGF test',
+                     '-c', 'user.email=agf@example.invalid', '-c', 'commit.gpgSign=false', *args],
+                    text=True, encoding='utf-8',
+                ).strip()
+
+            def commit(tree, *parents):
+                return git('commit-tree', tree, *sum((['-p', parent] for parent in parents), []),
+                           '-m', f'isolated candidate {len(parents)}')
+
+            def commit_data(sha):
+                return {'sha': sha, 'tree': {'sha': git('rev-parse', sha + '^{tree}')},
+                        'parents': [{'sha': p} for p in git('show', '-s', '--format=%P', sha).split()]}
+
+            git('init', '-q')
+            file = Path(folder) / 'content'
+            trees = []
+            for state in ['base', 'first closed', 'second closed', 'still open']:
+                file.write_text(state, encoding='utf-8')
+                git('add', 'content')
+                trees.append(git('write-tree'))
+
+            common = commit(trees[0])
+            main = commit(trees[0], common)
+            sources = [commit(trees[1], common)]
+            sources.append(commit(trees[2], sources[0]))
+            open_tip = commit(trees[3], sources[-1])
+
+            for cycle, source in enumerate(sources, 1):
+                branch = f'agf-promotion/strict-{main}-{source}'
+                prefix = '/repos/example/repo'
+                commit_path = '/git/commits'
+                ref_path = '/git/matching-refs/heads/' + branch
+                plan = {'main': main, 'smoke': open_tip, 'base': common,
+                        'plan': {'kind': 'ready', 'sha': source, 'count': 1},
+                        'requires_main_parent': True,
+                        'accepted_scope': {'changes': [f'issue-{cycle}'], 'commits': [source]}}
+                refs, prs, merges = [], [], []
+                clean = False
+
+                def transport(path, token, *, body=None):
+                    if path == '/graphql':
+                        query = body['query']
+                        variables = body['variables']
+                        if 'createRef' in query:
+                            refs.append({'ref': variables['name'], 'object': {'sha': variables['oid']}})
+                            result = {'createRef': {'ref': {'id': 'ref'}}}
+                        elif 'createPullRequest' in query:
+                            self.assertEqual(variables['head'], branch)
+                            prs.append({'number': 7})
+                            result = {'createPullRequest': {'pullRequest': {'id': 'pr'}}}
+                        else:
+                            candidate = variables['sha']
+                            self.assertEqual(candidate, refs[0]['object']['sha'])
+                            merges.append(commit(commit_data(candidate)['tree']['sha'], main, candidate))
+                            result = {'mergePullRequest': {'pullRequest': {'merged': True}}}
+                        return {'data': result}, None
+                    path = path.removeprefix(prefix)
+                    if path == commit_path:
+                        return commit_data(commit(body['tree'], *body['parents'])), None
+                    if path.startswith(commit_path + '/'):
+                        return commit_data(path[len(commit_path) + 1:]), None
+                    if path == ref_path:
+                        return refs, None
+                    if path.startswith('/pulls?'):
+                        return prs, None
+                    if path == '/pulls/7':
+                        return {'number': 7, 'state': 'open', 'node_id': 'pr', 'draft': False,
+                                'head': {'sha': refs[0]['object']['sha'], 'ref': branch, 'repo': {'node_id': 'repo'}},
+                                'base': {'sha': main, 'ref': 'main', 'repo': {'node_id': 'repo'}},
+                                'mergeable_state': 'clean' if clean else 'behind'}, None
+                    return self.rows[path], None
+
+                with patch('promotion_runner.inventory', return_value=plan):
+                    self.assertEqual(promotion_step(transport, 'token', 'example', 'repo'), 'branch-created')
+                    candidate = refs[0]['object']['sha']
+                    self.assertEqual(git('merge-base', candidate, main), main)
+                    self.assertEqual(commit_data(candidate)['tree']['sha'], trees[cycle])
+                    self.assertNotEqual(commit_data(candidate)['tree']['sha'], trees[3])
+                    self.assertEqual(promotion_step(transport, 'token', 'example', 'repo'), 'pull-request-created')
+                    self.assertEqual(promotion_step(transport, 'token', 'example', 'repo'), 'waiting-checks')
+                    clean = True
+                    refs[0]['object']['sha'] = open_tip
+                    with self.assertRaisesRegex(ValueError, 'Unexpected strict promotion candidate'):
+                        promotion_step(transport, 'token', 'example', 'repo')
+                    refs[0]['object']['sha'] = candidate
+
+                with patch('promotion_runner.inventory', side_effect=[plan, dict(plan, main='f' * 40)]):
+                    self.assertEqual(promotion_step(transport, 'token', 'example', 'repo'), 'changed')
+                    self.assertFalse(merges)
+
+                store = DeploymentState(Path(folder) / f'deployment-{cycle}.sqlite')
+                store.initialize()
+                request = {'id': 'baseline', 'repository_id': 20, 'target': 'main', 'commit': main, 'changes': []}
+                store.reserve(request)
+                store.transition(request, 'reserved', 'running')
+                store.transition(request, 'running', 'succeeded')
+                with store.promotion_guard(20) as ready, patch('promotion_runner.inventory', return_value=plan):
+                    self.assertEqual(promotion_step(transport, 'token', 'example', 'repo', deployment_ready=ready),
+                                     'merged')
+                merged, = merges
+                self.assertEqual(store.promotion_receipt(20, candidate)['scope'], plan['accepted_scope'])
+
+                def deployed(path, token, *, body=None):
+                    if path == '/graphql':
+                        return {'data': {'repository': {'pullRequest': {
+                            'number': 7, 'merged': True, 'mergeCommit': {'oid': merged},
+                        }}}}, None
+                    if path == prefix:
+                        return {'id': 20}, None
+                    if path == prefix + '/pulls/7':
+                        return {'number': 7, 'merged': True,
+                                'head': {'sha': candidate, 'ref': branch, 'repo': {'id': 20}},
+                                'base': {'ref': 'main', 'repo': {'id': 20}}}, None
+                    if path == prefix + '/commits/' + merged:
+                        data = commit_data(merged)
+                        return {**data, 'commit': {'tree': data['tree']}}, None
+                    return transport(path, token, body=body)
+
+                self.assertEqual(promoted_scope(deployed, 'token', 'example', 'repo', 20, merged, store),
+                                 plan['accepted_scope'])
+                main = merged
+                self.assertEqual(git('merge-base', source, main), source)
 
     def test_promotion_records_scope_before_merge(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -119,6 +119,17 @@ def approved_scope(entries, plan):
     return {'changes': ids, 'commits': commits}
 
 
+def strict_promotion_branch(base, source):
+    return f'agf-promotion/strict-{base}-{source}'
+
+
+def strict_candidate_matches(commit, sha, base, source, tree):
+    return (isinstance(commit, dict) and commit.get('sha') == sha
+            and isinstance(commit.get('tree'), dict) and commit['tree'].get('sha') == tree
+            and isinstance(commit.get('parents'), list)
+            and [p.get('sha') if isinstance(p, dict) else None for p in commit['parents']] == [base, source])
+
+
 def promoted_scope(transport, token, owner, repository, repository_id, commit, store):
     """Confirm main is exactly the merge recorded before the promotion."""
     if type(repository_id) is not int or repository_id <= 0 or not isinstance(commit, str) or not SHA.fullmatch(commit):
@@ -149,7 +160,6 @@ def promoted_scope(transport, token, owner, repository, repository_id, commit, s
             or not isinstance(base_repo, dict) or base_repo.get('id') != repository_id
             or not isinstance(head, dict) or head.get('sha') != parents[1]
             or not isinstance(head_repo, dict) or head_repo.get('id') != repository_id
-            or head.get('ref') != 'agf-promotion/' + parents[1]
             or pull_request_merge_oid(transport, token, owner, repository, number) != commit):
         raise ValueError('Promotion pull request does not match merge')
     scope = receipt.get('scope')
@@ -159,6 +169,19 @@ def promoted_scope(transport, token, owner, repository, repository_id, commit, s
             or len(set(scope['changes'])) != len(scope['changes'])
             or not isinstance(scope['commits'], list) or not scope['commits']
             or any(not isinstance(x, str) or not SHA.fullmatch(x) for x in scope['commits'])
-            or len(set(scope['commits'])) != len(scope['commits']) or scope['commits'][-1] != parents[1]):
+            or len(set(scope['commits'])) != len(scope['commits'])):
         raise ValueError('Invalid promotion scope')
+    source = scope['commits'][-1]
+    if source == parents[1]:
+        if head.get('ref') != 'agf-promotion/' + source:
+            raise ValueError('Promotion branch does not match source')
+    else:
+        source_commit, _ = transport(root + '/git/commits/' + source, token)
+        candidate, _ = transport(root + '/git/commits/' + parents[1], token)
+        tree = source_commit.get('tree', {}).get('sha')
+        if (source_commit.get('sha') != source or not isinstance(tree, str) or not SHA.fullmatch(tree)
+                or head.get('ref') != strict_promotion_branch(parents[0], source)
+                or not strict_candidate_matches(candidate, parents[1], parents[0], source, tree)
+                or value.get('commit', {}).get('tree', {}).get('sha') != tree):
+            raise ValueError('Strict promotion candidate does not match source')
     return scope

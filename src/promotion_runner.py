@@ -1,7 +1,9 @@
 """One conservative promotion step; GitHub remains the source of truth."""
 from urllib.parse import urlencode
 
+from deployment_source import strict_candidate_matches, strict_promotion_branch
 from promotion_inventory import inventory
+from promotion_plan import SHA
 
 
 CREATE_REF = '''mutation($repo:ID!,$name:String!,$oid:GitObjectID!){
@@ -28,7 +30,7 @@ def protection_ready(protection):
 
 
 def promotion_step(transport, token, owner, repository, *, deployment_ready=None):
-    """Perform at most one mutation; uncertain results are re-read next time."""
+    """Advance one visible promotion step and re-read uncertain ref or PR results."""
     root = f'/repos/{owner}/{repository}'
     def read(path):
         value, _ = transport(root + path, token)
@@ -48,8 +50,18 @@ def promotion_step(transport, token, owner, repository, *, deployment_ready=None
         return plan['plan']['kind']
     if deployment_ready is not None and deployment_ready(plan['main']) is not True:
         return 'deployment-blocked'
-    sha = plan['plan']['sha']
-    branch = 'agf-promotion/' + sha
+    protection = read('/branches/main/protection')
+    if not protection_ready(protection):
+        return 'protection-required'
+    main, source = plan['main'], plan['plan']['sha']
+    wrap = protection['required_status_checks']['strict'] and plan.get('requires_main_parent') is True
+    branch = strict_promotion_branch(main, source) if wrap else 'agf-promotion/' + source
+    sha = source
+    if wrap:
+        source_commit = read('/git/commits/' + source)
+        tree = source_commit.get('tree', {}).get('sha')
+        if source_commit.get('sha') != source or not isinstance(tree, str) or not SHA.fullmatch(tree):
+            raise ValueError('Invalid promotion source tree')
     repo = read('')
     repo_id = repo.get('node_id')
     if not isinstance(repo_id, str) or not repo_id:
@@ -60,6 +72,23 @@ def promotion_step(transport, token, owner, repository, *, deployment_ready=None
     exact = [ref for ref in refs if ref.get('ref') == 'refs/heads/' + branch]
     if len(exact) > 1:
         raise ValueError('Ambiguous promotion branch')
+    if wrap:
+        if exact:
+            sha = exact[0].get('object', {}).get('sha')
+            if not isinstance(sha, str) or not SHA.fullmatch(sha):
+                raise ValueError('Invalid strict promotion ref')
+            candidate = read('/git/commits/' + sha)
+        else:
+            # The object alone changes no branch. If creation or ref publication
+            # times out, the next step starts with the base-specific ref lookup.
+            candidate, _ = transport(root + '/git/commits', token, body={
+                'message': 'Prepare closed prefix on current main',
+                'tree': tree, 'parents': [main, source],
+            })
+            sha = candidate.get('sha') if isinstance(candidate, dict) else None
+        if (not isinstance(sha, str) or not SHA.fullmatch(sha)
+                or not strict_candidate_matches(candidate, sha, main, source, tree)):
+            raise ValueError('Unexpected strict promotion candidate')
     if not exact:
         mutation(CREATE_REF, {'repo': repo_id, 'name': 'refs/heads/' + branch, 'oid': sha}, 'createRef', 'ref')
         return 'branch-created'
@@ -71,8 +100,6 @@ def promotion_step(transport, token, owner, repository, *, deployment_ready=None
     if not prs:
         mutation(CREATE_PR, {'repo': repo_id, 'head': branch}, 'createPullRequest', 'pullRequest')
         return 'pull-request-created'
-    if not protection_ready(read('/branches/main/protection')):
-        return 'protection-required'
     number = prs[0].get('number')
     if type(number) is not int or number <= 0:
         raise ValueError('Invalid promotion pull request')
@@ -90,12 +117,15 @@ def promotion_step(transport, token, owner, repository, *, deployment_ready=None
     if not isinstance(pr_id, str) or not pr_id:
         raise ValueError('Invalid promotion pull request')
     # Re-read issue states and both heads immediately before the guarded merge.
-    if inventory(transport, token, owner, repository) != plan:
+    if inventory(transport, token, owner, repository) != plan or read('/branches/main/protection') != protection:
         return 'changed'
     if deployment_ready is not None:
         capture = getattr(deployment_ready, 'capture', None)
         if not callable(capture):
             return 'deployment-blocked'
-        capture(plan, number)
+        if wrap:
+            capture(plan, number, candidate=sha)
+        else:
+            capture(plan, number)
     mutation(MERGE_PR, {'id': pr_id, 'sha': sha}, 'mergePullRequest', 'pullRequest')
     return 'merged'

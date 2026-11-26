@@ -192,7 +192,7 @@ class DeploymentState:
                     if request['target'] == 'main' and status != 'superseded':
                         return status == 'succeeded' and request['commit'] == main_sha
                 return False
-            def capture(plan, pr_number):
+            def capture(plan, pr_number, *, candidate=None):
                 """Durably record immutable accepted scope before GitHub merge."""
                 if (not isinstance(plan, dict) or not isinstance(plan.get('main'), str) or not SHA.fullmatch(plan['main'])
                         or not isinstance(plan.get('plan'), dict) or plan['plan'].get('kind') != 'ready'
@@ -210,8 +210,12 @@ class DeploymentState:
                         or scope['commits'][-1] != plan['plan']['sha']
                         or len(scope['commits']) != plan['plan'].get('count')):
                     raise ValueError('Invalid promotion scope')
+                if candidate is None:
+                    candidate = plan['plan']['sha']
+                if not isinstance(candidate, str) or not SHA.fullmatch(candidate):
+                    raise ValueError('Invalid promotion candidate')
                 receipt = {'format': 1, 'repository_id': repository_id, 'base': plan['main'],
-                           'candidate': plan['plan']['sha'], 'pr_number': pr_number, 'scope': scope}
+                           'candidate': candidate, 'pr_number': pr_number, 'scope': scope}
                 data = json.dumps(receipt, sort_keys=True, separators=(',', ':')).encode('utf-8')
                 path = self.path.parent / f'promotion-{repository_id}-{receipt["candidate"]}.json'
                 try:
