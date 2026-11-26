@@ -88,6 +88,38 @@ class SelectiveCiTests(unittest.TestCase):
         self.responses["actions/jobs/6/logs"] = self.log.replace("00:00:01.", "00:00:04.")
         self.assertEqual(self.verify()["reason"], "checkout-revision-missing")
 
+    def test_accepts_the_requested_suite_alongside_another_successful_suite(self):
+        result = self.responses[self.check_path]
+        parallel = copy.deepcopy(result["check_runs"][0])
+        parallel.update(id=8, check_suite={"id": 9})
+        result["check_runs"].insert(0, parallel)
+        result["total_count"] = 2
+        proof = self.verify()
+        self.assertEqual(proof["kind"], "verified")
+        self.assertEqual([check["id"] for check in proof["checks"]], [6])
+
+    def test_parallel_suite_must_be_unambiguous_and_successful_on_both_reads(self):
+        result = self.responses[self.check_path]
+        parallel = copy.deepcopy(result["check_runs"][0])
+        parallel.update(id=8, check_suite={"id": 9})
+        result["check_runs"].append(parallel)
+        result["total_count"] = 2
+
+        for altered in ({"conclusion": "failure"}, {"status": "in_progress"},
+                        {"check_suite": {"id": 7}}, {"id": 6}):
+            with self.subTest(altered=altered):
+                result["check_runs"][1] = dict(parallel, **altered)
+                self.assertEqual(self.verify()["reason"], "check-mismatch")
+
+        result["check_runs"][1] = parallel
+        def became_pending(path):
+            if path.endswith("/actions/jobs/6/logs"):
+                parallel["status"] = "in_progress"
+            return self.read(path)
+
+        self.assertEqual(self.verify(became_pending)["reason"], "check-mismatch")
+
+
     def test_latest_check_and_attempt_are_bound_to_the_same_run(self):
         self.responses["actions/jobs/6"]["run_attempt"] = 2
         self.assertEqual(self.verify()["reason"], "job-mismatch")
