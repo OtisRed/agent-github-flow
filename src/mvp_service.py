@@ -23,7 +23,8 @@ from mvp_http import make_server
 from mvp_scan import collect_in_background, stage_one
 from mvp_store import Store
 from mvp_worker import process_one
-from promotion_schedule import run_promotions
+from promotion_schedule import promotion_mode, run_promotions
+from selective_promotion_executor import run_prepared_promotion
 from deployment_schedule import run_deployments
 from deployment_source import deployment_checks
 from deployment_state import DeploymentState
@@ -73,8 +74,16 @@ def validate_config(config):
     for project in projects:
         if not isinstance(project, dict) or type(project.get("repository_id")) is not int or project["repository_id"] <= 0:
             raise ValueError("Invalid project")
-        if 'promotion_enabled' in project and type(project['promotion_enabled']) is not bool:
-            raise ValueError("Invalid promotion setting")
+        mode = promotion_mode(project)
+        path = project.get('selective_request_path')
+        if 'selective_request_path' in project and (not isinstance(path, str) or not os.path.isabs(path)):
+            raise ValueError("Invalid selective promotion request path")
+        sync = project.get('selective_sync_enabled', False)
+        if type(sync) is not bool or (sync and (not path or type(project.get('admission_sync_bot_id')) is not int
+                                               or project['admission_sync_bot_id'] <= 0)):
+            raise ValueError("Invalid selective forward-sync configuration")
+        if mode == 'selective' and project.get('deployment_guarded') is True:
+            raise ValueError("Selective promotion does not yet support the deployment guard")
         if 'deployment_guarded' in project and type(project['deployment_guarded']) is not bool:
             raise ValueError("Invalid deployment guard setting")
         if project.get('deployment_guarded') is True and ('deployment_state_path' not in config or project.get('promotion_enabled') is not True):
@@ -220,7 +229,7 @@ def run(config):
         readers = build_readers(config, private_key, store=store, clients=clients)
         quickfix_queue = queue.SimpleQueue()
         promotion_authors = {p['repository_id']: p['trusted_author_ids'] for p in config['projects']
-                             if p.get('promotion_enabled') is True}
+                             if promotion_mode(p) != 'paused'}
 
         def quickfix_closed(repository_id, sender_id):
             if sender_id in promotion_authors.get(repository_id, ()):
@@ -233,9 +242,16 @@ def run(config):
         thread.start()
         signal.signal(signal.SIGTERM, lambda *_: stop.set())
         signal.signal(signal.SIGINT, lambda *_: stop.set())
-        if any(p.get('promotion_enabled') is True for p in config['projects']):
+        if promotion_authors:
+            def selective_step(transport, token, project):
+                if os.path.lexists(state.with_name('selective-promotions.sqlite')):
+                    # Keep the old replay guard authoritative until an operator reconciles it.
+                    return 'selective-ledger-migration-required'
+                return run_prepared_promotion(transport, token, project, project_token=project_token,
+                                              journal_path=state, journal_in_state=True)
+
             promotion_thread = threading.Thread(target=run_promotions, args=(stop, config, private_key),
-                                                kwargs={"quickfix_queue": quickfix_queue}, daemon=True)
+                                                kwargs={"quickfix_queue": quickfix_queue, "selective_step": selective_step}, daemon=True)
             promotion_thread.start()
         if any(p.get('deployment_enabled') is True for p in config['projects']):
             deployment_thread = threading.Thread(target=run_deployments, args=(stop, config, private_key), daemon=True)

@@ -3,6 +3,8 @@ import argparse
 import json
 import re
 import sys
+import subprocess
+from copy import deepcopy
 from pathlib import Path
 
 from mvp_decision import _date, _id
@@ -126,12 +128,57 @@ def plan_selective(snapshot):
             "excluded": list(dispositions.values())}
 
 
+def derive_receipts(snapshot, confirmed, reachable):
+    """Bind journal receipts to the observed head and the original closed issue cycle."""
+    observation = deepcopy(snapshot)
+    main = observation["before"]["main"]
+    receipts = {}
+    try:
+        for sources, result in confirmed:
+            if not reachable(result, main):
+                raise ValueError("confirmed-result-not-on-main")
+            for source in sources:
+                key = str(source["issue"]), source["cycle"]
+                receipt = receipts.setdefault(key, {"cycle": key[1], "main": main, "commits": {}})
+                pr = str(source["pr"])
+                if pr in receipt["commits"]:
+                    raise ValueError("duplicate-confirmed-source")
+                receipt["commits"][pr] = source["sha"]
+        for number, issue in observation["issues"].items():
+            issue["published"] = receipts.get((number, issue["cycle"]))
+        return observation
+    except (OSError, KeyError, TypeError, ValueError, subprocess.SubprocessError):
+        raise ValueError("Cannot verify confirmed promotion history") from None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("observation", type=Path, help="JSON observation or synthetic fixture")
+    parser.add_argument("--journal", type=Path, help="Private SQLite promotion journal")
+    parser.add_argument("--refs-repository", type=Path, help="Disposable repository with freshly fetched origin refs")
     args = parser.parse_args()
+    if bool(args.journal) != bool(args.refs_repository):
+        parser.error("--journal and --refs-repository must be used together")
     with args.observation.open(encoding="utf-8") as source:
-        result = plan_selective(json.load(source))
+        observation = json.load(source)
+    if args.journal:
+        from selective_promotion_candidate import _git, _read_refs
+        from selective_promotion_merge import SelectiveMergeJournal
+
+        def reachable(commit, main):
+            return _git(args.refs_repository, "merge-base", commit, main) == commit
+
+        refs = tuple(observation["before"][name] for name in ("main", "smoke"))
+        if not args.journal.is_file() or _read_refs(args.refs_repository) != refs:
+            parser.error("Journal missing or fetched branch heads do not match the observation")
+        try:
+            confirmed = SelectiveMergeJournal(args.journal).confirmed_sources(observation["repository_id"])
+            observation = derive_receipts(observation, confirmed, reachable)
+        except ValueError as error:
+            parser.error(str(error))
+        if _read_refs(args.refs_repository) != refs:
+            parser.error("Fetched branch heads changed while planning")
+    result = plan_selective(observation)
     print(json.dumps(result, indent=2))
     return int(result["kind"] == "blocked")
 
