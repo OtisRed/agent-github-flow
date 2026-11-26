@@ -59,7 +59,8 @@ def normalize_retry_targets(value, required_tests):
 class AdmissionReader:
     def __init__(self, *, owner, repository, repository_id, token, transport,
                  admission=None, required_tests=(), journal=None, workflow="ci.yml", gate_job="verify",
-                 workflow_event="pull_request", sync_bot_id=None, ci_retry_journal=None, retry_targets=None):
+                 workflow_event="pull_request", sync_bot_id=None, sync_tree_preserving=False,
+                 ci_retry_journal=None, retry_targets=None):
         if (not isinstance(owner, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", owner)
                 or not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", repository)
                 or repository in (".", "..") or type(repository_id) is not int or repository_id <= 0
@@ -76,6 +77,7 @@ class AdmissionReader:
         self.journal = journal
         self.workflow, self.gate_job, self.workflow_event = workflow, gate_job, workflow_event
         self.sync_bot_id = sync_bot_id
+        self.sync_tree_preserving = sync_tree_preserving
         self.ci_retry_journal = ci_retry_journal
         self.retry_targets = normalize_retry_targets(retry_targets, required_tests)
         self._requested_ci_attempts = set()
@@ -274,6 +276,12 @@ class AdmissionReader:
                 or not isinstance(parents, list) or [p.get("sha") for p in parents if isinstance(p, dict)]
                 != [pr.get("base_sha"), match.group(1)] or len(parents) != 2):
             return "sync-invalid"
+        if self.sync_tree_preserving:
+            base = self._get("/git/commits/" + pr["base_sha"], token)
+            tree = (base.get("tree") or {}).get("sha")
+            if (base.get("sha") != pr["base_sha"] or not isinstance(tree, str) or not SHA.fullmatch(tree)
+                    or (commit.get("tree") or {}).get("sha") != tree):
+                return "sync-invalid"
         return "sync-verified"
 
     def merge(self, number, expected_sha, expected_base):

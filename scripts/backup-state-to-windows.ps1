@@ -247,7 +247,7 @@ try:
             raise RuntimeError('invalid archive journal')
     enabled = set()
     for project in config['projects']:
-        if project.get('promotion_enabled') is True:
+        if project.get('promotion_enabled') is True and project.get('promotion_mode', 'prefix') != 'paused':
             if type(project.get('repository_id')) is not int or project['repository_id'] <= 0:
                 raise ValueError('invalid promotion configuration')
             enabled.add(str(project['repository_id']))
@@ -261,7 +261,7 @@ try:
                   'queue': db.execute('SELECT COUNT(*) FROM work_queue').fetchone()[0],
                   'errors': db.execute('SELECT COUNT(*) FROM issues WHERE error_code IS NOT NULL').fetchone()[0],
                   'uncertain': db.execute('SELECT COUNT(*) FROM issues WHERE uncertain_since IS NOT NULL AND uncertain_since < ?', (time.time() - 180,)).fetchone()[0],
-                  'promotion_errors': sum(states.get(repo) in ('failed', 'blocked', 'protection-required', 'incomplete') for repo in enabled),
+                  'promotion_errors': sum(states.get(repo) in ('failed', 'blocked', 'protection-required', 'incomplete', 'selective-unavailable') for repo in enabled),
                   'promotion_missing': missing}
     print(json.dumps(result))
 except Exception:

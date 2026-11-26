@@ -42,6 +42,52 @@ class InventoryTests(unittest.TestCase):
     def run_inventory(self):
         return inventory(self.transport, 'test-token', 'example', 'repo')
 
+
+    def forward_sync(self, wrapped=False):
+        tree, inner = 'd' * 40, 'e' * 40
+        outer = self.values[f'/commits/{self.c}']
+        outer.update(parents=[{'sha': self.b}, {'sha': inner if wrapped else self.a}],
+                     commit={'tree': {'sha': tree}})
+        self.values[f'/commits/{self.b}']['commit'] = {'tree': {'sha': tree}}
+        self.values[f'/commits/{self.c}/pulls?per_page=100'][0]['head'] = {
+            'ref': f'sync-main/{self.a}', 'sha': inner if wrapped else self.c,
+        }
+        self.values.pop('/issues/2')  # The sync PR must not become a queue entry.
+        if wrapped:
+            self.values[f'/commits/{inner}'] = {
+                'sha': inner, 'parents': [{'sha': self.b}, {'sha': self.a}],
+                'commit': {'tree': {'sha': tree}},
+            }
+            comparison = self.values[f'/compare/{self.a}...{self.c}?per_page=100&page=1']
+            comparison['commits'].append({'sha': inner})
+            comparison.update(ahead_by=3, total_commits=3)
+        return outer
+
+    def test_skips_content_neutral_direct_and_wrapped_forward_sync(self):
+        for wrapped in (False, True):
+            with self.subTest(wrapped=wrapped):
+                self.setUp()
+                self.forward_sync(wrapped)
+                result = self.run_inventory()
+                self.assertEqual(result['plan'], {'kind': 'ready', 'sha': self.b, 'count': 1})
+                self.assertEqual(result['accepted_scope'], {'changes': ['issue-1'], 'commits': [self.b]})
+
+    def test_sync_tree_or_main_lineage_must_be_proven(self):
+        outer = self.forward_sync()
+        outer['commit']['tree']['sha'] = 'f' * 40
+        with self.assertRaisesRegex(ValueError, 'Unverified forward sync'):
+            self.run_inventory()
+        outer['commit']['tree']['sha'] = 'd' * 40
+        self.values[f'/commits/{self.c}/pulls?per_page=100'][0]['head']['ref'] = f'sync-main/{self.b}'
+        with self.assertRaisesRegex(ValueError, 'Unverified forward sync'):
+            self.run_inventory()
+
+    def test_wrong_inner_sync_tree_is_rejected_even_if_wrapper_looks_neutral(self):
+        self.forward_sync(wrapped=True)
+        self.values[f"/commits/{'e' * 40}"]['commit']['tree']['sha'] = 'f' * 40
+        with self.assertRaisesRegex(ValueError, 'Unverified forward sync'):
+            self.run_inventory()
+
     def test_selects_contiguous_prefix(self):
         result = self.run_inventory()
         self.assertEqual(result['plan'], {'kind': 'ready', 'sha': self.b, 'count': 1})

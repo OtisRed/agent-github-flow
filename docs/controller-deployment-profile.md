@@ -28,3 +28,40 @@ Operator wdraża przejrzane wydanie kontrolera. Promocja GitHub zmienia gałąź
 2. Nazwa katalogu `main-<pełny SHA>` wskazuje commit do porównania. Porównaj SHA-256 jego pliku `src/mvp_service.py` z plikiem w rozwiązanym katalogu wydania. Pobierz bajty z Git przez `git show <SHA>:src/mvp_service.py` i z konkretnego katalogu wydania. W obu kopiach znormalizuj CRLF do LF przed obliczeniem sumy, np. przez `hashlib.sha256(data.replace(b'\r\n', b'\n')).hexdigest()`. Zgodność pojedynczego pliku potwierdza tylko ten plik.
 3. Ponownie odczytaj PID, identyfikator uruchomienia i cel symlinku. Jeśli którykolwiek się zmienił, powtórz pomiar. Potwierdzenie SHA działającego procesu wymaga dowodu uruchomienia tej samej instancji z niezmiennego wydania, którego zawartość sprawdzono względem commita. Obecna jednostka startuje przez zmienny link `current` i nie zapisuje tego powiązania. Gdy masz tylko nazwę wydania, czas, PID i sumę pliku, odnotuj SHA wskazanego wydania, a SHA procesu oznacz `unverified`.
 4. Porównaj wskazane wydanie z `git ls-remote origin refs/heads/main`. Zapisz obie wartości, czas i zakres dowodu. Przy rozbieżności ustal z operatorem, jakie zmiany wymagają wdrożenia. Gniazdo alertów ma własny cykl aktywacji.
+
+
+## Prepared selective promotion
+
+The controller uses its existing nightly and quickfix scheduler for this route. An operator stages one
+request in the absolute `selective_request_path` configured for an opted-in repository. The file must be
+owned by the service account, must be a regular file, and must have no group or other permissions.
+Place it in a private service-owned directory and publish it atomically. The request contains exactly
+`manifest`, `pr`, `policy`, `run_id` and `job_id`. Use the candidate builder's manifest and the operator-verified
+CI policy (workflow ID and path, required check App ID, approved workflow blob, and pinned checkout SHA).
+An absent file is idle. Keep the file in place while a merge is uncertain so the next turn can reconcile it.
+
+The controller verifies the Project card, closure cycle, PR source list, protected base and the actual
+revision used by GitHub Actions. The journal is stored in the controller's existing `state.sqlite`, so
+its normal SQLite snapshot and Windows download include pending and confirmed promotions. A later request
+is blocked until the previous result is an ancestor of `smoke`. Before enabling the route after a restore,
+reconcile the restored journal against GitHub. If the former separate `selective-promotions.sqlite`
+exists, the service blocks selective promotion until it has been reconciled. The scheduler does not build
+candidate PRs. Publication of forward sync needs a separate repository opt-in. Repositories with the deployment guard continue
+to use prefix mode.
+
+### Publication and planning after a selective merge
+
+Set `selective_sync_enabled` only for a selective repository that has GitHub merge commits and auto-merge
+enabled, the numeric App bot account configured as `admission_sync_bot_id`, and strict protection for
+`smoke` with the trusted `verify` check. Where the workflow waits on central admission, enable its
+existing App-authored sync path. The scheduler publishes the same-repository `sync-main/<main>` PR only
+after a confirmed squash. It verifies a conflict-free merge that preserves the `smoke` tree and uses
+GitHub's protected auto-merge. It does not force-update refs. A stale technical branch, disabled
+protection, or content-changing sync requires operator attention. Keep the staged request until the
+confirmed squash is reachable from `smoke`.
+
+For subsequent plans, run `selective_promotion_plan.py INPUT --journal PATH --refs-repository CHECKOUT`
+with fresh `origin/main` and `origin/smoke` from that repository. Use a private, writable restored copy
+of `state.sqlite` as `PATH`. The receipt is derived from SQLite
+only if the confirmed squash is still reachable from the observed main. It covers the exact issue
+closure cycle and source PRs. An unreachable receipt blocks planning.
