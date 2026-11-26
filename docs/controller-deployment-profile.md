@@ -41,9 +41,11 @@ CI policy (workflow ID and path, required check App ID, approved workflow blob, 
 An absent file is idle. Keep the file in place while a merge is uncertain so the next turn can reconcile it.
 
 The controller verifies the Project card, closure cycle, PR source list, protected base and the actual
-revision used by GitHub Actions. A completed squash is recorded in `selective-promotions.sqlite` beside
-the controller database. A later request is blocked until the previous result is an ancestor of `smoke`.
-Include this SQLite file in backups before enrolling a persistent project. The scheduler does not build
+revision used by GitHub Actions. The journal is stored in the controller's existing `state.sqlite`, so
+its normal SQLite snapshot and Windows download include pending and confirmed promotions. A later request
+is blocked until the previous result is an ancestor of `smoke`. Before enabling the route after a restore,
+reconcile the restored journal against GitHub. If the former separate `selective-promotions.sqlite`
+exists, the service blocks selective promotion until it has been reconciled. The scheduler does not build
 candidate PRs. Publication of forward sync needs a separate repository opt-in. Repositories with the deployment guard continue
 to use prefix mode.
 
@@ -59,6 +61,7 @@ protection, or content-changing sync requires operator attention. Keep the stage
 confirmed squash is reachable from `smoke`.
 
 For subsequent plans, run `selective_promotion_plan.py INPUT --journal PATH --refs-repository CHECKOUT`
-with fresh `origin/main` and `origin/smoke` from that repository. The receipt is derived from SQLite
+with fresh `origin/main` and `origin/smoke` from that repository. Use a private, writable restored copy
+of `state.sqlite` as `PATH`. The receipt is derived from SQLite
 only if the confirmed squash is still reachable from the observed main. It covers the exact issue
 closure cycle and source PRs. An unreachable receipt blocks planning.

@@ -45,7 +45,7 @@ def read_job_log(path, token, *, opener=None):
         raise GitHubRequestError("invalid-data") from None
 
 
-def run_prepared_promotion(transport, token, project, *, project_token, journal_path):
+def run_prepared_promotion(transport, token, project, *, project_token, journal_path, journal_in_state=False):
     """Read the private request and bind every API operation to its configured repository."""
     path = project.get("selective_request_path")
     if not path:
@@ -112,7 +112,7 @@ def run_prepared_promotion(transport, token, project, *, project_token, journal_
             raise ValueError("Promotion PR changed")
         request_github_squash(transport, token, row["node_id"], head)
 
-    journal = SelectiveMergeJournal(Path(journal_path))
+    journal = SelectiveMergeJournal(Path(journal_path), require_existing=journal_in_state)
     if journal.read(repository_id, number) is None:
         previous = journal.latest_confirmed(repository_id)
         if previous:
