@@ -9,6 +9,7 @@ import test_selective_promotion_ci as ci_fixture
 from selective_promotion_candidate import _git, build_candidate
 from selective_promotion_flow import prepare_forward_sync, verify_and_squash
 from selective_promotion_merge import SelectiveMergeJournal
+from selective_promotion_github import observe_candidate
 
 
 class SelectiveFlowTests(unittest.TestCase):
@@ -117,3 +118,41 @@ class SelectiveFlowTests(unittest.TestCase):
                          "refs-changed")
         self.assertEqual(prepare_forward_sync(self.repo, self.journal, 1, 2, self.main)["kind"],
                          "sync-changes-content")
+
+    def test_recovery_consumes_real_observer_contract(self):
+        def read_git(path):
+            prefix = f"repos/{self.repository}/"
+            self.assertTrue(path.startswith(prefix))
+            endpoint = path.removeprefix(prefix)
+            if endpoint == "pulls/2":
+                return {"number": 2, "state": "closed", "merged": True, "merge_commit_sha": self.squashed,
+                        "base": {"ref": "main", "repo": {"id": 1}},
+                        "head": {"sha": self.manifest["candidate"], "repo": {"id": 1}}}
+            if endpoint == "git/ref/heads/main":
+                return {"object": {"sha": self.squashed}}
+            self.assertEqual(endpoint, f"git/commits/{self.squashed}")
+            proof = self.observe(1, 2)
+            return {"sha": self.squashed, "parents": [{"sha": sha} for sha in proof["result_parents"]],
+                    "tree": {"sha": proof["result_tree"]}}
+
+        def observe(repo, pr):
+            self.assertEqual(repo, self.manifest["repository_id"])
+            if self.squashed is None:
+                return {"kind": "observed", "blockers": [], "snapshot": self.observe(repo, pr)}
+            return observe_candidate(read_git, None, self.repository, self.manifest, pr,
+                                     self.policy["app_id"])
+
+        def lose_response(*args):
+            self.squash(*args)
+            raise TimeoutError("Lost response after Git changed")
+
+        with self.assertRaises(TimeoutError):
+            self.run_step(squash=lose_response)
+
+        self.journal = SelectiveMergeJournal(self.journal_path)
+        result = verify_and_squash(self.journal, self.manifest, 2, enabled=True, observe=observe,
+                                  squash=self.squash, repository=self.repository, read_ci=self.read_ci,
+                                  policy=self.policy, run_id=5, job_id=6)
+        self.assertEqual(result, "merged")
+        self.assertEqual(self.writes, 1)
+        self.assertEqual(self.journal.read(1, 2)[1], self.squashed)

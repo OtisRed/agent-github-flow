@@ -15,8 +15,16 @@ def verify_and_squash(journal, manifest, pr, *, enabled, observe, squash,
     Observe supplies current sources, PR state, branch protections and merge
     readback independently of CI. The verifier supplies all CI evidence.
     """
+    def snapshot_for(repo, number):
+        observation = observe(repo, number)
+        if isinstance(observation, dict) and "kind" in observation:
+            if observation.get("kind") != "observed" or observation.get("blockers") != []:
+                return None
+            return observation.get("snapshot")
+        return observation
+
     def read(repo, number):
-        snapshot = observe(repo, number)
+        snapshot = snapshot_for(repo, number)
         if not isinstance(snapshot, dict) or snapshot.get("state") != "open":
             return snapshot
         if snapshot.get("draft") is not False:
@@ -25,7 +33,7 @@ def verify_and_squash(journal, manifest, pr, *, enabled, observe, squash,
         snapshot = deepcopy(snapshot)
         expected = {**manifest, "pr": number}
         proof = verify_candidate_ci(read_ci, repository, expected, policy, run_id, job_id)
-        if proof["kind"] != "verified" or observe(repo, number) != snapshot:
+        if proof["kind"] != "verified" or snapshot_for(repo, number) != snapshot:
             return None
         ci_fields = ("test_commit", "test_tree", "test_parents", "tested_revision_verified", "checks")
         return {**snapshot, **{key: proof[key] for key in ci_fields}}
