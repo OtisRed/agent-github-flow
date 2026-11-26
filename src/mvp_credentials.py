@@ -59,7 +59,10 @@ class AppToken:
                                      "checks": "write", "actions": "write", "administration": "read"},
                        "deployment": {"contents": "read", "checks": "read", "pull_requests": "read"},
                        "promotion": {"issues": "read", "contents": "write",
-                                     "pull_requests": "write", "administration": "read"}}
+                                     "pull_requests": "write", "administration": "read"},
+                       "selective_promotion": {"issues": "read", "contents": "write",
+                                               "pull_requests": "write", "administration": "read",
+                                               "actions": "read", "checks": "read"}}
         if purpose not in permissions:
             raise ValueError("Invalid App token purpose")
         self.permissions = permissions[purpose]

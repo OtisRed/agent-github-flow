@@ -24,6 +24,7 @@ from mvp_scan import collect_in_background, stage_one
 from mvp_store import Store
 from mvp_worker import process_one
 from promotion_schedule import promotion_mode, run_promotions
+from selective_promotion_executor import run_prepared_promotion
 from deployment_schedule import run_deployments
 from deployment_source import deployment_checks
 from deployment_state import DeploymentState
@@ -74,6 +75,9 @@ def validate_config(config):
         if not isinstance(project, dict) or type(project.get("repository_id")) is not int or project["repository_id"] <= 0:
             raise ValueError("Invalid project")
         mode = promotion_mode(project)
+        path = project.get('selective_request_path')
+        if 'selective_request_path' in project and (not isinstance(path, str) or not os.path.isabs(path)):
+            raise ValueError("Invalid selective promotion request path")
         if mode == 'selective' and project.get('deployment_guarded') is True:
             raise ValueError("Selective promotion does not yet support the deployment guard")
         if 'deployment_guarded' in project and type(project['deployment_guarded']) is not bool:
@@ -235,8 +239,12 @@ def run(config):
         signal.signal(signal.SIGTERM, lambda *_: stop.set())
         signal.signal(signal.SIGINT, lambda *_: stop.set())
         if promotion_authors:
+            def selective_step(transport, token, project):
+                return run_prepared_promotion(transport, token, project, project_token=project_token,
+                                              journal_path=Path(config['state_path']).with_name('selective-promotions.sqlite'))
+
             promotion_thread = threading.Thread(target=run_promotions, args=(stop, config, private_key),
-                                                kwargs={"quickfix_queue": quickfix_queue}, daemon=True)
+                                                kwargs={"quickfix_queue": quickfix_queue, "selective_step": selective_step}, daemon=True)
             promotion_thread.start()
         if any(p.get('deployment_enabled') is True for p in config['projects']):
             deployment_thread = threading.Thread(target=run_deployments, args=(stop, config, private_key), daemon=True)

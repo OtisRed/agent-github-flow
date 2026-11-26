@@ -35,7 +35,8 @@ def run_promotions(stop, config, private_key, *, transport=request, quickfix_que
         token = None
         if mode == 'prefix' or (callable(selective_step) and not project.get('deployment_guarded')):
             token = AppToken(config['app_id'], config['installation_id'], repository_id, private_key,
-                             purpose='promotion', transport=transport)
+                             purpose='selective_promotion' if mode == 'selective' else 'promotion',
+                             transport=transport)
         projects[repository_id] = (project, mode, token)
     zone = ZoneInfo('Europe/Warsaw')
     previous = {}
@@ -80,11 +81,12 @@ def run_promotions(stop, config, private_key, *, transport=request, quickfix_que
                         result = promotion_step(transport, token(), project['owner'], project['repository'])
                 except Exception:
                     result = 'failed'
-                if result not in ('branch-created', 'pull-request-created', 'waiting-checks', 'changed', 'merged'):
+                if (mode == 'selective' and result == 'merged') or result not in (
+                        'branch-created', 'pull-request-created', 'waiting-checks', 'changed', 'merged', 'unknown'):
                     requested.discard(repository_id)
                 if previous.get(project['repository_id']) != result:
                     alert = result in ('failed', 'protection-required', 'blocked', 'deployment-blocked',
-                                       'selective-unavailable')
+                                       'selective-unavailable', 'forward-sync-required', 'unknown')
                     print(('FLOW attention: promotion-' if alert else 'FLOW promotion: ') + result
                           + ' repo=' + str(project['repository_id']),
                           file=sys.stderr if alert else sys.stdout, flush=True)

@@ -41,6 +41,12 @@ class SelectiveMergeJournal:
             return db.execute("SELECT manifest,result FROM attempt WHERE repo=? AND pr=?",
                               (repo, pr)).fetchone()
 
+    def latest_confirmed(self, repo):
+        with closing(sqlite3.connect(self.path)) as db:
+            row = db.execute("SELECT result FROM attempt WHERE repo=? AND result IS NOT NULL ORDER BY rowid DESC LIMIT 1",
+                             (repo,)).fetchone()
+        return row[0] if row else None
+
     def reserve(self, repo, pr, manifest):
         try:
             with closing(sqlite3.connect(self.path)) as db, db:

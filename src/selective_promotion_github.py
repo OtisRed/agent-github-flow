@@ -51,7 +51,7 @@ def _cycle(fetch, project_status, issue, expected_cycle):
     return start, min(closed_at, _date(last["created_at"]))
 
 
-def _verified_sources(fetch, project_status, manifest, heads):
+def _verified_sources(fetch, project_status, manifest, heads, resolve_merge_oid):
     groups = {}
     for source in manifest["sources"]:
         groups.setdefault(source["issue"], []).append(source)
@@ -81,7 +81,10 @@ def _verified_sources(fetch, project_status, manifest, heads):
         _require(when < end and pr["base"]["ref"] == "smoke"
                  and pr["base"]["repo"]["id"] == manifest["repository_id"],
                  "source-outside-closed-cycle")
-        found[number] = (issue, pr["merge_commit_sha"])
+        merge_oid = pr.get("merge_commit_sha")
+        if merge_oid is None and resolve_merge_oid is not None:
+            merge_oid = resolve_merge_oid(number)
+        found[number] = (issue, merge_oid)
 
     expected = {source["pr"]: (source["issue"], source["sha"]) for source in manifest["sources"]}
     _require(found == expected, "source-set-changed")
@@ -167,7 +170,7 @@ def observe_candidate(read, project_status, repository, manifest, pr, app_id, *,
         _require(all(SHA.fullmatch(sha) for sha in before), "invalid-observed-ref")
         _require(row["state"] == "open", "candidate-not-open")
         _require(row["base"]["sha"] == manifest["main"], "candidate-identity-changed")
-        _verified_sources(fetch, project_status, manifest, before)
+        _verified_sources(fetch, project_status, manifest, before, resolve_merge_oid)
         protected = _main_protected(fetch, app_id)
         updated = candidate()
         _require(all(row[k] == updated[k] for k in ("state", "draft", "mergeable_state"))

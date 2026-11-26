@@ -53,6 +53,19 @@ class SelectiveGithubTests(unittest.TestCase):
         self.assertEqual(self.observe()["blockers"],
                          ["draft", "refs-do-not-match-manifest", "main-protection-insufficient"])
 
+    def test_resolves_source_merge_oid_omitted_by_the_app(self):
+        del self.linked["merge_commit_sha"]
+        seen = []
+
+        def resolve(number):
+            seen.append(number)
+            return self.manifest["sources"][0]["sha"]
+
+        result = observe_candidate(self.read, lambda _: "done", "Owner/repo", self.manifest, 5, 8,
+                                   resolve_merge_oid=resolve)
+        self.assertEqual(result["blockers"], [])
+        self.assertEqual(seen, [2])
+
     def test_discards_reopened_or_non_done_issue(self):
         self.assertEqual(self.observe(status="review")["reason"], "issue-not-completed")
         self.responses["issues/3/events?per_page=100&page=1"].append(
