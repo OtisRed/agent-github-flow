@@ -80,3 +80,29 @@ zgodności squasha z zapisanym drzewem i rodzicem oraz osiągalności z aktualne
 `pending` oznacza nierozliczoną rezerwację, `not-on-main` wynik poza aktualną historią,
 a `not-recorded` brak wpisu w rejestrze wybiórczej promocji. Kod zakończenia 0 oznacza
 udany odczyt. Stan potwierdzenia jest w danych wyjściowych.
+
+
+### Odbiór zaplanowanej promocji wybiórczej
+
+1. Przed oknem 03:00–05:00 czasu Europe/Warsaw zapisz numer gotowego PR promocyjnego,
+   listę issue i źródłowych PR, pełne SHA kandydata i bazy oraz identyfikator udanego
+   przebiegu CI. Potwierdź obecność przygotowanego żądania i tryb wybiórczy w działającej
+   usłudze. Podczas obserwacji pozostaw wykonanie stałej usłudze, bez ręcznego uruchomienia
+   promocji ani synchronizacji.
+2. Po oknie odczytaj wpisy jednostki `agent-github-flow-mvp.service` dla repozytorium
+   w obserwowanym przedziale. Powiąż czas i instancję usługi z czasem scalenia PR.
+   Sam zielony PR, sam wpis `FLOW promotion: merged` albo sama godzina scalenia
+   nie wystarczają do przypisania wyniku harmonogramowi. Jeśli brak powiązania
+   z instancją albo równolegle uruchomiono próbę ręczną, oznacz źródło jako niepotwierdzone.
+3. Odczytaj potwierdzenie w rejestrze i sprawdź w GitHubie, czy odnotowany squash
+   jest osiągalny z aktualnego `main`. Sprawdź PR aplikacji `sync-main/<SHA squasha>`,
+   jego wymagane kontrole i scalenie do `smoke`. Po scaleniu potwierdź, że squash jest
+   przodkiem `smoke` i że to scalenie zachowało drzewo wcześniejszego `smoke`.
+   Zapisz oddzielnie wynik promocji i wynik synchronizacji. Brak potwierdzenia,
+   błąd kontroli lub otwarty PR synchronizacyjny oznacza etap do wyjaśnienia.
+   Odczyt nie wymaga zmiany żądania ani uruchamiania kolejnej próby.
+
+Historyczny przykład odczytu to [squash #274](https://github.com/OtisRed/agent-github-flow/pull/274)
+i [synchronizacja #275](https://github.com/OtisRed/agent-github-flow/pull/275). Pozwala
+sprawdzić sposób odczytu squasha, kontroli i grafu gałęzi. Promocję wykonano wtedy
+w jednorazowej próbie, przed stałym włączeniem trybu, więc nie potwierdza ona harmonogramu.
