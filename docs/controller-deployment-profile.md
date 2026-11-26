@@ -28,3 +28,21 @@ Operator wdraża przejrzane wydanie kontrolera. Promocja GitHub zmienia gałąź
 2. Nazwa katalogu `main-<pełny SHA>` wskazuje commit do porównania. Porównaj SHA-256 jego pliku `src/mvp_service.py` z plikiem w rozwiązanym katalogu wydania. Pobierz bajty z Git przez `git show <SHA>:src/mvp_service.py` i z konkretnego katalogu wydania. W obu kopiach znormalizuj CRLF do LF przed obliczeniem sumy, np. przez `hashlib.sha256(data.replace(b'\r\n', b'\n')).hexdigest()`. Zgodność pojedynczego pliku potwierdza tylko ten plik.
 3. Ponownie odczytaj PID, identyfikator uruchomienia i cel symlinku. Jeśli którykolwiek się zmienił, powtórz pomiar. Potwierdzenie SHA działającego procesu wymaga dowodu uruchomienia tej samej instancji z niezmiennego wydania, którego zawartość sprawdzono względem commita. Obecna jednostka startuje przez zmienny link `current` i nie zapisuje tego powiązania. Gdy masz tylko nazwę wydania, czas, PID i sumę pliku, odnotuj SHA wskazanego wydania, a SHA procesu oznacz `unverified`.
 4. Porównaj wskazane wydanie z `git ls-remote origin refs/heads/main`. Zapisz obie wartości, czas i zakres dowodu. Przy rozbieżności ustal z operatorem, jakie zmiany wymagają wdrożenia. Gniazdo alertów ma własny cykl aktywacji.
+
+
+## Prepared selective promotion
+
+The controller uses its existing nightly and quickfix scheduler for this route. An operator stages one
+request in the absolute `selective_request_path` configured for an opted-in repository. The file must be
+owned by the service account, must be a regular file, and must have no group or other permissions.
+Place it in a private service-owned directory and publish it atomically. The request contains exactly
+`manifest`, `pr`, `policy`, `run_id` and `job_id`. Use the candidate builder's manifest and the operator-verified
+CI policy (workflow ID and path, required check App ID, approved workflow blob, and pinned checkout SHA).
+An absent file is idle. Keep the file in place while a merge is uncertain so the next turn can reconcile it.
+
+The controller verifies the Project card, closure cycle, PR source list, protected base and the actual
+revision used by GitHub Actions. A completed squash is recorded in `selective-promotions.sqlite` beside
+the controller database. A later request is blocked until the previous result is an ancestor of `smoke`.
+Include this SQLite file in backups before enrolling a persistent project. The scheduler does not build
+candidate PRs or publish forward sync in this stage. Repositories with the deployment guard continue
+to use prefix mode.
