@@ -29,10 +29,11 @@ class BackupHealthProbeTests(unittest.TestCase):
             db.execute('CREATE TABLE issues (error_code TEXT, uncertain_since REAL)')
 
     def run_probe(self, *, active=True, scan=True, journal_error=False, promotion_log='', promotion_no_match=False,
-                  enabled=(10, 20), config_age=0, archive_enabled=False, archive_log=''):
+                  enabled=(10, 20), config_age=0, archive_enabled=False, archive_log='', modes=None):
         original_connect = sqlite3.connect
         config = json.dumps({'archive_enabled': archive_enabled,
-                             'projects': [{'repository_id': n, 'promotion_enabled': True} for n in enabled]})
+                             'projects': [{'repository_id': n, 'promotion_enabled': True,
+                                           'promotion_mode': (modes or {}).get(n, 'prefix')} for n in enabled]})
 
         def fake_connect(_path, **_kwargs):
             return original_connect(self.path.resolve().as_uri() + '?mode=ro', uri=True)
@@ -92,6 +93,11 @@ class BackupHealthProbeTests(unittest.TestCase):
     def test_disabled_project_does_not_raise_promotion_alarm(self):
         logs = 'FLOW attention: promotion-failed repo=20\n'
         self.assertEqual(self.run_probe(enabled=(10,), promotion_log=logs)['promotion_errors'], 0)
+
+    def test_paused_project_is_excluded_and_unavailable_selective_is_an_error(self):
+        result = self.run_probe(config_age=172800, modes={10: 'paused', 20: 'selective'},
+                                promotion_log='FLOW attention: promotion-selective-unavailable repo=20\n')
+        self.assertEqual((result['promotion_missing'], result['promotion_errors']), (0, 1))
 
     def test_incomplete_promotion_is_reported(self):
         logs = 'FLOW attention: promotion-incomplete repo=10\n'
