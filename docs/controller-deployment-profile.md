@@ -65,3 +65,18 @@ with fresh `origin/main` and `origin/smoke` from that repository. Use a private,
 of `state.sqlite` as `PATH`. The receipt is derived from SQLite
 only if the confirmed squash is still reachable from the observed main. It covers the exact issue
 closure cycle and source PRs. An unreachable receipt blocks planning.
+
+### Odczyt potwierdzenia po numerze issue
+
+Na Mikrusie operator uruchamia polecenie z katalogu wydania jako konto usługi:
+
+```sh
+sudo -u agent-flow python3 -B src/selective_promotion_receipt.py OtisRed/agent-github-flow 264
+```
+
+Polecenie korzysta z ograniczonego tokenu App oraz otwiera bazę SQLite tylko do odczytu.
+Pokazuje osobne wpisy dla cykli issue i PR-ów promocyjnych. Status `confirmed` wymaga
+zgodności squasha z zapisanym drzewem i rodzicem oraz osiągalności z aktualnego `main`.
+`pending` oznacza nierozliczoną rezerwację, `not-on-main` wynik poza aktualną historią,
+a `not-recorded` brak wpisu w rejestrze wybiórczej promocji. Kod zakończenia 0 oznacza
+udany odczyt. Stan potwierdzenia jest w danych wyjściowych.
