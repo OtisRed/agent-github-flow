@@ -78,6 +78,10 @@ def validate_config(config):
         path = project.get('selective_request_path')
         if 'selective_request_path' in project and (not isinstance(path, str) or not os.path.isabs(path)):
             raise ValueError("Invalid selective promotion request path")
+        sync = project.get('selective_sync_enabled', False)
+        if type(sync) is not bool or (sync and (not path or type(project.get('admission_sync_bot_id')) is not int
+                                               or project['admission_sync_bot_id'] <= 0)):
+            raise ValueError("Invalid selective forward-sync configuration")
         if mode == 'selective' and project.get('deployment_guarded') is True:
             raise ValueError("Selective promotion does not yet support the deployment guard")
         if 'deployment_guarded' in project and type(project['deployment_guarded']) is not bool:

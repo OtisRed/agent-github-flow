@@ -44,5 +44,21 @@ The controller verifies the Project card, closure cycle, PR source list, protect
 revision used by GitHub Actions. A completed squash is recorded in `selective-promotions.sqlite` beside
 the controller database. A later request is blocked until the previous result is an ancestor of `smoke`.
 Include this SQLite file in backups before enrolling a persistent project. The scheduler does not build
-candidate PRs or publish forward sync in this stage. Repositories with the deployment guard continue
+candidate PRs. Publication of forward sync needs a separate repository opt-in. Repositories with the deployment guard continue
 to use prefix mode.
+
+### Publication and planning after a selective merge
+
+Set `selective_sync_enabled` only for a selective repository that has GitHub merge commits and auto-merge
+enabled, the numeric App bot account configured as `admission_sync_bot_id`, and strict protection for
+`smoke` with the trusted `verify` check. Where the workflow waits on central admission, enable its
+existing App-authored sync path. The scheduler publishes the same-repository `sync-main/<main>` PR only
+after a confirmed squash. It verifies a conflict-free merge that preserves the `smoke` tree and uses
+GitHub's protected auto-merge. It does not force-update refs. A stale technical branch, disabled
+protection, or content-changing sync requires operator attention. Keep the staged request until the
+confirmed squash is reachable from `smoke`.
+
+For subsequent plans, run `selective_promotion_plan.py INPUT --journal PATH --refs-repository CHECKOUT`
+with fresh `origin/main` and `origin/smoke` from that repository. The receipt is derived from SQLite
+only if the confirmed squash is still reachable from the observed main. It covers the exact issue
+closure cycle and source PRs. An unreachable receipt blocks planning.

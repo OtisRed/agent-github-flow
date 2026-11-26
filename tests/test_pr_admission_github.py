@@ -58,6 +58,12 @@ class ReaderTests(unittest.TestCase):
         self.rows["/git/ref/heads/main"] = {"object": {"sha": main}}
         self.rows["/git/commits/" + self.sha] = {"parents": [{"sha": "b" * 40}, {"sha": main}]}
         self.assertEqual(self.reader.sync_status(snapshot), "sync-verified")
+        self.reader.sync_tree_preserving = True
+        self.rows["/git/commits/" + "b" * 40] = {"sha": "b" * 40, "tree": {"sha": "e" * 40}}
+        self.rows["/git/commits/" + self.sha]["tree"] = {"sha": "f" * 40}
+        self.assertEqual(self.reader.sync_status(snapshot), "sync-invalid")
+        self.rows["/git/commits/" + self.sha]["tree"]["sha"] = "e" * 40
+        self.assertEqual(self.reader.sync_status(snapshot), "sync-verified")
         snapshot["pr"]["auto_merge_actor_id"] = 11
         self.assertEqual(self.reader.sync_status(snapshot), "sync-invalid")
         snapshot["pr"]["auto_merge_actor_id"] = 10

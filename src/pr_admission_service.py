@@ -34,6 +34,7 @@ def build_readers(config, private_key, *, transport=request, store=None, clients
                                  gate_job=project.get("admission_gate_job", "verify"),
                                  workflow_event=project.get("admission_workflow_event", "pull_request"),
                                  sync_bot_id=project.get("admission_sync_bot_id"),
+                                 sync_tree_preserving=project.get("selective_sync_enabled") is True,
                                  ci_retry_journal=ci_retry_journal,
                                  retry_targets=project.get("admission_retry_targets"))
         if project.get("dependabot_enabled") is True:
