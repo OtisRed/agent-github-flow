@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from pr_admission_github import AdmissionReader
 from pr_admission_runner import admission_step
 
 
@@ -112,6 +113,45 @@ class RunnerTests(unittest.TestCase):
         gateway.sync_status = lambda _snapshot: "sync-wait"
         self.assertEqual(admission_step(gateway, 4, frozenset({7})), "sync-wait")
         self.assertEqual(gateway.published, [])
+
+    def test_closed_sync_is_skipped_before_any_verdict_or_write(self):
+        closed = copy.deepcopy(self.snapshot)
+        closed["pr"]["state"] = "closed"
+        gateway = Gateway([closed])
+        gateway.sync_status = lambda _snapshot: self.fail("Closed PR reached the sync classifier")
+        self.assertEqual(admission_step(gateway, 4, frozenset({7})), "pr-closed")
+        self.assertEqual(gateway.published, [])
+        self.assertEqual(gateway.merges, [])
+
+    def test_sync_that_closes_before_failure_is_published_is_skipped(self):
+        closed = copy.deepcopy(self.snapshot)
+        closed["pr"]["state"] = "closed"
+        gateway = Gateway([self.snapshot, closed])
+        gateway.sync_status = lambda _snapshot: "sync-invalid"
+        self.assertEqual(admission_step(gateway, 4, frozenset({7})), "pr-closed")
+        self.assertEqual(gateway.published, [])
+        self.assertEqual(gateway.merges, [])
+
+    def test_still_open_sync_with_wrong_parents_publishes_failure_only(self):
+        first = copy.deepcopy(self.snapshot)
+        main = "c" * 40
+        first["pr"].update(head_ref=f"sync-main/{main}", author_id=12,
+                           auto_merge_enabled=True, auto_merge_actor_id=12)
+        gateway = Gateway([first, copy.deepcopy(first)])
+        def transport(path, _token):
+            if path.endswith("/git/ref/heads/main"):
+                return {"object": {"sha": main}}, None
+            self.assertTrue(path.endswith("/git/commits/" + self.sha))
+            return {"parents": [{"sha": "d" * 40}, {"sha": main}]}, None
+
+        reader = AdmissionReader(owner="owner", repository="repo", repository_id=20,
+                                 token=lambda: "fixture", transport=transport, sync_bot_id=12)
+        gateway.sync_status = reader.sync_status
+        self.assertEqual(admission_step(gateway, 4, frozenset({7})), "sync-invalid")
+        self.assertEqual(gateway.published, [(self.sha, "sync-invalid")])
+        self.assertEqual(gateway.snapshots, [])
+        self.assertEqual(gateway.merges, [])
+
 
     def test_timeout_does_not_retry_merge(self):
         gateway = Gateway([self.snapshot, copy.deepcopy(self.snapshot)], fail_merge=True)
