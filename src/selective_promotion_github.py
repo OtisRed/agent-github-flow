@@ -5,6 +5,7 @@ import re
 import subprocess
 from urllib.parse import urlencode
 
+from deployment_source import pull_request_merge_oid
 from mvp_decision import _date, _id
 from promotion_plan import REFS, SHA, issue_reference
 from selective_promotion_merge import _validated_manifest
@@ -105,8 +106,42 @@ def _main_protected(fetch, app_id):
             == [("verify", app_id)] and fetch("rules/branches/main") == [])
 
 
-def observe_candidate(read, project_status, repository, manifest, pr, app_id):
-    """Inspect a single proposed PR from an operator-trusted manifest."""
+def _observe_squash_result(fetch, candidate, row, manifest, pr, resolve_merge_oid):
+    """Verify the exact merged PR and immutable commit against the trusted manifest."""
+
+    def merged_oid(pull):
+        _require(pull["state"] == "closed" and pull["merged"] is True, "candidate-not-merged")
+        oid = pull.get("merge_commit_sha")
+        if oid is None and resolve_merge_oid is not None:
+            oid = resolve_merge_oid(pr)
+        _require(isinstance(oid, str) and SHA.fullmatch(oid), "merge-commit-unavailable")
+        return oid
+
+    def main_head():
+        sha = fetch("git/ref/heads/main")["object"]["sha"]
+        _require(isinstance(sha, str) and SHA.fullmatch(sha), "invalid-observed-ref")
+        return sha
+
+    oid = merged_oid(row)
+    main = main_head()
+    commit = fetch(f"git/commits/{oid}")
+    _require(commit["sha"] == oid, "merge-commit-changed")
+    parents = [parent["sha"] for parent in commit["parents"]]
+    tree = commit["tree"]["sha"]
+    _require(parents == [manifest["main"]], "unexpected-squash-parent")
+    _require(tree == manifest["tree"], "unexpected-squash-tree")
+    if oid != main:
+        comparison = fetch(f"compare/{oid}...{main}?per_page=1")
+        _require(comparison["merge_base_commit"]["sha"] == oid, "squash-not-on-main")
+    _require(merged_oid(candidate()) == oid and main_head() == main, "observation-changed")
+    return {"kind": "observed", "blockers": [],
+            "snapshot": {"state": "closed", "merged": True, "repository_id": manifest["repository_id"],
+                         "pr": pr, "head": manifest["candidate"], "merge_commit": oid,
+                         "result_parents": parents, "result_tree": tree, "reachable_from_main": True}}
+
+
+def observe_candidate(read, project_status, repository, manifest, pr, app_id, *, resolve_merge_oid=None):
+    """Inspect one promotion PR before a write or during result reconciliation."""
     try:
         _require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*", repository)
                  and _id(app_id) and _validated_manifest(manifest, pr), "invalid-input")
@@ -121,18 +156,22 @@ def observe_candidate(read, project_status, repository, manifest, pr, app_id):
             row = fetch(f"pulls/{pr}")
             _require(row["number"] == pr and row["base"]["ref"] == "main"
                      and row["base"]["repo"]["id"] == row["head"]["repo"]["id"] == manifest["repository_id"]
-                     and row["base"]["sha"] == manifest["main"]
                      and row["head"]["sha"] == manifest["candidate"], "candidate-identity-changed")
             return row
 
+        row = candidate()
+        if row["state"] == "closed":
+            return _observe_squash_result(fetch, candidate, row, manifest, pr, resolve_merge_oid)
+
         before = refs()
         _require(all(SHA.fullmatch(sha) for sha in before), "invalid-observed-ref")
-        row = candidate()
         _require(row["state"] == "open", "candidate-not-open")
+        _require(row["base"]["sha"] == manifest["main"], "candidate-identity-changed")
         _verified_sources(fetch, project_status, manifest, before)
         protected = _main_protected(fetch, app_id)
         updated = candidate()
-        _require(all(row[k] == updated[k] for k in ("state", "draft", "mergeable_state")) and refs() == before,
+        _require(all(row[k] == updated[k] for k in ("state", "draft", "mergeable_state"))
+                 and updated["base"]["sha"] == manifest["main"] and refs() == before,
                  "observation-changed")
         snapshot = {"repository_id": manifest["repository_id"], "pr": pr, "state": row["state"],
                     "draft": row["draft"], "head": row["head"]["sha"], "base": row["base"]["sha"],
@@ -179,9 +218,9 @@ def main():
         data = json.load(source)
     owner, name = data["repository"].split("/")
 
-    def gh(*args):
+    def gh(*args, input_text=None):
         result = subprocess.run(["gh", "api", *args], check=True, timeout=30,
-                                capture_output=True, encoding="utf-8")
+                                input=input_text, capture_output=True, encoding="utf-8")
         return json.loads(result.stdout)
 
     def project_status(issue):
@@ -194,8 +233,15 @@ def main():
         _require(len(matches) == 1 and matches[0]["isArchived"] is False, "project-card-unavailable")
         return matches[0]["fieldValueByName"]["name"]
 
+    def resolve_merge_oid(pr):
+        def graphql(_path, _token, *, body):
+            return gh("graphql", "--input", "-", input_text=json.dumps(body)), None
+
+        return pull_request_merge_oid(graphql, None, owner, name, pr)
+
     result = observe_candidate(lambda path: gh("--method", "GET", path), project_status,
-                               data["repository"], data["manifest"], data["pr"], data["app_id"])
+                               data["repository"], data["manifest"], data["pr"], data["app_id"],
+                               resolve_merge_oid=resolve_merge_oid)
     print(json.dumps(result, indent=2))
     return int(result["kind"] != "observed" or bool(result["blockers"]))
 

@@ -81,6 +81,8 @@ Uruchom `python src/selective_promotion_github.py INPUT.json` z odczytową sesj�
 
 Pierwszy odczyt obsługuje potwierdzone scalenia z dwoma rodzicami. Pełne pokrycie squash/rebase, ustalenie śladu wcześniejszej wybiórczej promocji i podpięcie strzeżonego zapisu pozostają przed opt-in. Draft lub zmieniony main albo smoke blokuje kandydaturę. Publikacja forward-sync wymaga faktycznego i potwierdzonego squasha na main.
 
+Po scaleniu to samo polecenie odczytuje wynik PR z GitHuba. Wymaga zgodności tożsamości PR i SHA kandydata z manifestem, potwierdzonego scalenia, pojedynczego rodzica równego zatwierdzonej bazie, tego samego drzewa oraz osiągalności ze stabilnego odczytu main. Brak wyniku lub rozbieżność pozostawia promocję bez potwierdzenia. Ten odczyt nie uruchamia wdrożenia.
+
 ### Synchronizacja historii w planerze prefiksu
 
 Planer pomija techniczny PR `sync-main/<SHA>` tylko wtedy, gdy historia potwierdza dołączenie commita już osiągalnego z main, a pełne drzewo jest identyczne z pierwszym rodzicem. Obsługuje także zwykłe scalenie przez GitHub, które opakowuje taki commit w drugi merge o tym samym drzewie i tym samym pierwszym rodzicu. Jeżeli deklaracja, rodzice lub drzewa się nie zgadzają, plan zatrzymuje się.

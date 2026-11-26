@@ -90,3 +90,62 @@ class SelectiveGithubTests(unittest.TestCase):
         self.assertEqual(self.observe()["reason"], "source-not-on-smoke")
         self.manifest["sources"][0]["method"] = "squash"
         self.assertEqual(self.observe()["reason"], "unverified-source-method")
+
+    def set_merged_result(self):
+        oid, current = "f" * 40, "9" * 40
+        self.responses["pulls/5"].update(state="closed", merged=True, merge_commit_sha=oid)
+        self.responses["git/ref/heads/main"]["object"]["sha"] = current
+        self.responses[f"git/commits/{oid}"] = {
+            "sha": oid, "parents": [{"sha": self.manifest["main"]}],
+            "tree": {"sha": self.manifest["tree"]},
+        }
+        self.responses[f"compare/{oid}...{current}?per_page=1"] = {"merge_base_commit": {"sha": oid}}
+        return oid
+
+    def test_reconciles_squash_reachable_from_a_later_main(self):
+        oid = self.set_merged_result()
+        result = self.observe()
+        self.assertEqual(result["blockers"], [])
+        self.assertEqual(result["snapshot"]["merge_commit"], oid)
+        self.assertEqual(result["snapshot"]["result_parents"], [self.manifest["main"]])
+        self.assertTrue(result["snapshot"]["reachable_from_main"])
+
+    def test_merged_report_blocks_different_parent_tree_or_unreachable_commit(self):
+        oid = self.set_merged_result()
+        commit = self.responses[f"git/commits/{oid}"]
+        parents = commit["parents"]
+        commit["parents"] = parents + [{"sha": self.manifest["candidate"]}]
+        self.assertEqual(self.observe()["reason"], "unexpected-squash-parent")
+        commit["parents"] = [{"sha": "7" * 40}]
+        self.assertEqual(self.observe()["reason"], "unexpected-squash-parent")
+        commit["parents"] = parents
+        commit["tree"]["sha"] = "7" * 40
+        self.assertEqual(self.observe()["reason"], "unexpected-squash-tree")
+        commit["tree"]["sha"] = self.manifest["tree"]
+        self.responses[f"compare/{oid}...{'9' * 40}?per_page=1"]["merge_base_commit"]["sha"] = "a" * 40
+        self.assertEqual(self.observe()["reason"], "squash-not-on-main")
+
+    def test_unmerged_or_changed_readback_does_not_confirm(self):
+        self.set_merged_result()
+        self.responses["pulls/5"]["merged"] = False
+        self.assertEqual(self.observe()["reason"], "candidate-not-merged")
+        self.responses["pulls/5"]["merged"] = True
+        reads = 0
+
+        def moving_main(path):
+            nonlocal reads
+            if path.endswith("git/ref/heads/main"):
+                reads += 1
+                if reads == 2:
+                    return {"object": {"sha": "7" * 40}}
+            return self.read(path)
+
+        self.assertEqual(self.observe(read=moving_main)["reason"], "observation-changed")
+
+    def test_resolves_missing_rest_merge_sha_with_supplied_read_only_resolver(self):
+        oid = self.set_merged_result()
+        del self.responses["pulls/5"]["merge_commit_sha"]
+        self.assertEqual(self.observe()["reason"], "merge-commit-unavailable")
+        result = observe_candidate(self.read, None, "Owner/repo", self.manifest, 5, 8,
+                                   resolve_merge_oid=lambda pr: oid if pr == 5 else None)
+        self.assertEqual(result["snapshot"]["merge_commit"], oid)
