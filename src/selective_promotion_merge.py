@@ -47,6 +47,13 @@ class SelectiveMergeJournal:
                              (repo,)).fetchone()
         return row[0] if row else None
 
+    def confirmed_sources(self, repo):
+        """Return only source records attached to confirmed squash results."""
+        with closing(sqlite3.connect(self.path)) as db:
+            rows = db.execute("SELECT manifest,result FROM attempt WHERE repo=? AND result IS NOT NULL",
+                              (repo,)).fetchall()
+        return [(json.loads(manifest)["sources"], result) for manifest, result in rows]
+
     def reserve(self, repo, pr, manifest):
         try:
             with closing(sqlite3.connect(self.path)) as db, db:

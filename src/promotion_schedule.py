@@ -86,7 +86,7 @@ def run_promotions(stop, config, private_key, *, transport=request, quickfix_que
                     requested.discard(repository_id)
                 if previous.get(project['repository_id']) != result:
                     alert = result in ('failed', 'protection-required', 'blocked', 'deployment-blocked',
-                                       'selective-unavailable', 'forward-sync-required', 'unknown')
+                                       'selective-unavailable', 'forward-sync-required', 'forward-sync-blocked', 'unknown')
                     print(('FLOW attention: promotion-' if alert else 'FLOW promotion: ') + result
                           + ' repo=' + str(project['repository_id']),
                           file=sys.stderr if alert else sys.stdout, flush=True)

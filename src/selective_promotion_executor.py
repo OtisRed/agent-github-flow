@@ -12,6 +12,7 @@ from mvp_errors import GitHubRequestError
 from mvp_github import API, MAX_RESPONSE, PROJECT_QUERY, GitHub, _NoRedirect
 from selective_promotion_flow import verify_and_squash
 from selective_promotion_github import observe_candidate
+from selective_forward_sync import publish_forward_sync
 from selective_promotion_merge import SelectiveMergeJournal, _validated_manifest, request_github_squash
 
 
@@ -126,6 +127,9 @@ def run_prepared_promotion(transport, token, project, *, project_token, journal_
     except (GitHubRequestError, ValueError, KeyError, TypeError):
         attempt = journal.read(repository_id, number)
         return "unknown" if attempt and attempt[1] is None else "failed"
+    if result == "merged" and project.get("selective_sync_enabled") is True:
+        confirmed = journal.read(repository_id, number)[1]
+        return publish_forward_sync(transport, token, project, journal, number, confirmed, policy.get("app_id"))
     return {"waiting-or-stale": "waiting-checks", "already-reserved": "blocked",
             "invalid-manifest": "blocked", "manifest-mismatch": "blocked",
             "invalid-checks": "blocked"}.get(result, result)
