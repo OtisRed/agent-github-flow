@@ -34,6 +34,14 @@ still applies at merge time. The owner accepted the reopen risk on 5 November
 2026 and chose the final check followed by automatic promotion. Issue #24 covers validating the actual project CI
 and setting protection before production promotion. A merge is not a release.
 
+## Tryb promocji repozytorium
+
+Prywatna konfiguracja z `promotion_enabled: true` zachowuje tryb `prefix`, jeśli pole `promotion_mode` jest pominięte. Pole przyjmuje `prefix`, `paused` lub `selective`. Wyłączenie `promotion_enabled` zawsze wstrzymuje promocję. `paused` wyłącza tylko promocję wskazanego repozytorium, w tym zgłoszenia quickfix, i nie generuje alarmu o braku nocnego przebiegu.
+
+Wybór obowiązuje od startu kontrolera. Przed zmianą konfiguracji operator czeka na zakończenie bieżącego zapisu. Harmonogram i quickfix korzystają z jednego wyboru. Próby operatora muszą przechodzić przez ten sam mechanizm. Tryb `selective` jest przygotowany do podłączenia jednego wykonawcy. W tej wersji bez podłączonego wykonawcy kontroler zgłosi `promotion-selective-unavailable` i nie wykona promocji. Repozytoria z blokadą zależną od działającej wersji pozostają w trybie zwykłym albo wstrzymanym.
+
+Starsze wydanie ignoruje pole trybu. Przed uruchomieniem takiego wydania potwierdź, że zwykła promocja może już bezpiecznie wrócić, albo utrzymaj blokadę zgodną z jego konfiguracją. Sam zapis trybu wstrzymanego w nowym polu nie wystarcza.
+
 ## Odczytowy pilot wybiórczej promocji (#197)
 
 Uruchom ręcznie `python src/selective_promotion_plan.py observation.json`. Program czyta jeden lokalny plik JSON i wypisuje porównanie planów. Pierwszy pilot korzysta z danych syntetycznych.

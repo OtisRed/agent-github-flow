@@ -35,6 +35,26 @@ class ConfigurationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_config(self.config)
 
+    def test_promotion_modes_are_explicit_and_preserve_legacy_opt_in(self):
+        from promotion_schedule import promotion_mode
+
+        self.assertEqual(promotion_mode(self.project), 'paused')
+        self.project['promotion_enabled'] = True
+        self.assertEqual(promotion_mode(self.project), 'prefix')
+        for mode in ('prefix', 'paused', 'selective'):
+            self.project['promotion_mode'] = mode
+            self.assertIs(validate_config(self.config), self.config)
+            self.assertEqual(promotion_mode(self.project), mode)
+        self.project['deployment_guarded'] = True
+        with self.assertRaisesRegex(ValueError, 'does not yet support the deployment guard'):
+            validate_config(self.config)
+        self.project['deployment_guarded'] = False
+        self.project['promotion_enabled'] = False
+        self.assertEqual(promotion_mode(self.project), 'paused')
+        self.project['promotion_mode'] = 'unknown'
+        with self.assertRaisesRegex(ValueError, 'Invalid promotion mode'):
+            validate_config(self.config)
+
     def test_deployment_guard_requires_explicit_state_and_promotion(self):
         self.project['deployment_guarded'] = True
         with self.assertRaises(ValueError):
