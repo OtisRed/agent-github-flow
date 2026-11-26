@@ -244,8 +244,11 @@ def run(config):
         signal.signal(signal.SIGINT, lambda *_: stop.set())
         if promotion_authors:
             def selective_step(transport, token, project):
+                if os.path.lexists(state.with_name('selective-promotions.sqlite')):
+                    # Keep the old replay guard authoritative until an operator reconciles it.
+                    return 'selective-ledger-migration-required'
                 return run_prepared_promotion(transport, token, project, project_token=project_token,
-                                              journal_path=Path(config['state_path']).with_name('selective-promotions.sqlite'))
+                                              journal_path=state, journal_in_state=True)
 
             promotion_thread = threading.Thread(target=run_promotions, args=(stop, config, private_key),
                                                 kwargs={"quickfix_queue": quickfix_queue, "selective_step": selective_step}, daemon=True)

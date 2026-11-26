@@ -1,4 +1,6 @@
 import copy
+import shutil
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -7,6 +9,7 @@ from pathlib import Path
 from threading import Event
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from mvp_store import Store
 from selective_promotion_merge import SelectiveMergeJournal, request_github_squash, selective_merge_step
 
 
@@ -48,6 +51,34 @@ class SelectiveMergeTests(unittest.TestCase):
         self.assertEqual(self.step(), "merged")
         self.assertEqual(self.writes, [(7, 5, "c" * 40)])
         self.assertEqual(self.journal.read(7, 5)[1], "1" * 40)
+
+    def test_controller_backup_restores_confirmed_and_pending_promotions(self):
+        store = Store(self.path.with_name("state.sqlite"))
+        store.initialize()
+        store.enqueue(7, 2)
+        journal = SelectiveMergeJournal(store.path, require_existing=True)
+        self.assertTrue(journal.reserve(7, 5, self.manifest))
+        self.assertTrue(journal.confirm(7, 5, "1" * 40))
+        pending = copy.deepcopy(self.manifest)
+        pending["sources"][0]["pr"] = 9
+        self.assertTrue(journal.reserve(7, 8, pending))
+
+        store.backup()
+        restored = self.path.with_name("restored.sqlite")
+        shutil.copyfile(store.path.with_name("state.sqlite.backup"), restored)
+        restored_journal = SelectiveMergeJournal(restored, require_existing=True)
+        self.assertEqual(restored_journal.latest_confirmed(7), "1" * 40)
+        self.assertIsNone(restored_journal.read(7, 8)[1])
+        self.assertFalse(restored_journal.reserve(7, 10, self.manifest))
+        restored_journal.cancel_before_send(7, 8, pending)
+        self.assertFalse(restored_journal.reserve(7, 10, self.manifest))
+        self.assertEqual(Store(restored).next_pending()["issue_number"], 2)
+
+    def test_runtime_journal_does_not_recreate_missing_state(self):
+        missing = self.path.with_name("missing-state.sqlite")
+        with self.assertRaises(sqlite3.OperationalError):
+            SelectiveMergeJournal(missing, require_existing=True)
+        self.assertFalse(missing.exists())
 
     def test_opt_in_draft_ci_and_exact_proof(self):
         self.assertEqual(self.step(enabled=False), "disabled")
