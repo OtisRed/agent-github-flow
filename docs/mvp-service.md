@@ -52,6 +52,8 @@ Po przejściu repozytorium z promocji prefiksowej na wybiórczą można ustawić
 
 Ręczny zapis i nocny skan współdzielą blokadę pojedynczej operacji archiwizacji. W razie niepewnej odpowiedzi sprawdź aktualny stan karty przed ponownym wywołaniem. Ponowne otwarcie issue wymaga dowodów z nowego cyklu po kolejnym zamknięciu.
 
+Po ustawieniu `promotion_notice_since` dla wybiórczej promocji archiwizacja wymaga też dokładnego komentarza App dla cyklu i squasha, jeśli PR promocyjny został scalony w chwili aktywacji lub później. Starsze promocje, historyczny prefiks i sprawy bez zmian kodu przechodzą według swoich dotychczasowych dowodów.
+
 ## Dopisanie zaufanego autora
 
 Istniejący projekt można rozszerzyć o zaufanego autora wyłącznie jawnym trybem helpera `register_project.py --plan --update --authors-only`, a następnie `--apply --update --authors-only` z aktualnym `expected_config_sha256`. Podaj pełną dotychczasową listę autorów w tej samej kolejności i dopisz nowe identyfikatory; usunięcie, zmiana kolejności oraz jednoczesna zmiana flag są odrzucane. Obowiązują te same blokady, walidacja, kopie i kontrola granicy co przy aktualizacji projektu. Przed zastosowaniem sprawdź tożsamość konta i rzeczywiste uprawnienia, ponieważ zmiana przyznaje autorowi zaufanie kontrolera. Sam plan nie potwierdza działania flow.

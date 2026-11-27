@@ -53,6 +53,7 @@ class AppToken:
             raise ValueError("Invalid App key")
         permissions = {"status": {"issues": "read"},
                        "runtime_alert": {"issues": "write"},
+                       "promotion_notice": {"issues": "write", "pull_requests": "read", "contents": "read"},
                        "dependabot": {"issues": "write", "pull_requests": "write", "contents": "write"},
                        "pr_handoff": {"issues": "write", "pull_requests": "read"},
                        "admission": {"issues": "read", "contents": "write", "pull_requests": "write",

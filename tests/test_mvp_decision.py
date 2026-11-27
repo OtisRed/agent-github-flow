@@ -94,6 +94,15 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(run(snapshot(comments=[comment(3, body="Question", when=BOUNDARY)])),
                          {"kind": "no-change"})
 
+    def test_promotion_notice_leaves_status_and_handoff_decision_unchanged(self):
+        handoff = comment(1)
+        notice = comment(2, body="[FLOW-PROMOTION]\nCycle: 4\nPromotion: https://github.com/Owner/repo/pull/5"
+                                 "\nSquash: " + "a" * 40)
+        for state, status in (("OPEN", "agent-ready"), ("CLOSED", "done")):
+            checkpoint = {"comment_id": 1, "comment_digest": comment_digest(FLOW, handoff["updated_at"])}
+            self.assertEqual(run(snapshot(state=state, status=status, comments=[handoff, notice]), checkpoint),
+                             run(snapshot(state=state, status=status, comments=[handoff]), checkpoint))
+
     def test_discussion_does_not_hide_malformed_handoff(self):
         comments = [comment(1), comment(2, body="[FLOW]\nmissing fields"),
                     comment(3, body="Any update?")]

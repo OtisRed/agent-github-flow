@@ -10,6 +10,7 @@ from mvp_decision import _id
 from mvp_errors import GitHubRequestError
 from mvp_github import GitHub, request
 from promotion_plan import SHA
+from promotion_notice import notice_body, notice_exists, notice_required
 from promotion_schedule import promotion_mode
 from selective_promotion_github import ObservationError, _completed_cycle, _merged_sources, _pages, _require
 from selective_promotion_receipt import read_receipt
@@ -94,6 +95,10 @@ def read_archive_promotion(issue, project, state_path, transport, token, project
             entry = matches[0]
             _require(sorted(entry["source_prs"], key=lambda item: item["pr"]) == source_prs, "source-set-changed")
             result.update(promotion_pr=entry["promotion_pr"], squash=entry["squash"])
+            if with_cleanup and notice_required(fetch, project, entry["promotion_pr"]):
+                body = notice_body(owner, name, cycle, entry["promotion_pr"], entry["squash"])
+                _require(notice_exists(fetch, issue, body, project["admission_sync_bot_id"]),
+                         "promotion-notice-missing")
         if with_cleanup:
             _require((cleanup["scope"] == "code") == bool(source_prs), "cleanup-scope-mismatch")
         _require(_completed_cycle(fetch, project_status, issue, allow_not_planned=with_cleanup) == (cycle, start, end)
