@@ -1,0 +1,18 @@
+#!/usr/bin/python3
+"""Fixed command used by the controller to contact its independent executor."""
+import socket
+import sys
+
+
+request = sys.stdin.buffer.read(8193)
+if len(request) > 8192:
+    sys.exit(1)
+with socket.socket(socket.AF_UNIX) as client:
+    client.settimeout(240)
+    client.connect('/run/agf-pilot-executor.sock')
+    client.sendall(request + b'\n')
+    with client.makefile('rb') as stream:
+        result = stream.readline(8193)
+if not result or len(result) > 8192:
+    sys.exit(1)
+sys.stdout.buffer.write(result)

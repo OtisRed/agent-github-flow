@@ -39,7 +39,33 @@ zlecenie `main`. Przeprowadź go w następującej kolejności.
    uruchomionego procesu. Kopia SQLite służy do odzyskiwania danych po
    weryfikacji, a cofnięcie kodu samo jej nie nadpisuje.
 
-Próba izolowana potwierdza zachowanie warstwy procesów i istniejącego rejestru.
-Rzeczywisty odbiór wymaga jeszcze przygotowania wykonawcy dla produkcyjnej
-jednostki i jednej promocji. Wykonawca plus wersja bazowa są warunkiem
-aktywacji konfiguracji.
+### Wykonawca jednego wydania
+
+Jednostki `agf-pilot-executor.socket` i `agf-pilot-executor@.service` są
+niezależne od grupy procesów kontrolera i od gniazda używanego przez inne
+projekty. Operator instaluje przejrzany katalog `src/` w
+`/opt/agf-controller-pilot` pod kontrolą roota, a plik
+`deploy/agf-pilot-executor-client` w `/usr/local/libexec/agf-pilot-executor-client`
+jako wykonywalny. Tę drugą ścieżkę należy wpisać w polu `deployment_executor`.
+Stan wykonawcy wymaga osobnego katalogu `/var/lib/agf-controller-pilot` z
+uprawnieniami `0700` i właścicielem root. Gniazdo może otworzyć grupa
+`agent-flow`. Usługa wykonawcza otrzymuje żądanie w JSON i nigdy nie buduje
+poleceń ani ścieżek do innych usług z tego żądania.
+
+Plik `/etc/agf-controller-pilot.json` należy do roota i zawiera dwa pola,
+`baseline` oraz `request`. `baseline` to pełny SHA początkowego wydania.
+Najpierw ustaw `request` na `null` i odczytaj działający punkt odniesienia
+przez `status`. Przed pierwszym realnym wykonaniem przygotuj niezmienny katalog
+`releases/main-<SHA>` z dopuszczonego squasha, weryfikując wszystkie pliki
+względem tego commita. Wpisz w `request` dokładne zlecenie kolejki dla AGF,
+pełny SHA oraz zakres `issue-N` powiązany z potwierdzeniem promocji.
+Kontroler po wykryciu aktualnego `main` sam zleci zmianę procesu. Przygotowanie
+pliku i katalogu dla tego jednorazowego pilota wykonuje operator.
+
+Dopiero po pozytywnej atestacji istniejącej próby (wykonanej jako
+`agent-flow`) wykonawca zapisuje zamiar i aktualizuje tylko przypięcie
+`60-release.conf` jednostki AGF. Koniec ustala przez pełny SHA z argumentów
+procesu i gotowość portu nasłuchowego. Po utracie odpowiedzi kontroler uzgadnia
+ten sam wpis. Niejasny wynik lub trwały błąd zostaje do rozliczenia przed
+kolejną promocją. Pilot jest jednorazowy. Kolejna zmiana wymaga osobnego
+przygotowania i decyzji, co zrobić z rejestrem pierwszej próby.
