@@ -20,7 +20,6 @@ Stan na 25 listopada 2026 r. Wydanie bezpieczeństwa dla linii 22 z 11 listopada
 | Miejsce | Deklaracja i obserwacja |
 | --- | --- |
 | Repository CI | Workflow ustawia `node-version: '22'`. Przebieg dla `smoke` z 25 listopada użył `v22.23.5`. [Przebieg CI](https://github.com/OtisRed/agent-github-flow/actions/runs/45644412187) |
-| Ręczna sonda refów App | Workflow deklaruje linię 22. Bieżąca wersja sondy pozostaje niepotwierdzona. Ostatni udany przebieg jest sprzed wydania poprawki. [Definicja sondy](../.github/workflows/app-atomic-ref-probe.yml) · [Ostatni udany przebieg](https://github.com/OtisRed/agent-github-flow/actions/runs/41790291248) |
 | Lokalne narzędzia | Na sprawdzonym komputerze `node --version` zwróciło `v22.22.2`, poniżej wydania z poprawkami. Ta obserwacja dotyczy jednego środowiska Windows. |
 | Kontroler na Mikrusie | Aktywny proces kontrolera wykonuje `mvp_service.py` w Pythonie 3.12. |
 
