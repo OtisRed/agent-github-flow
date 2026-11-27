@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from archive_promotion import read_archive_promotion
 from mvp_store import APPLICATION_ID
+from promotion_notice import notice_body
 
 
 class ArchivePromotionTests(unittest.TestCase):
@@ -84,6 +85,22 @@ class ArchivePromotionTests(unittest.TestCase):
         result = self.observe()
         self.assertEqual((result["kind"], result["promotion_pr"], result["squash"]),
                          ("confirmed", 5, self.main))
+
+    def test_archive_requires_a_trusted_notice_only_for_new_selective_merges(self):
+        self.selective()
+        self.project.update(promotion_notice_since="2026-11-25T00:00:00Z", admission_sync_bot_id=7)
+        promoted = {"number": 5, "merged": True, "merged_at": "2026-11-24T23:59:59Z",
+                    "base": {"ref": "main", "repo": {"id": 1}}}
+        self.data["pulls/5"] = promoted
+        self.assertEqual(self.cleanup("code")["kind"], "confirmed")
+        promoted["merged_at"] = self.project["promotion_notice_since"]
+        self.assertEqual(self.cleanup("code")["reason"], "promotion-notice-missing")
+        args = (3, self.project, self.state, self.transport, "test", lambda _: "done")
+        notice = {"body": notice_body("Owner", "repo", 4, 5, self.main), "user": {"type": "Bot", "id": 8}}
+        self.data["issues/3/comments?per_page=100&page=1"].append(notice)
+        self.assertEqual(read_archive_promotion(*args, with_cleanup=True)["reason"], "promotion-notice-missing")
+        notice["user"]["id"] = 7
+        self.assertEqual(read_archive_promotion(*args, with_cleanup=True)["kind"], "confirmed")
 
     def test_selective_blocks_pending_or_missing_history(self):
         self.selective(confirmed=False)

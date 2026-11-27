@@ -13,6 +13,7 @@ from mvp_github import API, MAX_RESPONSE, PROJECT_QUERY, GitHub, _NoRedirect
 from selective_promotion_flow import verify_and_squash
 from selective_promotion_github import observe_candidate
 from selective_forward_sync import publish_forward_sync
+from promotion_notice import publish_promotion_notices
 from selective_promotion_merge import SelectiveMergeJournal, _validated_manifest, request_github_squash
 
 
@@ -45,7 +46,8 @@ def read_job_log(path, token, *, opener=None):
         raise GitHubRequestError("invalid-data") from None
 
 
-def run_prepared_promotion(transport, token, project, *, project_token, journal_path, journal_in_state=False):
+def run_prepared_promotion(transport, token, project, *, project_token, journal_path, journal_in_state=False,
+                           notice_token=None):
     """Read the private request and bind every API operation to its configured repository."""
     path = project.get("selective_request_path")
     if not path:
@@ -127,9 +129,19 @@ def run_prepared_promotion(transport, token, project, *, project_token, journal_
     except (GitHubRequestError, ValueError, KeyError, TypeError):
         attempt = journal.read(repository_id, number)
         return "unknown" if attempt and attempt[1] is None else "failed"
-    if result == "merged" and project.get("selective_sync_enabled") is True:
+    if result == "merged":
         confirmed = journal.read(repository_id, number)[1]
-        return publish_forward_sync(transport, token, project, journal, number, confirmed, policy.get("app_id"))
+        notice_done = project.get("promotion_notice_since") is None
+        if not notice_done and notice_token is not None:
+            try:
+                notice_done = publish_promotion_notices(transport, notice_token(), project, journal, manifest,
+                                                        number, confirmed, project_status)
+            except (GitHubRequestError, OSError, ValueError):
+                notice_done = False
+        if project.get("selective_sync_enabled") is True:
+            result = publish_forward_sync(transport, token, project, journal, number, confirmed, policy.get("app_id"))
+        if not notice_done and result in ("merged", "waiting-checks"):
+            return "notice-pending"
     return {"waiting-or-stale": "waiting-checks", "already-reserved": "blocked",
             "invalid-manifest": "blocked", "manifest-mismatch": "blocked",
             "invalid-checks": "blocked"}.get(result, result)

@@ -77,6 +77,11 @@ def validate_config(config):
         if not isinstance(project, dict) or type(project.get("repository_id")) is not int or project["repository_id"] <= 0:
             raise ValueError("Invalid project")
         mode = promotion_mode(project)
+        if "promotion_notice_since" in project:
+            _date(project["promotion_notice_since"])
+            bot = project.get("admission_sync_bot_id")
+            if type(bot) is not int or bot <= 0:
+                raise ValueError("Promotion notice requires an App bot identity")
         if "archive_require_evidence" in project and type(project["archive_require_evidence"]) is not bool:
             raise ValueError("Invalid archive evidence setting")
         if "archive_legacy_prefix_tip" in project:
@@ -254,12 +259,20 @@ def run(config):
         signal.signal(signal.SIGTERM, lambda *_: stop.set())
         signal.signal(signal.SIGINT, lambda *_: stop.set())
         if promotion_authors:
+            notice_tokens = {
+                p["repository_id"]: AppToken(config["app_id"], config["installation_id"], p["repository_id"],
+                                            private_key, purpose="promotion_notice")
+                for p in config["projects"] if promotion_mode(p) == "selective"
+                and p.get("promotion_notice_since") is not None
+            }
+
             def selective_step(transport, token, project):
                 if os.path.lexists(state.with_name('selective-promotions.sqlite')):
                     # Keep the old replay guard authoritative until an operator reconciles it.
                     return 'selective-ledger-migration-required'
                 return run_prepared_promotion(transport, token, project, project_token=project_token,
-                                              journal_path=state, journal_in_state=True)
+                                              journal_path=state, journal_in_state=True,
+                                              notice_token=notice_tokens.get(project["repository_id"]))
 
             promotion_thread = threading.Thread(target=run_promotions, args=(stop, config, private_key),
                                                 kwargs={"quickfix_queue": quickfix_queue, "selective_step": selective_step}, daemon=True)
