@@ -42,6 +42,14 @@ Przy `FLOW attention: read-failed` dopisane są tylko zamknięte kategorie `stag
 
 Obecny algorytm porównuje tekst komentarza i jego czas aktualizacji. Jeśli treść zostanie zmieniona i przywrócona w granicach rozdzielczości czasu zwracanego przez API, bez zaobserwowania zmiany, historia takiej edycji może być niewidoczna. Rzeczywistą rozdzielczość i tę granicę trzeba uwzględnić w operacyjnej ocenie ryzyka.
 
+## Ręczny podgląd i archiwizacja z dowodami
+
+Na Mikrusie uruchom jako konto kontrolera `python3 src/archive_cards.py OtisRed/agent-github-flow` z katalogu sprawdzanego wydania. Domyślny tryb tylko odczytuje karty i podaje wynik dla każdej niearchiwizowanej karty zamkniętej od co najmniej 14 dni w `done`. Opcja `--issue NUMER` zawęża próbę do jednej karty. Wynik `eligible` oznacza, że na chwilę odczytu potwierdzono sprzątanie i promocję wszystkich powiązanych zmian albo ustalono, że zadanie nie miało zmian kodu. Przy brakującym lub niejednoznacznym dowodzie karta zostaje widoczna.
+
+Po próbie odczytowej włącz `archive_require_evidence: true` tylko przy zweryfikowanym repozytorium w `projects`. Nocny skan użyje wtedy tego samego warunku, co ręczne `--issue NUMER --apply`. Ręczny zapis wymaga też globalnego `archive_enabled: true` i działającego status flow dla tej tablicy. Przy repozytoriach, w których nie włączono nowego warunku, obowiązuje dotychczasowa nocna reguła wieku i statusu. Przed włączeniem sprawdź dostępność dowodu promocji dla danego repozytorium.
+
+Ręczny zapis i nocny skan współdzielą blokadę pojedynczej operacji archiwizacji. W razie niepewnej odpowiedzi sprawdź aktualny stan karty przed ponownym wywołaniem. Ponowne otwarcie issue wymaga dowodów z nowego cyklu po kolejnym zamknięciu.
+
 ## Dopisanie zaufanego autora
 
 Istniejący projekt można rozszerzyć o zaufanego autora wyłącznie jawnym trybem helpera `register_project.py --plan --update --authors-only`, a następnie `--apply --update --authors-only` z aktualnym `expected_config_sha256`. Podaj pełną dotychczasową listę autorów w tej samej kolejności i dopisz nowe identyfikatory; usunięcie, zmiana kolejności oraz jednoczesna zmiana flag są odrzucane. Obowiązują te same blokady, walidacja, kopie i kontrola granicy co przy aktualizacji projektu. Przed zastosowaniem sprawdź tożsamość konta i rzeczywiste uprawnienia, ponieważ zmiana przyznaje autorowi zaufanie kontrolera. Sam plan nie potwierdza działania flow.

@@ -15,6 +15,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from mvp_credentials import AppToken, read_private_file
+from archive_promotion import archive_evidence
 from mvp_archive import archive_candidates, archive_one
 from mvp_decision import _date
 from mvp_errors import report_read_failure
@@ -75,6 +76,8 @@ def validate_config(config):
         if not isinstance(project, dict) or type(project.get("repository_id")) is not int or project["repository_id"] <= 0:
             raise ValueError("Invalid project")
         mode = promotion_mode(project)
+        if "archive_require_evidence" in project and type(project["archive_require_evidence"]) is not bool:
+            raise ValueError("Invalid archive evidence setting")
         path = project.get('selective_request_path')
         if 'selective_request_path' in project and (not isinstance(path, str) or not os.path.isabs(path)):
             raise ValueError("Invalid selective promotion request path")
@@ -202,6 +205,7 @@ def run(config):
         registry = validate_registry([(config["installation_id"], p["repository_id"]) for p in config["projects"]])
         clients = {}
         scan_clients = {}
+        archive_gates = {}
         for project in config["projects"]:
             repository_id = project["repository_id"]
             if project.get("status_enabled") is False:
@@ -219,6 +223,8 @@ def run(config):
                             project_owner=project["project_owner"], project_number=project["project_number"],
                             app_token=token, project_token=project_token, pr_flow_token=pr_flow_token)
             clients[repository_id] = (client, project["enrolled_at"], frozenset(project["trusted_author_ids"]), pr_flow)
+            if project.get("archive_require_evidence") is True:
+                archive_gates[repository_id] = archive_evidence(config, project, private_key)
             # A separate read-only client avoids sharing the worker's mutable
             # snapshot and token cache with the background collector.
             scan_token = AppToken(config["app_id"], config["installation_id"], repository_id, private_key)
@@ -356,9 +362,22 @@ def run(config):
                     if archive_backlog:
                         repository_id, candidate = archive_backlog.popleft()
                         try:
-                            outcome = archive_one(clients[repository_id][0], candidate, datetime.now(zone))
+                            try:
+                                lock = _lock(str(state) + ".archive.lock")
+                            except BlockingIOError:
+                                archive_backlog.appendleft((repository_id, candidate))
+                                stop.wait(1)
+                                continue
+                            try:
+                                outcome = archive_one(clients[repository_id][0], candidate, datetime.now(zone),
+                                                      evidence=archive_gates.get(repository_id))
+                            finally:
+                                os.close(lock)
                             if outcome == "changed":
                                 store.enqueue_now(repository_id, candidate[0])
+                            elif outcome == "evidence-unavailable":
+                                print("FLOW attention: archive-evidence-unavailable", file=sys.stderr, flush=True)
+                                archive_failed = True
                         except Exception:
                             print("FLOW attention: archive-write-unconfirmed", file=sys.stderr, flush=True)
                             archive_failed = True

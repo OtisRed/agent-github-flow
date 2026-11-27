@@ -139,7 +139,43 @@ class ArchivePromotionTests(unittest.TestCase):
         self.data[self.list_path + "1"] = []
         self.assertEqual(self.cleanup("no-code")["promotion"], "not-applicable")
 
+    def test_cancelled_issue_can_archive_with_explicit_no_code_evidence(self):
+        self.data["issues/3"]["state_reason"] = "not_planned"
+        self.data[self.list_path + "1"] = []
+        self.assertEqual(self.cleanup("no-code")["promotion"], "not-applicable")
+        self.assertEqual(self.observe()["reason"], "issue-not-completed")
+
     def test_existing_selective_receipt_prevents_no_code_confirmation(self):
         self.selective()
         self.data[self.list_path + "1"] = []
         self.assertEqual(self.cleanup("no-code")["reason"], "source-set-changed")
+
+    def test_without_cleanup_does_not_scan_promotion_inventory(self):
+        self.project["trusted_author_ids"] = [7]
+        self.data["issues/3/comments?per_page=100&page=1"] = []
+
+        def no_promotion_inventory(path, token, *, body=None):
+            self.assertNotIn("/pulls?", path)
+            return self.transport(path, token, body=body)
+
+        result = read_archive_promotion(3, self.project, self.state, no_promotion_inventory, "test",
+                                        lambda _: "done", with_cleanup=True)
+        self.assertEqual(result["reason"], "cleanup-missing")
+
+    def test_cleanup_revoked_during_promotion_read_blocks(self):
+        self.assertEqual(self.cleanup("code")["kind"], "confirmed")
+
+        def revoke_cleanup(path, token, *, body=None):
+            if f"/compare/{self.source}...{self.main}" in path:
+                self.data["issues/3/comments?per_page=100&page=1"].clear()
+            return self.transport(path, token, body=body)
+
+        result = read_archive_promotion(3, self.project, self.state, revoke_cleanup, "test",
+                                        lambda _: "done", with_cleanup=True)
+        self.assertEqual(result["reason"], "cleanup-changed")
+
+    def test_archive_evidence_rejects_different_close_timestamp(self):
+        result = read_archive_promotion(3, self.project, self.state, self.transport, "test",
+                                        lambda _: "done", with_cleanup=True,
+                                        expected_closed_at="2026-11-24T01:00:00Z")
+        self.assertEqual(result["reason"], "closure-cycle-changed")

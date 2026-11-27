@@ -102,6 +102,33 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(self.github.writes, ["archive", "unarchive"])
         self.assertIsNone(self.github.item["archived_at"])
 
+    def test_preview_and_write_share_the_same_evidence_gate(self):
+        for reason in ("cleanup-missing", "source-not-on-main", "evidence-unavailable"):
+            def blocked(candidate, closed_at):
+                self.assertEqual((candidate, closed_at), (self.candidate, self.github.issue["closed_at"]))
+                return {"kind": "blocked", "reason": reason}
+
+            for dry_run in (True, False):
+                self.assertEqual(archive_one(self.github, self.candidate, NOW, evidence=blocked, dry_run=dry_run),
+                                 reason)
+        self.assertEqual(self.github.writes, [])
+
+        def confirmed(*_):
+            return {"kind": "confirmed"}
+
+        self.assertEqual(archive_one(self.github, self.candidate, NOW, evidence=confirmed, dry_run=True), "eligible")
+        self.assertEqual(self.github.writes, [])
+        self.assertEqual(archive_one(self.github, self.candidate, NOW, evidence=confirmed), "archived")
+        self.assertEqual(self.github.writes, ["archive"])
+
+    def test_new_cycle_while_reading_evidence_skips_write(self):
+        def reclosed(*_):
+            self.github.issue["closed_at"] = "2026-11-15T00:00:00Z"
+            return {"kind": "confirmed"}
+
+        self.assertEqual(archive_one(self.github, self.candidate, NOW, evidence=reclosed), "skipped")
+        self.assertEqual(self.github.writes, [])
+
     def test_reclose_during_archive_restarts_the_14_day_period(self):
         self.github.reclose_on_archive = True
         self.assertEqual(archive_one(self.github, self.candidate, NOW), "changed")

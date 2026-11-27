@@ -31,10 +31,11 @@ def _pages(fetch, path, params=None):
     raise ObservationError("pagination-limit")
 
 
-def _completed_cycle(fetch, project_status, issue):
+def _completed_cycle(fetch, project_status, issue, *, allow_not_planned=False):
     row = fetch(f"issues/{issue}")
+    reasons = {"completed", "not_planned"} if allow_not_planned else {"completed"}
     _require(row["number"] == issue and "pull_request" not in row and row["state"] == "closed"
-             and row["state_reason"] == "completed" and project_status(issue) == "done",
+             and row["state_reason"] in reasons and project_status(issue) == "done",
              "issue-not-completed")
     opened = _date(row["created_at"])
     closed_at = _date(row["closed_at"])
