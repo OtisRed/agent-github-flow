@@ -115,3 +115,31 @@ class ArchivePromotionTests(unittest.TestCase):
             return result
 
         self.assertEqual(self.observe(transport=transport)["reason"], "observation-changed")
+
+
+    def cleanup(self, scope):
+        self.project["trusted_author_ids"] = [7]
+        self.data["issues/3/comments?per_page=100&page=1"] = [
+            {"id": 14, "user": {"id": 7, "type": "User"},
+             "created_at": "2026-11-24T03:00:00Z", "updated_at": "2026-11-24T03:00:00Z",
+             "body": f"[ARCHIVE-CLEANUP]\nCycle: 4\nScope: {scope}\nWorktrees: not-created"
+                     "\nBranches: not-created\nTemporary: not-created\nEnvironment: not-created"}
+        ]
+        return read_archive_promotion(3, self.project, self.state, self.transport, "test", lambda _: "done",
+                                      with_cleanup=True)
+
+    def test_two_proofs_are_bound_to_same_issue_cycle(self):
+        result = self.cleanup("code")
+        self.assertEqual((result["kind"], result["cycle"], result["cleanup"]["comment_id"]), ("confirmed", 4, 14))
+        self.data[f"compare/{self.source}...{self.main}?per_page=1"] = {"merge_base_commit": {"sha": self.base}}
+        self.assertEqual(self.cleanup("code")["reason"], "source-not-on-main")
+
+    def test_explicit_no_code_can_confirm_only_without_sources(self):
+        self.assertEqual(self.cleanup("no-code")["reason"], "cleanup-scope-mismatch")
+        self.data[self.list_path + "1"] = []
+        self.assertEqual(self.cleanup("no-code")["promotion"], "not-applicable")
+
+    def test_existing_selective_receipt_prevents_no_code_confirmation(self):
+        self.selective()
+        self.data[self.list_path + "1"] = []
+        self.assertEqual(self.cleanup("no-code")["reason"], "source-set-changed")

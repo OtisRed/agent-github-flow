@@ -19,3 +19,14 @@ The current VSone cleanup checks that the worktree branch is an ancestor of `smo
 1. Verify the PR was merged into this repository's smoke. Record its head repository, task branch and full merged PR head SHA. Fetch origin/smoke. In the clean checkout actually on smoke, run `git pull --ff-only origin smoke`. If smoke is not checked out, create the local tracking branch when missing, or fast-forward the unoccupied local ref with an expected-old-SHA update after verifying ancestry and rechecking the worktree registry. Verify local smoke equals the freshly fetched origin/smoke. Preserve local changes or divergence and report any remaining step.
 2. Apply the done and worktree checks above. Only retire the same-repository task branch when the recorded PR head is an ancestor of origin/smoke and each existing task ref still matches that head. Exclude main, smoke, protected, shared and promotion branches, branches used by another worktree or open PR (including as its base), and forks. Preserve ambiguous squash/rebase cases for review.
 3. After the worktree is released, delete the exact remote ref with an explicit lease: `git push --force-with-lease=refs/heads/<task>:<merged-PR-head-SHA> origin :refs/heads/<task>`. For the verified local branch use a compare-and-delete against the same SHA (`git update-ref -d refs/heads/<task> <merged-PR-head-SHA>`) after rechecking that it is unoccupied. A changed tip or rejected deletion ends that attempt. An already absent ref is complete. Verify local and remote absence and smoke equality; report any retained ref and reason.
+
+
+## Potwierdzenie sprzątania dla archiwizacji
+
+Po zakończeniu prac przeprowadź odczyt na tej samej maszynie, na której
+znajdowały się worktree lub jednorazowe artefakty. Zapisz w komentarzu issue
+wynik zgodnie z sekcją „Potwierdzenie sprzątania przed archiwizacją” w
+`docs/controller-deployment-profile.md` repozytorium Agent GitHub Flow.
+Jeśli krok jest nierozstrzygnięty, zgłoś `blocked`. Zachowane trwałe środowisko
+wymaga jawnej decyzji. Nie wklejaj do publicznej karty ścieżek, nazw prywatnych
+plików ani wartości poświadczeń.
