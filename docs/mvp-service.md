@@ -48,6 +48,8 @@ Na Mikrusie uruchom jako konto kontrolera `python3 src/archive_cards.py OtisRed/
 
 Po próbie odczytowej włącz `archive_require_evidence: true` tylko przy zweryfikowanym repozytorium w `projects`. Nocny skan użyje wtedy tego samego warunku, co ręczne `--issue NUMER --apply`. Ręczny zapis wymaga też globalnego `archive_enabled: true` i działającego status flow dla tej tablicy. Przy repozytoriach, w których nie włączono nowego warunku, obowiązuje dotychczasowa nocna reguła wieku i statusu. Przed włączeniem sprawdź dostępność dowodu promocji dla danego repozytorium.
 
+Po przejściu repozytorium z promocji prefiksowej na wybiórczą można ustawić `archive_legacy_prefix_tip` na pełny SHA `main` sprzed pierwszej promocji wybiórczej. Kontroler sprawdzi, czy wskazany commit nadal jest w historii `main` i czy zawiera wszystkie powiązane scalenia z bieżącego cyklu issue. Z historycznej ścieżki skorzysta wyłącznie, gdy rejestr nie zawiera wpisu dla tego cyklu. Istniejący wpis nadal podlega pełnej weryfikacji squasha.
+
 Ręczny zapis i nocny skan współdzielą blokadę pojedynczej operacji archiwizacji. W razie niepewnej odpowiedzi sprawdź aktualny stan karty przed ponownym wywołaniem. Ponowne otwarcie issue wymaga dowodów z nowego cyklu po kolejnym zamknięciu.
 
 ## Dopisanie zaufanego autora

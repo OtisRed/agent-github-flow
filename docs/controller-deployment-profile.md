@@ -148,7 +148,12 @@ Environment: retained
 `Cycle` to ID aktualnego zdarzenia zamknięcia issue. Użyj `Scope: no-code`
 wyłącznie po stwierdzeniu, że w tym cyklu nie dostarczono kodu przez PR.
 Dla worktree, gałęzi i plików lub kontenerów użyj `removed`, `not-created`
-albo `blocked`. Dla trwałego środowiska dopuszczalne jest także `retained`,
+albo `blocked`. Dla worktree przejętego przez inne issue tego repozytorium użyj
+`Worktrees: transferred #184`, podstawiając jego numer. Najpierw potwierdź, że
+poprzednia gałąź jest zintegrowana, a katalog należy już do wskazanego zadania
+i nie zawiera pozostałości poprzedniej pracy. Odpowiedzialność za dalsze
+sprzątanie przechodzi na zadanie przejmujące. Dla trwałego środowiska
+dopuszczalne jest także `retained`,
 gdy decyzja o zachowaniu została ustalona. Wynik zgłasza zaufany użytkownik
 GitHuba na podstawie sprawdzenia na maszynie. Sam komentarz nie mierzy jej
 stanu.
@@ -164,5 +169,5 @@ Tryb odczytowy wykorzystujący obie informacje:
 sudo -u agent-flow python3 -B src/archive_promotion.py OtisRed/agent-github-flow 280 --with-cleanup
 ```
 
-Odczyt może zwrócić cykl przy braku potwierdzenia sprzątania. Żaden z wyników
-nie uruchamia archiwizacji. Tryb ręczny i nocny zostaną podłączone osobno.
+Odczyt może zwrócić cykl przy braku potwierdzenia sprzątania. Sam odczyt
+nie uruchamia archiwizacji. Zobacz [tryb ręczny i nocny podgląd](mvp-service.md#ręczny-podgląd-i-archiwizacja-z-dowodami).

@@ -38,7 +38,7 @@ def read_archive_promotion(issue, project, state_path, transport, token, project
 
         def current_cleanup():
             return read_cleanup(_pages(fetch, f"issues/{issue}/comments"), cycle, end,
-                                project["trusted_author_ids"])
+                                project["trusted_author_ids"], issue=issue)
 
         def refs():
             heads = tuple(fetch(f"git/ref/heads/{ref}")["object"]["sha"] for ref in ("main", "smoke"))
@@ -60,6 +60,11 @@ def read_archive_promotion(issue, project, state_path, transport, token, project
             cleanup = current_cleanup()
             if cleanup["kind"] != "confirmed":
                 return {**cleanup, "issue": issue, "cycle": cycle}
+            recipient = cleanup.get("worktree_transferred_to")
+            if recipient is not None:
+                target = fetch(f"issues/{recipient}")
+                _require(target["number"] == recipient and "pull_request" not in target,
+                         "invalid-worktree-recipient")
         main, smoke = refs()
         sources = _merged_sources(fetch, {issue: (start, end)}, repo_id,
                                   lambda pr: pull_request_merge_oid(transport, token, owner, name, pr))
@@ -78,6 +83,12 @@ def read_archive_promotion(issue, project, state_path, transport, token, project
             result["promotion"] = "not-applicable"
         elif mode == "prefix":
             _require(all(contains(source["sha"], main) for source in source_prs), "source-not-on-main")
+        elif not matches and project.get("archive_legacy_prefix_tip") is not None:
+            tip = project["archive_legacy_prefix_tip"]
+            _require(isinstance(tip, str) and SHA.fullmatch(tip), "invalid-legacy-prefix-tip")
+            _require(contains(tip, main), "legacy-prefix-not-on-main")
+            _require(all(contains(source["sha"], tip) for source in source_prs), "promotion-not-confirmed")
+            result.update(promotion="legacy-prefix", legacy_prefix_tip=tip)
         else:
             _require(len(matches) == 1 and matches[0]["status"] == "confirmed", "promotion-not-confirmed")
             entry = matches[0]
