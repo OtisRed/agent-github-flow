@@ -1,12 +1,17 @@
 # Repository CI
 
-`Repository CI / verify` runs for pull requests targeting `main` or `smoke`, including drafts, and pushes to those branches. It checks the pull request merge result using a read-only GitHub token with checkout credentials disabled. It runs the Node tests, validates all GitHub Actions workflows using a versioned, checksum-verified actionlint binary, and checks that actionlint rejects a deliberately invalid fixture. The actionlint run does not invoke ShellCheck; the check is workflow validation, not a comprehensive shell audit.
+`Repository CI / verify` runs for pull requests targeting `main` or `smoke` and pushes to those branches. With central admission enabled, the workflow skips `verify` for draft PRs targeting `smoke`. When the PR is ready, `verify` waits for `flow-admission` on the PR head before checking out and testing the merge result. The job uses a read-only GitHub token with checkout credentials disabled. It runs the Node tests and uses a versioned, checksum-verified actionlint binary to validate workflows and reject a deliberately invalid fixture. ShellCheck is outside this validation.
 
 This workflow does not reference App keys, PATs, or protected environments. Fork pull requests run without repository secrets. To preserve that boundary for changes originating in this repository, do not store project credentials as repository-wide Actions secrets; use protected environments and trusted code. A pull request can change its own tests and workflow, so a passing check does not replace the responsible agent's review. A second agent is optional for particularly complex cases.
 
-Require the `verify` check from the GitHub Actions app on pull requests to both `smoke` and `main`, with branch protection also enforced for administrators and no required formal approvals. The check must be tied to the current pull request head or merge result. Before changing protection, verify that the check actually ran successfully on real pull requests to each base. The first production promotion after enabling the controller remains a separate runtime verification.
+AGF enforces protection for administrators and requires zero formal approvals on both branches. `strict` is enabled on both branches, so GitHub requires the PR branch to be up to date with its base.
 
-Do not require the head to contain the current base (`strict` is false): the flow deliberately promotes a `smoke` prefix while previous promotion merge commits exist only on `main`. The controller rechecks both heads immediately before a merge, but GitHub cannot atomically require an unchanged base; branch protection still enforces the configured check. This setting does not override the owner's decision to close an issue.
+| Base | Required checks |
+| --- | --- |
+| `main` | `verify` from GitHub Actions |
+| `smoke` | `verify` from GitHub Actions and `flow-admission` from the `agent-github-flow` App |
+
+The selective promotion candidate starts from the current `main`. The controller verifies CI against the exact base and candidate, rechecks both heads and then squashes the accepted changes. After a confirmed squash, the App synchronizes `main` back into `smoke` through a protected PR that preserves the `smoke` tree. See the [controller deployment profile](controller-deployment-profile.md#publication-and-planning-after-a-selective-merge).
 
 A workflow missing on a base branch, a renamed check, a pull-request merge conflict, or blocked fork approval may prevent the required status from appearing. Inspect the Actions run, current PR and merge SHA, environment and branch rules; rerun only the appropriate current run or correct the workflow through a reviewed PR. An absent check is not a passing result. If recovery is impossible, an administrator can adjust branch protection and record why; do not silently bypass review.
 
