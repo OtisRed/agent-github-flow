@@ -46,7 +46,7 @@ class ConfigurationTests(unittest.TestCase):
             self.assertIs(validate_config(self.config), self.config)
             self.assertEqual(promotion_mode(self.project), mode)
         self.project['deployment_guarded'] = True
-        with self.assertRaisesRegex(ValueError, 'does not yet support the deployment guard'):
+        with self.assertRaisesRegex(ValueError, 'requires selective deployment evidence'):
             validate_config(self.config)
         self.project['deployment_guarded'] = False
         self.project['promotion_enabled'] = False
@@ -67,6 +67,24 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIs(validate_config(self.config), self.config)
         self.config['deployment_state_path'] = 'relative'
         with self.assertRaises(ValueError):
+            validate_config(self.config)
+
+
+    def test_guarded_selective_main_accepts_paused_but_not_prefix_or_shared_database(self):
+        self.config['deployment_state_path'] = os.path.abspath('deployment-state')
+        self.project.update(promotion_enabled=True, promotion_mode='selective',
+                            deployment_enabled=True, deployment_guarded=True, deployment_main_only=True,
+                            deployment_promotion_source='selective',
+                            deployment_executor=os.path.abspath('synthetic-executor'),
+                            deployment_checks={'main': [{'context': 'verify', 'app_id': 10}]})
+        self.assertIs(validate_config(self.config), self.config)
+        self.project['promotion_mode'] = 'prefix'
+        with self.assertRaisesRegex(ValueError, 'selective or paused'):
+            validate_config(self.config)
+        self.project['promotion_mode'] = 'paused'
+        self.assertIs(validate_config(self.config), self.config)
+        self.config['deployment_state_path'] = self.config['state_path']
+        with self.assertRaisesRegex(ValueError, 'separate databases'):
             validate_config(self.config)
 
 

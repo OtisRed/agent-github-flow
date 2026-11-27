@@ -2,6 +2,7 @@ import io
 import json
 import tempfile
 import unittest
+from contextlib import nullcontext
 from email.message import Message
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -11,6 +12,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mvp_errors import GitHubRequestError
 from selective_promotion_executor import read_job_log, run_prepared_promotion
+from selective_promotion_merge import SelectiveMergeJournal
 
 
 JOB = "/repos/test/repo/actions/jobs/12/logs"
@@ -57,3 +59,30 @@ class TestSelectivePromotionExecutor(unittest.TestCase):
                                                     project_token="fixture", journal_path=path), "blocked")
             self.assertFalse(path.exists())
         transport.assert_not_called()
+
+    def test_deployment_guard_blocks_new_attempt_but_allows_reconciliation(self):
+        project = {"repository_id": 2, "selective_request_path": "fixture", "owner": "test",
+                   "repository": "repo", "project_owner": "test", "project_number": 1}
+        staged = {"manifest": {"repository_id": 2, "main": "a"*40, "smoke": "b"*40,
+                               "candidate": "c"*40, "tree": "d"*40,
+                               "sources": [{"pr": 2, "issue": 1, "cycle": 7, "sha": "e"*40, "method": "merge"}]},
+                  "pr": 3, "policy": {}, "run_id": 12, "job_id": 11}
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "selective_promotion_executor.read_private_file", return_value=json.dumps(staged).encode()
+        ), patch("selective_promotion_executor.verify_and_squash", return_value="unknown") as verify:
+            path = Path(tmp) / "selective.sqlite"
+            ready = Mock(return_value=False)
+            guard = Mock(side_effect=lambda: nullcontext(ready))
+            def run():
+                return run_prepared_promotion(Mock(), "fixture", project, project_token="fixture",
+                                              journal_path=path, deployment_guard=guard)
+
+            self.assertEqual(run(), "deployment-blocked")
+            ready.assert_called_once_with(staged["manifest"]["main"])
+            verify.assert_not_called()
+            journal = SelectiveMergeJournal(path)
+            self.assertIsNone(journal.read(2, 3))
+            journal.reserve(2, 3, staged["manifest"])
+            self.assertEqual(run(), "unknown")
+            guard.assert_called_once()
+            verify.assert_called_once()
