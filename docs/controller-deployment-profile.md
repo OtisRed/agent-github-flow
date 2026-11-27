@@ -106,3 +106,23 @@ Historyczny przykład odczytu to [squash #274](https://github.com/OtisRed/agent-
 i [synchronizacja #275](https://github.com/OtisRed/agent-github-flow/pull/275). Pozwala
 sprawdzić sposób odczytu squasha, kontroli i grafu gałęzi. Promocję wykonano wtedy
 w jednorazowej próbie, przed stałym włączeniem trybu, więc nie potwierdza ona harmonogramu.
+
+
+### Odczyt dowodu promocji przed archiwizacją
+
+Odczyt dotyczy jednego zamkniętego cyklu issue i obecnej karty `done`. Uruchom
+z katalogu wydania zawierającego ten skrypt, jako konto usługi na Mikrusie:
+
+```sh
+sudo -u agent-flow python3 -B src/archive_promotion.py OtisRed/agent-github-flow 280
+```
+
+W trybie prefiksu każdy scalony PR danego cyklu ma potwierdzony commit w historii
+`smoke` i `main`. W trybie wybiórczym SQLite musi potwierdzić dokładnie ten cykl,
+komplet PR i squash w aktualnej historii `main`. Brak źródeł lub niekompletny
+odczyt daje wynik `blocked` oraz kod zakończenia 1. To samo dotyczy projektów,
+w których centralna promocja jest wyłączona, np. gdy promocją zarządza workflow repozytorium.
+
+Wynik `confirmed` potwierdza wyłącznie promocję. Potwierdzenie sprzątania,
+komentarz i archiwizacja karty należą do dalszych kroków #194. Skrypt nie
+uruchamia tych operacji ani nie zmienia zasad nocnego skanu.

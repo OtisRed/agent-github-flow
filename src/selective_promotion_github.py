@@ -31,7 +31,7 @@ def _pages(fetch, path, params=None):
     raise ObservationError("pagination-limit")
 
 
-def _cycle(fetch, project_status, issue, expected_cycle):
+def _completed_cycle(fetch, project_status, issue):
     row = fetch(f"issues/{issue}")
     _require(row["number"] == issue and "pull_request" not in row and row["state"] == "closed"
              and row["state_reason"] == "completed" and project_status(issue) == "done",
@@ -44,29 +44,27 @@ def _cycle(fetch, project_status, issue, expected_cycle):
              "closure-history-missing")
     events.sort(key=lambda event: (_date(event["created_at"]), event["id"]))
     last = events[-1]
-    _require(last["event"] == "closed" and last["id"] == expected_cycle, "closure-cycle-changed")
+    _require(last["event"] == "closed" and _id(last["id"]), "closure-cycle-changed")
     reopened = next((event for event in reversed(events[:-1]) if event["event"] == "reopened"), None)
     start = _date(reopened["created_at"]) if reopened is not None else opened
     _require(start <= closed_at and start <= _date(last["created_at"]), "closure-history-inconsistent")
-    return start, min(closed_at, _date(last["created_at"]))
+    return last["id"], start, min(closed_at, _date(last["created_at"]))
 
 
-def _verified_sources(fetch, project_status, manifest, heads, resolve_merge_oid):
-    groups = {}
-    for source in manifest["sources"]:
-        groups.setdefault(source["issue"], []).append(source)
-    cycles = {}
-    for issue, group in groups.items():
-        _require(all(source["cycle"] == group[0]["cycle"] for source in group), "mixed-closure-cycle")
-        cycles[issue] = _cycle(fetch, project_status, issue, group[0]["cycle"])
+def _cycle(fetch, project_status, issue, expected_cycle):
+    cycle, start, end = _completed_cycle(fetch, project_status, issue)
+    _require(cycle == expected_cycle, "closure-cycle-changed")
+    return start, end
 
+
+def _merged_sources(fetch, cycles, repository_id, resolve_merge_oid):
     found, seen = {}, set()
     for pr in _pages(fetch, "pulls", {"state": "all", "base": "smoke", "sort": "created", "direction": "asc"}):
         number = pr["number"]
         _require(number not in seen, "duplicate-pr-in-inventory")
         seen.add(number)
         body = pr.get("body") or ""
-        claimed = {int(n) for n in REFS.findall(body)} & groups.keys()
+        claimed = {int(n) for n in REFS.findall(body)} & cycles.keys()
         if not claimed:
             continue
         if pr["state"] == "closed" and pr["merged_at"] is None:
@@ -79,12 +77,25 @@ def _verified_sources(fetch, project_status, manifest, heads, resolve_merge_oid)
         if when < start:
             continue
         _require(when < end and pr["base"]["ref"] == "smoke"
-                 and pr["base"]["repo"]["id"] == manifest["repository_id"],
+                 and pr["base"]["repo"]["id"] == repository_id,
                  "source-outside-closed-cycle")
         merge_oid = pr.get("merge_commit_sha")
         if merge_oid is None and resolve_merge_oid is not None:
             merge_oid = resolve_merge_oid(number)
+        _require(_id(number) and isinstance(merge_oid, str) and SHA.fullmatch(merge_oid), "invalid-source-merge")
         found[number] = (issue, merge_oid)
+    return found
+
+
+def _verified_sources(fetch, project_status, manifest, heads, resolve_merge_oid):
+    groups = {}
+    for source in manifest["sources"]:
+        groups.setdefault(source["issue"], []).append(source)
+    cycles = {}
+    for issue, group in groups.items():
+        _require(all(source["cycle"] == group[0]["cycle"] for source in group), "mixed-closure-cycle")
+        cycles[issue] = _cycle(fetch, project_status, issue, group[0]["cycle"])
+    found = _merged_sources(fetch, cycles, manifest["repository_id"], resolve_merge_oid)
 
     expected = {source["pr"]: (source["issue"], source["sha"]) for source in manifest["sources"]}
     _require(found == expected, "source-set-changed")
