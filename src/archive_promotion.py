@@ -15,7 +15,8 @@ from selective_promotion_github import ObservationError, _completed_cycle, _merg
 from selective_promotion_receipt import read_receipt
 
 
-def read_archive_promotion(issue, project, state_path, transport, token, project_status, *, with_cleanup=False):
+def read_archive_promotion(issue, project, state_path, transport, token, project_status, *, with_cleanup=False,
+                           expected_closed_at=None):
     """Confirm the complete current source set, or leave the decision blocked."""
     try:
         repo_id = project["repository_id"]
@@ -30,7 +31,14 @@ def read_archive_promotion(issue, project, state_path, transport, token, project
             return transport(path, token)[0]
 
         def fetch(path):
-            return read(f"{root}/{path}")
+            result = read(f"{root}/{path}")
+            if expected_closed_at is not None and path == f"issues/{issue}":
+                _require(result["closed_at"] == expected_closed_at, "closure-cycle-changed")
+            return result
+
+        def current_cleanup():
+            return read_cleanup(_pages(fetch, f"issues/{issue}/comments"), cycle, end,
+                                project["trusted_author_ids"])
 
         def refs():
             heads = tuple(fetch(f"git/ref/heads/{ref}")["object"]["sha"] for ref in ("main", "smoke"))
@@ -47,8 +55,12 @@ def read_archive_promotion(issue, project, state_path, transport, token, project
         identity = read(root)
         _require(identity["id"] == repo_id and identity["full_name"].casefold() == repo.casefold(),
                  "repository-changed")
+        cycle, start, end = _completed_cycle(fetch, project_status, issue, allow_not_planned=with_cleanup)
+        if with_cleanup:
+            cleanup = current_cleanup()
+            if cleanup["kind"] != "confirmed":
+                return {**cleanup, "issue": issue, "cycle": cycle}
         main, smoke = refs()
-        cycle, start, end = _completed_cycle(fetch, project_status, issue)
         sources = _merged_sources(fetch, {issue: (start, end)}, repo_id,
                                   lambda pr: pull_request_merge_oid(transport, token, owner, name, pr))
         _require(bool(sources) or with_cleanup, "no-source-pr")
@@ -72,19 +84,33 @@ def read_archive_promotion(issue, project, state_path, transport, token, project
             _require(sorted(entry["source_prs"], key=lambda item: item["pr"]) == source_prs, "source-set-changed")
             result.update(promotion_pr=entry["promotion_pr"], squash=entry["squash"])
         if with_cleanup:
-            cleanup = read_cleanup(_pages(fetch, f"issues/{issue}/comments"), cycle, end,
-                                   project["trusted_author_ids"], has_sources=bool(source_prs))
-        _require(_completed_cycle(fetch, project_status, issue) == (cycle, start, end) and refs() == (main, smoke),
+            _require((cleanup["scope"] == "code") == bool(source_prs), "cleanup-scope-mismatch")
+        _require(_completed_cycle(fetch, project_status, issue, allow_not_planned=with_cleanup) == (cycle, start, end)
+                 and refs() == (main, smoke),
                  "observation-changed")
         if with_cleanup:
-            if cleanup["kind"] != "confirmed":
-                return {**cleanup, "issue": issue, "cycle": cycle}
+            _require(current_cleanup() == cleanup, "cleanup-changed")
             result["cleanup"] = cleanup
         return result
     except ObservationError as error:
         return {"kind": "blocked", "reason": str(error)}
     except (GitHubRequestError, OSError, sqlite3.Error, KeyError, TypeError, ValueError, AttributeError, OverflowError):
         return {"kind": "blocked", "reason": "evidence-unavailable"}
+
+
+def archive_evidence(config, project, private_key, *, transport=request):
+    token = AppToken(config["app_id"], config["installation_id"], project["repository_id"],
+                     private_key, purpose="archive_proof")
+
+    def read(candidate, closed_at):
+        try:
+            # archive_one verifies done on this exact card before and after this read.
+            return read_archive_promotion(candidate[0], project, config["state_path"], transport, token(),
+                                          lambda _: "done", with_cleanup=True, expected_closed_at=closed_at)
+        except (GitHubRequestError, OSError, ValueError):
+            return {"kind": "blocked", "reason": "evidence-unavailable"}
+
+    return read
 
 
 def main():

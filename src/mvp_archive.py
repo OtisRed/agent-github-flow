@@ -1,4 +1,4 @@
-"""Nightly Project-card archiving; never changes an issue or its history."""
+"""Evaluate and archive individual Project cards."""
 from datetime import datetime, timedelta, timezone
 
 from mvp_decision import _date
@@ -82,7 +82,7 @@ def _snapshot(github, candidate):
             "project": project["id"], "item": item_node, "archived": archived}
 
 
-def archive_one(github, candidate, now):
+def archive_one(github, candidate, now, *, evidence=None, dry_run=False):
     """One attempt after two agreeing reads; resolve ambiguity on next scan."""
     if not isinstance(now, datetime) or now.tzinfo is None:
         raise ValueError("Timezone required")
@@ -91,8 +91,14 @@ def archive_one(github, candidate, now):
     if (first["state"] != "closed" or first["status"] != "done" or first["archived"]
             or _date(first["closed_at"]) > cutoff):
         return "skipped"
+    if evidence is not None:
+        proof = evidence(candidate, first["closed_at"])
+        if proof["kind"] != "confirmed":
+            return proof["reason"]
     if _snapshot(github, candidate) != first:
         return "skipped"
+    if dry_run:
+        return "eligible"
     data = github._graphql(ARCHIVE_MUTATION, {"project": first["project"], "item": first["item"]})
     if ((data.get("archiveProjectV2Item") or {}).get("item") or {}).get("id") != first["item"]:
         raise ValueError("Archive unconfirmed")

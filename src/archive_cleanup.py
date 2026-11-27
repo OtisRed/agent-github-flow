@@ -9,7 +9,7 @@ FIELDS = ("Cycle", "Scope", "Worktrees", "Branches", "Temporary", "Environment")
 REMOVAL = {"removed", "not-created", "blocked"}
 
 
-def read_cleanup(comments, cycle, closed_at, trusted_authors, *, has_sources):
+def read_cleanup(comments, cycle, closed_at, trusted_authors, *, has_sources=None):
     """Use the newest matching attestation. A correction can explicitly block it."""
     latest = None
     seen = set()
@@ -45,7 +45,7 @@ def read_cleanup(comments, cycle, closed_at, trusted_authors, *, has_sources):
             or worktrees not in REMOVAL or branches not in REMOVAL or temporary not in REMOVAL
             or environment not in REMOVAL | {"retained"}):
         return {"kind": "blocked", "reason": "cleanup-invalid"}
-    if (scope == "code") != has_sources:
+    if has_sources is not None and (scope == "code") != has_sources:
         return {"kind": "blocked", "reason": "cleanup-scope-mismatch"}
     if "blocked" in (worktrees, branches, temporary, environment):
         return {"kind": "blocked", "reason": "cleanup-incomplete"}
