@@ -46,8 +46,8 @@ its normal SQLite snapshot and Windows download include pending and confirmed pr
 is blocked until the previous result is an ancestor of `smoke`. Before enabling the route after a restore,
 reconcile the restored journal against GitHub. If the former separate `selective-promotions.sqlite`
 exists, the service blocks selective promotion until it has been reconciled. The scheduler does not build
-candidate PRs. Publication of forward sync needs a separate repository opt-in. Repositories with the deployment guard continue
-to use prefix mode.
+candidate PRs. Publication of forward sync needs a separate repository opt-in. A guarded repository
+can use selective promotion when its deployment queue is configured to attest selective results.
 
 ### Publication and planning after a selective merge
 
@@ -133,6 +133,21 @@ Bez opcji `--with-cleanup` wynik `confirmed` dotyczy wyłącznie promocji. Sprz�
 komentarz i archiwizacja karty należą do dalszych kroków #194. Skrypt nie
 uruchamia tych operacji ani nie zmienia zasad nocnego skanu.
 
+
+### Wdrożenie po wybiórczej promocji
+
+Kolejka wdrożeń z #189 może odczytać dowód wybiórczej promocji z SQLite.
+Ustawienie `deployment_promotion_source: selective` włącza ten odczyt dla
+konkretnego projektu. `deployment_main_only: true` ogranicza kolejkę do
+produkcji. Wdrożenie wymaga zgodności zapisanego squasha z aktualnym `main`,
+PR-em promocji, rodzicem i drzewem commita oraz zielonym CI dla tego SHA.
+Kolejna promocja wymaga potwierdzenia, że wykonawca projektu zgłasza działanie
+poprzedniego `main`. Ustawienie promocji na `paused` pozwala dokończyć
+wdrożenie już wypromowanego SHA.
+
+Przed włączeniem projekt musi mieć zaufanego wykonawcę i potwierdzoną wersję
+bazową. Dla AGF wykonawca musi potwierdzać SHA po restarcie samego kontrolera.
+Sama zmiana obsługi kolejki nie zastępuje tej konfiguracji.
 
 ### Potwierdzenie sprzątania przed archiwizacją
 

@@ -1,6 +1,7 @@
 """Run one operator-staged selective promotion through the controller."""
 import json
 import re
+from contextlib import nullcontext
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -47,7 +48,7 @@ def read_job_log(path, token, *, opener=None):
 
 
 def run_prepared_promotion(transport, token, project, *, project_token, journal_path, journal_in_state=False,
-                           notice_token=None):
+                           notice_token=None, deployment_guard=None):
     """Read the private request and bind every API operation to its configured repository."""
     path = project.get("selective_request_path")
     if not path:
@@ -115,7 +116,8 @@ def run_prepared_promotion(transport, token, project, *, project_token, journal_
         request_github_squash(transport, token, row["node_id"], head)
 
     journal = SelectiveMergeJournal(Path(journal_path), require_existing=journal_in_state)
-    if journal.read(repository_id, number) is None:
+    new_attempt = journal.read(repository_id, number) is None
+    if new_attempt:
         previous = journal.latest_confirmed(repository_id)
         if previous:
             comparison, _ = transport(f"{root}/compare/{previous}...{manifest['smoke']}", token)
@@ -123,9 +125,13 @@ def run_prepared_promotion(transport, token, project, *, project_token, journal_
                     or (comparison.get("merge_base_commit") or {}).get("sha") != previous):
                 return "forward-sync-required"
     try:
-        result = verify_and_squash(journal, manifest, number, enabled=True, observe=observe, squash=squash,
-                                   repository=repository, read_ci=read, policy=policy,
-                                   run_id=staged["run_id"], job_id=staged["job_id"])
+        guard = deployment_guard() if deployment_guard is not None and new_attempt else nullcontext()
+        with guard as ready:
+            if ready is not None and not ready(manifest["main"]):
+                return "deployment-blocked"
+            result = verify_and_squash(journal, manifest, number, enabled=True, observe=observe, squash=squash,
+                                       repository=repository, read_ci=read, policy=policy,
+                                       run_id=staged["run_id"], job_id=staged["job_id"])
     except (GitHubRequestError, ValueError, KeyError, TypeError):
         attempt = journal.read(repository_id, number)
         return "unknown" if attempt and attempt[1] is None else "failed"

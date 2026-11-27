@@ -15,6 +15,24 @@ from promotion_plan import SHA
 from selective_promotion_merge import _validated_manifest
 
 
+def read_confirmed_result(path, repository_id, squash):
+    """Find the single durable promotion for an exact result without changing SQLite."""
+    if not _id(repository_id) or not isinstance(squash, str) or not SHA.fullmatch(squash):
+        raise ValueError("Invalid selective result identity")
+    with closing(sqlite3.connect(Path(path).absolute().as_uri() + "?mode=ro", uri=True)) as db:
+        if db.execute("PRAGMA application_id").fetchone() != (APPLICATION_ID,):
+            raise ValueError("Not an AGF state database")
+        rows = db.execute("SELECT pr, manifest FROM attempt WHERE repo=? AND result=? LIMIT 2",
+                          (repository_id, squash)).fetchall()
+    if len(rows) != 1:
+        raise ValueError("Missing or ambiguous selective result")
+    pr, encoded = rows[0]
+    manifest = json.loads(encoded)
+    if not _validated_manifest(manifest, pr) or manifest["repository_id"] != repository_id:
+        raise ValueError("Invalid selective result manifest")
+    return pr, manifest
+
+
 def read_receipt(path, repository, repository_id, issue, read):
     """Verify matching journal records against a stable observed main."""
     if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*", repository)

@@ -1,6 +1,7 @@
 """Nightly promotion on the existing controller host."""
 import queue
 import sys
+from contextlib import contextmanager
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -22,6 +23,26 @@ def promotion_mode(project):
     return mode if project.get('promotion_enabled') is True else 'paused'
 
 
+@contextmanager
+def _deployed_main_guard(config, project):
+    store = DeploymentState(config['deployment_state_path'])
+    repository_id = project['repository_id']
+    with store.promotion_guard(repository_id) as ready:
+        def guarded_ready(sha):
+            if not ready(sha):
+                return False
+            previous = store.last_success(repository_id, 'main')
+            if previous is None or previous['commit'] != sha:
+                return False
+            try:
+                executor = trusted_executor(project['deployment_executor'])
+                return _result(previous, executor.status(previous)) == 'succeeded'
+            except Exception:
+                return False
+        guarded_ready.capture = ready.capture
+        yield guarded_ready
+
+
 def run_promotions(stop, config, private_key, *, transport=request, quickfix_queue=None, selective_step=None):
     """Dispatch nightly and quickfix work through the same selected route."""
     projects = {}
@@ -33,7 +54,7 @@ def run_promotions(stop, config, private_key, *, transport=request, quickfix_que
         if repository_id in projects:
             raise ValueError("Duplicate promotion repository")
         token = None
-        if mode == 'prefix' or (callable(selective_step) and not project.get('deployment_guarded')):
+        if mode == 'prefix' or callable(selective_step):
             token = AppToken(config['app_id'], config['installation_id'], repository_id, private_key,
                              purpose='selective_promotion' if mode == 'selective' else 'promotion',
                              transport=transport)
@@ -60,22 +81,15 @@ def run_promotions(stop, config, private_key, *, transport=request, quickfix_que
                     continue
                 try:
                     if mode == 'selective':
-                        result = 'selective-unavailable' if token is None else selective_step(transport, token(), project)
+                        if token is None:
+                            result = 'selective-unavailable'
+                        elif project.get('deployment_guarded') is True:
+                            result = selective_step(transport, token(), project,
+                                                    deployment_guard=lambda: _deployed_main_guard(config, project))
+                        else:
+                            result = selective_step(transport, token(), project)
                     elif project.get('deployment_guarded') is True:
-                        store = DeploymentState(config['deployment_state_path'])
-                        with store.promotion_guard(project['repository_id']) as ready:
-                            executor = trusted_executor(project['deployment_executor'])
-                            def guarded_ready(sha):
-                                if not ready(sha):
-                                    return False
-                                previous = store.last_success(project['repository_id'], 'main')
-                                if previous is None or previous['commit'] != sha:
-                                    return False
-                                try:
-                                    return _result(previous, executor.status(previous)) == 'succeeded'
-                                except Exception:
-                                    return False
-                            guarded_ready.capture = ready.capture
+                        with _deployed_main_guard(config, project) as guarded_ready:
                             result = promotion_step(transport, token(), project['owner'], project['repository'], deployment_ready=guarded_ready)
                     else:
                         result = promotion_step(transport, token(), project['owner'], project['repository'])

@@ -29,7 +29,8 @@ def bootstrap_current_main(transport, token, owner, repository, repository_id, r
     return 'succeeded'
 
 
-def dispatch_current(transport, token, owner, repository, repository_id, target, required, store, execute):
+def dispatch_current(transport, token, owner, repository, repository_id, target, required, store, execute,
+                     *, selective_state_path=None):
     commit = branch_head(transport, token, owner, repository, target)
     if store.has_uncertain(repository_id):
         return 'blocked'
@@ -47,7 +48,11 @@ def dispatch_current(transport, token, owner, repository, repository_id, target,
             store.transition(previous, 'succeeded', 'unknown', 'runtime-unconfirmed')
             return 'unknown'
         return 'succeeded'
-    scope = promoted_scope(transport, token, owner, repository, repository_id, commit, store) if target == 'main' else {'changes': [], 'commits': []}
+    def main_scope():
+        return promoted_scope(transport, token, owner, repository, repository_id, commit, store,
+                              selective_state_path=selective_state_path)
+
+    scope = main_scope() if target == 'main' else {'changes': [], 'commits': []}
     request = {'id': f'{target}-{commit}', 'repository_id': repository_id, 'target': target,
                'commit': commit, 'changes': scope['changes']}
 
@@ -55,7 +60,10 @@ def dispatch_current(transport, token, owner, repository, repository_id, target,
         if not verify_head_and_ci(transport, token, owner, repository, target, candidate['commit'], required):
             return False
         if target == 'main':
-            return promoted_scope(transport, token, owner, repository, repository_id, commit, store) == scope
+            try:
+                return main_scope() == scope
+            except ValueError:
+                return False
         return True
 
     return run_deployment_once(store, request, verify, execute)

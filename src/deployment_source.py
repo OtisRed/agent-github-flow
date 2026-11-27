@@ -3,6 +3,7 @@ from urllib.parse import urlencode
 
 from promotion_plan import SHA
 from pr_admission_checks import tests_state
+from selective_promotion_receipt import read_confirmed_result
 
 MAX_PAGES = 10
 MERGE_COMMIT_QUERY = '''query($owner:String!,$repo:String!,$number:Int!){
@@ -43,6 +44,14 @@ def deployment_checks(project, target):
     if len(set(required)) != len(required):
         raise ValueError('Duplicate deployment checks')
     return required
+
+
+def deployment_targets(project):
+    if project.get('deployment_smoke_only') is True:
+        return ('smoke',)
+    if project.get('deployment_main_only') is True:
+        return ('main',)
+    return ('main', 'smoke')
 
 
 def branch_head(transport, token, owner, repository, target):
@@ -130,14 +139,16 @@ def strict_candidate_matches(commit, sha, base, source, tree):
             and [p.get('sha') if isinstance(p, dict) else None for p in commit['parents']] == [base, source])
 
 
-def promoted_scope(transport, token, owner, repository, repository_id, commit, store):
-    """Confirm main is exactly the merge recorded before the promotion."""
+def promoted_scope(transport, token, owner, repository, repository_id, commit, store, *, selective_state_path=None):
+    """Confirm the exact promoted main and its approved deployment scope."""
     if type(repository_id) is not int or repository_id <= 0 or not isinstance(commit, str) or not SHA.fullmatch(commit):
         raise ValueError('Invalid deployment identity')
     root = f'/repos/{owner}/{repository}'
     repo, _ = transport(root, token)
     if not isinstance(repo, dict) or repo.get('id') != repository_id:
         raise ValueError('Repository identity changed')
+    if selective_state_path is not None:
+        return _selective_scope(transport, token, owner, repository, repository_id, commit, selective_state_path)
     value, _ = transport(root + '/commits/' + commit, token)
     if not isinstance(value, dict) or value.get('sha') != commit or not isinstance(value.get('parents'), list) or len(value['parents']) != 2:
         raise ValueError('Main is not a confirmed promotion merge')
@@ -185,3 +196,25 @@ def promoted_scope(transport, token, owner, repository, repository_id, commit, s
                 or value.get('commit', {}).get('tree', {}).get('sha') != tree):
             raise ValueError('Strict promotion candidate does not match source')
     return scope
+
+
+def _selective_scope(transport, token, owner, repository, repository_id, commit, path):
+    number, manifest = read_confirmed_result(path, repository_id, commit)
+    root = f'/repos/{owner}/{repository}'
+    if branch_head(transport, token, owner, repository, 'main') != commit:
+        raise ValueError('Selective deployment head changed')
+    row, _ = transport(root + '/git/commits/' + commit, token)
+    if (row['sha'] != commit or [p['sha'] for p in row['parents']] != [manifest['main']]
+            or row['tree']['sha'] != manifest['tree']):
+        raise ValueError('Selective squash does not match the recorded result')
+    pr, _ = transport(root + '/pulls/' + str(number), token)
+    if (pr['number'] != number or pr['merged'] is not True or pr['base']['ref'] != 'main'
+            or pr['base']['repo']['id'] != repository_id or pr['head']['repo']['id'] != repository_id
+            or pr['head']['sha'] != manifest['candidate']
+            or pull_request_merge_oid(transport, token, owner, repository, number) != commit):
+        raise ValueError('Selective promotion pull request does not match the squash')
+    if branch_head(transport, token, owner, repository, 'main') != commit:
+        raise ValueError('Selective deployment head changed')
+    sources = manifest['sources']
+    return {'changes': list(dict.fromkeys(f"issue-{s['issue']}" for s in sources)),
+            'commits': [s['sha'] for s in sources]}

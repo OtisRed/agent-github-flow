@@ -6,7 +6,7 @@ only a boolean, never an installation token or executable migration payload.
 import json
 import sys
 
-from deployment_source import deployment_checks, promoted_scope, verify_head_and_ci
+from deployment_source import deployment_checks, deployment_targets, promoted_scope, verify_head_and_ci
 from deployment_state import DeploymentState, _request
 from mvp_credentials import AppToken, read_private_file
 from mvp_github import request as github_request
@@ -22,7 +22,7 @@ def attest(config, candidate, token, store, transport=github_request, *, recover
     if len(matches) != 1:
         return False
     project = matches[0]
-    if project.get('deployment_smoke_only') is True and normalized['target'] != 'smoke':
+    if normalized['target'] not in deployment_targets(project):
         return False
     attempt = store.get_attempt(normalized)
     allowed = ('running', 'unknown') if recovery else ('running',)
@@ -34,8 +34,10 @@ def attest(config, candidate, token, store, transport=github_request, *, recover
         return False
     if normalized['target'] == 'smoke':
         return normalized['changes'] == []
+    state_path = config['state_path'] if project.get('deployment_promotion_source') == 'selective' else None
     scope = promoted_scope(transport, token, project['owner'], project['repository'],
-                           normalized['repository_id'], normalized['commit'], store)
+                           normalized['repository_id'], normalized['commit'], store,
+                           selective_state_path=state_path)
     return scope['changes'] == normalized['changes']
 
 

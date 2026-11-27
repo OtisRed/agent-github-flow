@@ -6,7 +6,7 @@ from pathlib import Path
 
 from deployment_dispatch import bootstrap_current_main, dispatch_current
 from deployment_executor import ProjectExecutor
-from deployment_source import branch_head, deployment_checks
+from deployment_source import branch_head, deployment_checks, deployment_targets
 from deployment_state import DeploymentState
 from deployment_worker import reconcile_deployment
 from mvp_credentials import AppToken
@@ -43,7 +43,9 @@ def run_deployments(stop, config, private_key, *, transport=request, executor_fa
     previous = {}
     while not stop.is_set():
         for project, token in projects:
-            smoke_only = project.get('deployment_smoke_only') is True
+            targets = deployment_targets(project)
+            scope_options = ({'selective_state_path': config['state_path']}
+                             if project.get('deployment_promotion_source') == 'selective' else {})
             try:
                 executor = executor_factory(project['deployment_executor'])
                 unresolved = store.unresolved(project['repository_id'])
@@ -55,7 +57,7 @@ def run_deployments(stop, config, private_key, *, transport=request, executor_fa
                     previous[key] = 'blocked'
                 continue
             if unresolved and unresolved['status'] in ('running', 'unknown'):
-                if smoke_only and unresolved['request']['target'] != 'smoke':
+                if unresolved['request']['target'] not in targets:
                     continue
                 try:
                     reconcile_deployment(store, unresolved['request'], executor.status(unresolved['request']))
@@ -67,7 +69,7 @@ def run_deployments(stop, config, private_key, *, transport=request, executor_fa
             # because GitHub is unavailable or CI cannot be checked.
             if current and current['status'] == 'reserved':
                 pending = current['request']
-                if smoke_only and pending['target'] != 'smoke':
+                if pending['target'] not in targets:
                     continue
                 try:
                     head = branch_head(transport, token(), project['owner'], project['repository'], pending['target'])
@@ -82,14 +84,15 @@ def run_deployments(stop, config, private_key, *, transport=request, executor_fa
                     else:
                         result = dispatch_current(transport, token(), project['owner'], project['repository'],
                                                   project['repository_id'], pending['target'],
-                                                  deployment_checks(project, pending['target']), store, executor)
+                                                  deployment_checks(project, pending['target']), store, executor,
+                                                  **scope_options)
                         if result != 'succeeded':
                             continue
                 except Exception:
                     print('FLOW attention: deployment-blocked repo=' + str(project['repository_id'])
                           + ' target=reservation', file=sys.stderr, flush=True)
                     continue
-            if not smoke_only:
+            if 'main' in targets:
                 try:
                     baseline = bootstrap_current_main(transport, token(), project['owner'], project['repository'],
                                                       project['repository_id'], deployment_checks(project, 'main'),
@@ -102,13 +105,13 @@ def run_deployments(stop, config, private_key, *, transport=request, executor_fa
                         print('FLOW attention: deployment-' + baseline + ' repo=' + str(key[0]) + ' target=bootstrap', file=sys.stderr, flush=True)
                         previous[key] = baseline
                     continue
-            for target in (('smoke',) if smoke_only else ('main', 'smoke')):
+            for target in targets:
                 if stop.is_set():
                     break
                 try:
                     result = dispatch_current(transport, token(), project['owner'], project['repository'],
                                               project['repository_id'], target, deployment_checks(project, target),
-                                              store, executor)
+                                              store, executor, **scope_options)
                 except Exception:
                     result = 'blocked'
                 key = (project['repository_id'], target)
