@@ -1,0 +1,14 @@
+[Unit]
+Description=AGF-only one-release pilot socket
+
+[Socket]
+ListenStream=/run/agf-pilot-executor.sock
+SocketUser=root
+SocketGroup=agent-flow
+SocketMode=0660
+Accept=yes
+MaxConnections=8
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

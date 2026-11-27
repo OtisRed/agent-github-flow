@@ -1,0 +1,13 @@
+[Unit]
+Description=Independent AGF one-release pilot executor
+
+[Service]
+Type=simple
+User=root
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+ExecStart=/usr/bin/python3 -B /opt/agf-controller-pilot/agf_pilot_executor.py
+NoNewPrivileges=true
+RuntimeMaxSec=240
+TimeoutStopSec=15
