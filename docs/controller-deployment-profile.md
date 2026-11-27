@@ -123,6 +123,46 @@ komplet PR i squash w aktualnej historii `main`. Brak źródeł lub niekompletny
 odczyt daje wynik `blocked` oraz kod zakończenia 1. To samo dotyczy projektów,
 w których centralna promocja jest wyłączona, np. gdy promocją zarządza workflow repozytorium.
 
-Wynik `confirmed` potwierdza wyłącznie promocję. Potwierdzenie sprzątania,
+Bez opcji `--with-cleanup` wynik `confirmed` dotyczy wyłącznie promocji. Sprzątanie,
 komentarz i archiwizacja karty należą do dalszych kroków #194. Skrypt nie
 uruchamia tych operacji ani nie zmienia zasad nocnego skanu.
+
+
+### Potwierdzenie sprzątania przed archiwizacją
+
+Agent, który sprząta na maszynie wykonującej pracę, stosuje zasady worktree
+oraz sprawdza jednorazowe kontenery i pliki. Po zweryfikowanym zamknięciu
+umieszcza na issue jeden komentarz w tej postaci, bez ścieżek lokalnych i danych
+poświadczeń:
+
+```text
+[ARCHIVE-CLEANUP]
+Cycle: 123456789
+Scope: code
+Worktrees: removed
+Branches: removed
+Temporary: not-created
+Environment: retained
+```
+
+`Cycle` to ID aktualnego zdarzenia zamknięcia issue. Użyj `Scope: no-code`
+wyłącznie po stwierdzeniu, że w tym cyklu nie dostarczono kodu przez PR.
+Dla worktree, gałęzi i plików lub kontenerów użyj `removed`, `not-created`
+albo `blocked`. Dla trwałego środowiska dopuszczalne jest także `retained`,
+gdy decyzja o zachowaniu została ustalona. Wynik zgłasza zaufany użytkownik
+GitHuba na podstawie sprawdzenia na maszynie. Sam komentarz nie mierzy jej
+stanu.
+
+Przy blokadzie podaj przyczynę w osobnym komentarzu. Po ponownym sprawdzeniu
+dodaj nowy pełny wpis. Odczyt wymaga aktualnego cyklu i najnowszego
+nieedytowanego wpisu od zaufanego użytkownika. Przed ponowieniem publikacji
+odczytaj komentarze, żeby nie duplikować wpisu po utracie odpowiedzi.
+
+Tryb odczytowy wykorzystujący obie informacje:
+
+```sh
+sudo -u agent-flow python3 -B src/archive_promotion.py OtisRed/agent-github-flow 280 --with-cleanup
+```
+
+Odczyt może zwrócić cykl przy braku potwierdzenia sprzątania. Żaden z wyników
+nie uruchamia archiwizacji. Tryb ręczny i nocny zostaną podłączone osobno.

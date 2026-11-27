@@ -3,6 +3,7 @@ import argparse
 import json
 import sqlite3
 
+from archive_cleanup import read_cleanup
 from deployment_source import pull_request_merge_oid
 from mvp_credentials import AppToken, read_private_file
 from mvp_decision import _id
@@ -10,11 +11,11 @@ from mvp_errors import GitHubRequestError
 from mvp_github import GitHub, request
 from promotion_plan import SHA
 from promotion_schedule import promotion_mode
-from selective_promotion_github import ObservationError, _completed_cycle, _merged_sources, _require
+from selective_promotion_github import ObservationError, _completed_cycle, _merged_sources, _pages, _require
 from selective_promotion_receipt import read_receipt
 
 
-def read_archive_promotion(issue, project, state_path, transport, token, project_status):
+def read_archive_promotion(issue, project, state_path, transport, token, project_status, *, with_cleanup=False):
     """Confirm the complete current source set, or leave the decision blocked."""
     try:
         repo_id = project["repository_id"]
@@ -50,24 +51,35 @@ def read_archive_promotion(issue, project, state_path, transport, token, project
         cycle, start, end = _completed_cycle(fetch, project_status, issue)
         sources = _merged_sources(fetch, {issue: (start, end)}, repo_id,
                                   lambda pr: pull_request_merge_oid(transport, token, owner, name, pr))
-        _require(bool(sources), "no-source-pr")
+        _require(bool(sources) or with_cleanup, "no-source-pr")
         source_prs = [{"pr": pr, "sha": sha} for pr, (_, sha) in sorted(sources.items())]
         _require(len({source["sha"] for source in source_prs}) == len(source_prs), "ambiguous-source-merge")
         _require(all(contains(source["sha"], smoke) for source in source_prs), "source-not-on-smoke")
         result = {"kind": "confirmed", "mode": mode, "issue": issue, "cycle": cycle, "main": main,
                   "source_prs": source_prs}
-        if mode == "prefix":
-            _require(all(contains(source["sha"], main) for source in source_prs), "source-not-on-main")
-        else:
+        if mode == "selective":
             ledger = read_receipt(state_path, repo, repo_id, issue, read)
             _require(ledger["main"] == main, "observation-changed")
             matches = [entry for entry in ledger["receipts"] if entry["cycle"] == cycle]
+        if not source_prs:
+            _require(mode != "selective" or not matches, "source-set-changed")
+            result["promotion"] = "not-applicable"
+        elif mode == "prefix":
+            _require(all(contains(source["sha"], main) for source in source_prs), "source-not-on-main")
+        else:
             _require(len(matches) == 1 and matches[0]["status"] == "confirmed", "promotion-not-confirmed")
             entry = matches[0]
             _require(sorted(entry["source_prs"], key=lambda item: item["pr"]) == source_prs, "source-set-changed")
             result.update(promotion_pr=entry["promotion_pr"], squash=entry["squash"])
+        if with_cleanup:
+            cleanup = read_cleanup(_pages(fetch, f"issues/{issue}/comments"), cycle, end,
+                                   project["trusted_author_ids"], has_sources=bool(source_prs))
         _require(_completed_cycle(fetch, project_status, issue) == (cycle, start, end) and refs() == (main, smoke),
                  "observation-changed")
+        if with_cleanup:
+            if cleanup["kind"] != "confirmed":
+                return {**cleanup, "issue": issue, "cycle": cycle}
+            result["cleanup"] = cleanup
         return result
     except ObservationError as error:
         return {"kind": "blocked", "reason": str(error)}
@@ -81,6 +93,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("repository", help="Enrolled OWNER/REPO")
     parser.add_argument("issue", type=int)
+    parser.add_argument("--with-cleanup", action="store_true", help="Require the current cleanup attestation")
     parser.add_argument("--config", default="/etc/agent-github-flow-mvp/config.json")
     args = parser.parse_args()
     try:
@@ -98,7 +111,8 @@ def main():
             card = github.read(repo_id, issue)
             return card["status"] if card.get("archived_card") is False else None
 
-        result = read_archive_promotion(args.issue, project, config["state_path"], request, token(), status)
+        result = read_archive_promotion(args.issue, project, config["state_path"], request, token(), status,
+                                        with_cleanup=args.with_cleanup)
     except (GitHubRequestError, OSError, RuntimeError, ValueError, KeyError, TypeError):
         parser.exit(1, "Promotion evidence unavailable. Check the repository, credentials, and state.\n")
     print(json.dumps(result, indent=2))
