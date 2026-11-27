@@ -7,9 +7,10 @@ from mvp_decision import _date, _id
 MARKER = "[ARCHIVE-CLEANUP]"
 FIELDS = ("Cycle", "Scope", "Worktrees", "Branches", "Temporary", "Environment")
 REMOVAL = {"removed", "not-created", "blocked"}
+TRANSFER = re.compile(r"transferred #([1-9][0-9]{0,18})")
 
 
-def read_cleanup(comments, cycle, closed_at, trusted_authors, *, has_sources=None):
+def read_cleanup(comments, cycle, closed_at, trusted_authors, *, has_sources=None, issue=None):
     """Use the newest matching attestation. A correction can explicitly block it."""
     latest = None
     seen = set()
@@ -41,14 +42,21 @@ def read_cleanup(comments, cycle, closed_at, trusted_authors, *, has_sources=Non
     cycle_text, scope, worktrees, branches, temporary, environment = [
         line.split(": ", 1)[1] for line in lines
     ]
+    transfer = TRANSFER.fullmatch(worktrees)
+    transferred_to = int(transfer[1]) if transfer else None
+    valid_transfer = _id(issue) and _id(transferred_to) and transferred_to != issue
     if (cycle_text != str(cycle) or scope not in {"code", "no-code"}
-            or worktrees not in REMOVAL or branches not in REMOVAL or temporary not in REMOVAL
+            or (worktrees not in REMOVAL and not valid_transfer)
+            or branches not in REMOVAL or temporary not in REMOVAL
             or environment not in REMOVAL | {"retained"}):
         return {"kind": "blocked", "reason": "cleanup-invalid"}
     if has_sources is not None and (scope == "code") != has_sources:
         return {"kind": "blocked", "reason": "cleanup-scope-mismatch"}
     if "blocked" in (worktrees, branches, temporary, environment):
         return {"kind": "blocked", "reason": "cleanup-incomplete"}
-    return {"kind": "confirmed", "comment_id": number,
-            "scope": scope, "worktrees": worktrees, "branches": branches,
-            "temporary": temporary, "environment": environment}
+    result = {"kind": "confirmed", "comment_id": number,
+              "scope": scope, "worktrees": worktrees, "branches": branches,
+              "temporary": temporary, "environment": environment}
+    if valid_transfer:
+        result["worktree_transferred_to"] = transferred_to
+    return result

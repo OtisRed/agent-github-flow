@@ -24,6 +24,7 @@ from mvp_http import make_server
 from mvp_scan import collect_in_background, stage_one
 from mvp_store import Store
 from mvp_worker import process_one
+from promotion_plan import SHA
 from promotion_schedule import promotion_mode, run_promotions
 from selective_promotion_executor import run_prepared_promotion
 from deployment_schedule import run_deployments
@@ -78,6 +79,10 @@ def validate_config(config):
         mode = promotion_mode(project)
         if "archive_require_evidence" in project and type(project["archive_require_evidence"]) is not bool:
             raise ValueError("Invalid archive evidence setting")
+        if "archive_legacy_prefix_tip" in project:
+            tip = project["archive_legacy_prefix_tip"]
+            if not isinstance(tip, str) or not SHA.fullmatch(tip):
+                raise ValueError("Invalid historical prefix tip")
         path = project.get('selective_request_path')
         if 'selective_request_path' in project and (not isinstance(path, str) or not os.path.isabs(path)):
             raise ValueError("Invalid selective promotion request path")

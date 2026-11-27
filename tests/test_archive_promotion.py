@@ -95,6 +95,31 @@ class ArchivePromotionTests(unittest.TestCase):
         self.selective(cycle=8)
         self.assertEqual(self.observe()["reason"], "promotion-not-confirmed")
 
+    def legacy_prefix(self):
+        self.selective(cycle=8)
+        tip = "8" * 40
+        self.project["archive_legacy_prefix_tip"] = tip
+        self.data[f"compare/{tip}...{self.main}?per_page=1"] = {"merge_base_commit": {"sha": tip}}
+        self.data[f"compare/{self.source}...{tip}?per_page=1"] = {"merge_base_commit": {"sha": self.source}}
+        return tip
+
+    def test_legacy_prefix_requires_all_sources_at_the_pinned_tip(self):
+        tip = self.legacy_prefix()
+        result = self.observe()
+        self.assertEqual((result["promotion"], result["legacy_prefix_tip"]), ("legacy-prefix", tip))
+        self.data[f"compare/{self.source}...{tip}?per_page=1"]["merge_base_commit"]["sha"] = self.base
+        self.assertEqual(self.observe()["reason"], "promotion-not-confirmed")
+
+    def test_legacy_prefix_tip_must_still_be_on_main(self):
+        tip = self.legacy_prefix()
+        self.data[f"compare/{tip}...{self.main}?per_page=1"]["merge_base_commit"]["sha"] = self.base
+        self.assertEqual(self.observe()["reason"], "legacy-prefix-not-on-main")
+
+    def test_legacy_prefix_cannot_override_a_current_pending_receipt(self):
+        self.selective(confirmed=False)
+        self.project["archive_legacy_prefix_tip"] = self.main
+        self.assertEqual(self.observe()["reason"], "promotion-not-confirmed")
+
     def test_selective_blocks_incomplete_or_different_source_set(self):
         self.selective(sha="9" * 40)
         self.assertEqual(self.observe()["reason"], "source-set-changed")
@@ -133,6 +158,16 @@ class ArchivePromotionTests(unittest.TestCase):
         self.assertEqual((result["kind"], result["cycle"], result["cleanup"]["comment_id"]), ("confirmed", 4, 14))
         self.data[f"compare/{self.source}...{self.main}?per_page=1"] = {"merge_base_commit": {"sha": self.base}}
         self.assertEqual(self.cleanup("code")["reason"], "source-not-on-main")
+
+    def test_worktree_recipient_must_be_an_issue_in_the_same_repository(self):
+        self.cleanup("code")
+        comment = self.data["issues/3/comments?per_page=100&page=1"][0]
+        comment["body"] = comment["body"].replace("Worktrees: not-created", "Worktrees: transferred #8")
+        self.data["issues/8"] = {"number": 8}
+        args = (3, self.project, self.state, self.transport, "test", lambda _: "done")
+        self.assertEqual(read_archive_promotion(*args, with_cleanup=True)["kind"], "confirmed")
+        self.data["issues/8"]["pull_request"] = {}
+        self.assertEqual(read_archive_promotion(*args, with_cleanup=True)["reason"], "invalid-worktree-recipient")
 
     def test_explicit_no_code_can_confirm_only_without_sources(self):
         self.assertEqual(self.cleanup("no-code")["reason"], "cleanup-scope-mismatch")

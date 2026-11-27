@@ -47,3 +47,12 @@ class ArchiveCleanupTests(unittest.TestCase):
         self.assertEqual(self.proof([no_code])["reason"], "cleanup-scope-mismatch")
         self.assertEqual(self.proof([self.item()], has_sources=False)["reason"], "cleanup-scope-mismatch")
         self.assertEqual(self.proof([no_code], has_sources=False)["kind"], "confirmed")
+
+    def test_worktree_transfer_must_name_a_different_issue(self):
+        for target, expected in (("#184", "confirmed"), ("#180", "blocked"), ("#0", "blocked"),
+                                 ("other/repo#184", "blocked")):
+            body = self.body.replace("Worktrees: removed", f"Worktrees: transferred {target}")
+            result = read_cleanup([self.item(body=body)], 4, self.closed, {7}, issue=180)
+            self.assertEqual(result["kind"], expected)
+            if expected == "confirmed":
+                self.assertEqual(result["worktree_transferred_to"], 184)
