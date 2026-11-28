@@ -1,0 +1,15 @@
+[Unit]
+Description=Independent versioned AGF main release executor
+
+[Service]
+Type=simple
+User=root
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+ExecStart=/usr/bin/python3 -B /opt/agf-controller-executor/current/src/agf_controller_executor.py
+StateDirectory=agf-controller-executor
+StateDirectoryMode=0700
+NoNewPrivileges=true
+RuntimeMaxSec=1050
+TimeoutStopSec=15
