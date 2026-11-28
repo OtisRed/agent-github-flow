@@ -1,6 +1,15 @@
 # Alerty operacyjne
 
-Opcjonalna usługa na Linuksie przyjmuje przez gniazdo Unix jeden wiersz JSON zakończony znakiem nowej linii, np. `{"kind":"replication-lag"}`. Uwierzytelnia proces na podstawie UID zweryfikowanego przez jądro. Proces otrzymuje numer zgłoszenia w odpowiedzi `created` albo `existing`. Statusy `busy`, `pending`, `denied` i `error` nie potwierdzają utworzenia zgłoszenia.
+Opcjonalna usługa na Linuksie przyjmuje przez gniazdo Unix jeden wiersz JSON zakończony znakiem nowej linii, np. `{"kind":"replication-lag"}`. Uwierzytelnia proces na podstawie UID zweryfikowanego przez jądro.
+
+| Odpowiedź | Znaczenie i następny krok |
+| --- | --- |
+| `created` | GitHub potwierdził utworzenie zgłoszenia. Użyj numeru z pola `issue`. |
+| `existing` | Usługa odnalazła zgłoszenie. Użyj zwróconego numeru i sprawdź stan w GitHubie. Po odzyskaniu wyniku wcześniejszej próby zgłoszenie może już być zamknięte. |
+| `busy` | Inna instancja trzyma blokadę. Ponów żądanie przez gniazdo po krótkiej przerwie. |
+| `pending` | Nadal brakuje potwierdzenia wcześniejszego zapisu. Kolejne żądanie przez gniazdo szuka zgłoszenia tej samej próby. Gdy stan się utrzymuje, sprawdź GitHuba przed ręcznym wznowieniem. |
+| `denied` | UID lub rodzaj alertu nie ma przypisanej trasy. Sprawdź konfigurację wywołującej usługi i alertu. |
+| `error` | Obsługa zgłoszenia zwróciła błąd. Sprawdź log jednostki alertów i stan w GitHubie. Przy niepewnym wyniku użyj gniazda do uzgodnienia próby, bez ręcznego tworzenia zgłoszenia. |
 
 Administrator przypisuje osobny UID każdej usłudze, wskazuje jedno repozytorium docelowe i ustala rodzaje alertów. Tytuł i opis pochodzą z konfiguracji administratora. Moduł używa istniejącego GitHub App i pobiera token z uprawnieniem `Issues: write` dla jednego identyfikatora repozytorium. Zgłaszająca usługa potrzebuje dostępu do gniazda.
 
