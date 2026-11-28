@@ -44,6 +44,49 @@ def _checkout_commit(log, step, checkout_sha):
     raise EvidenceError("checkout-revision-missing")
 
 
+TRUSTED_PATH = ".github/workflows/promotion-trusted.yml"
+TRUSTED_JOB = "verify-trusted-promotion"
+TRUSTED_CHECKOUT = "Check out proposed merge"
+
+
+def _verify_trusted_ci(fetch, repository, repo, base, tested, checkout_sha, app_id, proof):
+    _require(isinstance(proof, dict)
+             and set(proof) == {"run_id", "job_id", "workflow_id", "trusted_blob", "candidate_blob"}
+             and all(_id(proof[k]) for k in ("run_id", "job_id", "workflow_id"))
+             and all(SHA.fullmatch(proof[k]) for k in ("trusted_blob", "candidate_blob")),
+             "invalid-trusted-ci-policy")
+    run_id, job_id = proof["run_id"], proof["job_id"]
+    _require(all(fetch(f"contents/{TRUSTED_PATH}?ref={ref}")["sha"] == proof["trusted_blob"]
+                 for ref in (base, tested)), "unapproved-trusted-workflow")
+    run_path = f"actions/runs/{run_id}"
+    run = fetch(run_path)
+    _require(run["id"] == run_id and run["repository"]["id"] == repo
+             and run["head_repository"]["id"] == repo
+             and run["workflow_id"] == proof["workflow_id"] and run["path"] == TRUSTED_PATH
+             and run["event"] == "workflow_dispatch" and run["head_branch"] == "main" and run["head_sha"] == base
+             and run["status"] == "completed" and run["conclusion"] == "success"
+             and _id(run["run_attempt"]) and _id(run["check_suite_id"]), "trusted-run-mismatch")
+    job = fetch(f"actions/jobs/{job_id}")
+    _require(job["id"] == job_id and job["run_id"] == run_id and job["run_attempt"] == run["run_attempt"]
+             and job["head_sha"] == base and job["name"] == TRUSTED_JOB and job["status"] == "completed"
+             and job["conclusion"] == "success"
+             and job["check_run_url"] == f"https://api.github.com/repos/{repository}/check-runs/{job_id}",
+             "trusted-job-mismatch")
+    checks = fetch(f"commits/{base}/check-runs?check_name={TRUSTED_JOB}&filter=latest&per_page=100")
+    _require(checks["total_count"] == len(checks["check_runs"]) < 100, "trusted-checks-incomplete")
+    matches = [check for check in checks["check_runs"]
+               if check["check_suite"]["id"] == run["check_suite_id"] and check["name"] == TRUSTED_JOB]
+    _require(len(matches) == 1 and matches[0]["id"] == job_id and matches[0]["app"]["id"] == app_id
+             and matches[0]["head_sha"] == base and matches[0]["status"] == "completed"
+             and matches[0]["conclusion"] == "success", "trusted-check-mismatch")
+    steps = [step for step in job["steps"] if step["name"] == TRUSTED_CHECKOUT]
+    _require(len(steps) == 1 and steps[0]["status"] == "completed" and steps[0]["conclusion"] == "success",
+             "trusted-checkout-unverified")
+    _require(_checkout_commit(fetch(f"actions/jobs/{job_id}/logs"), steps[0], checkout_sha) == tested,
+             "trusted-tested-revision-mismatch")
+    _require(fetch(run_path) == run, "trusted-run-changed")
+
+
 def verify_candidate_ci(read, repository, expected, policy, run_id, job_id):
     """Return verified evidence or a fail-closed reason, without altering GitHub."""
     try:
@@ -119,8 +162,15 @@ def verify_candidate_ci(read, repository, expected, policy, run_id, job_id):
         obj = fetch(f"git/commits/{tested}")
         _require(obj["sha"] == tested and [x["sha"] for x in obj["parents"]] == [base, head]
                  and obj["tree"]["sha"] == expected["tree"], "tested-tree-or-parents-mismatch")
-        _require(fetch(f"contents/{policy['workflow_path']}?ref={tested}")["sha"] == policy["workflow_blob"],
-                 "unapproved-tested-workflow")
+        tested_blob = fetch(f"contents/{policy['workflow_path']}?ref={tested}")["sha"]
+        if "workflow_change" in policy:
+            proof = policy["workflow_change"]
+            _verify_trusted_ci(fetch, repository, repo, base, tested, policy["checkout_sha"],
+                               policy["app_id"], proof)
+            _require(tested_blob == proof["candidate_blob"] and tested_blob != policy["workflow_blob"],
+                     "unapproved-changed-workflow")
+        else:
+            _require(tested_blob == policy["workflow_blob"], "unapproved-tested-workflow")
         verify_latest_check()
         updated = current_pr()
         _require(current_main() == base, "main-changed")
