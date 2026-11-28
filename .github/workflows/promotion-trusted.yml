@@ -1,0 +1,81 @@
+name: Trusted promotion CI
+on:
+  workflow_dispatch:
+    inputs:
+      test_commit:
+        description: Exact pull request merge commit
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  verify-trusted-promotion:
+    name: verify-trusted-promotion
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Validate dispatch inputs
+        shell: bash
+        env:
+          TEST_COMMIT: ${{ inputs.test_commit }}
+        run: |
+          [[ "$TEST_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+      - name: Check out proposed merge
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.test_commit }}
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Check out pinned controller draft for integration fixture
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 395c3b296172fce536f7ce1c2faae3e177140fbd
+          path: .controller-fixture
+          persist-credentials: false
+      - name: Verify Node tests
+        run: node --test src/*.test.mjs
+      - name: Verify GitHub Flow skill tests
+        run: node --test skills/github-flow/tests/*.test.mjs
+      - name: Verify backup monitor decisions
+        shell: pwsh
+        run: ./tests/test_backup_monitor.ps1
+      - name: Verify webhook spike tests
+        run: python3 -m unittest discover -s spikes/mikrus-webhook -p 'test_*.py' -v
+      - name: Verify detached webhook intake tests
+        run: |
+          AGF_CONTROLLER_ROOT="$GITHUB_WORKSPACE/.controller-fixture" AGF_NODE="$(command -v node)" \
+            python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Download and verify actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          if ! curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"; then
+            curl --fail --silent --show-error --location --retry 3 \
+              -H 'Accept: application/octet-stream' \
+              https://api.github.com/repos/rhysd/actionlint/releases/assets/384924896 \
+              --output "$archive"
+          fi
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$archive" | sha256sum --check --status
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+      - name: Validate GitHub Actions workflows
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/actionlint" -shellcheck=
+          "$RUNNER_TEMP/actionlint" -shellcheck= skills/github-flow/assets/ci-template.yml
+      - name: Confirm invalid workflow is rejected
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/actionlint-invalid.yml"
+          printf 'name: invalid fixture\non: [not_a_real_event]\njobs:\n  invalid:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo fixture\n' > "$fixture"
+          if "$RUNNER_TEMP/actionlint" -shellcheck= "$fixture" > /dev/null 2>&1; then
+            echo 'actionlint unexpectedly accepted an invalid workflow'; exit 1
+          fi
+          echo 'Invalid workflow rejected'

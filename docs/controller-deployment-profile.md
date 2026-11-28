@@ -49,6 +49,38 @@ exists, the service blocks selective promotion until it has been reconciled. The
 candidate PRs. Publication of forward sync needs a separate repository opt-in. A guarded repository
 can use selective promotion when its deployment queue is configured to attest selective results.
 
+### Zmiana workflow CI
+
+Zwykła promocja nadal wymaga identycznego `.github/workflows/ci.yml` na
+`main` i w przetestowanym drzewie. Zmiana tego pliku wymaga jawnej polityki
+z dwoma dowodami. Najpierw dostarcz `promotion-trusted.yml` i weryfikator
+na `main` zwykłą ścieżką, po czym uruchom to wydanie kontrolera. Samo
+scalenie tego przygotowania do `smoke` nie aktywuje obsługi.
+
+1. Zbuduj osobnego kandydata na aktualnym `main`. Przejrzyj dokładny diff,
+   w tym nową definicję CI. Zbierz wymagany zielony `verify` PR-a
+   promocyjnego i odczytaj pełny SHA przetestowanego commita scalającego
+   z kroku **Check out event revision**, przed uruchomieniem testów.
+2. Operator uruchamia na bazowym `main` polecenie
+   `gh workflow run promotion-trusted.yml --ref main -f test_commit=<pełny-SHA>`.
+   Ten workflow korzysta z GitHub-hosted runnera, ma token tylko do
+   odczytu zawartości, nie używa sekretów repozytorium ani środowisk
+   i testuje pełne drzewo tej samej rewizji. Jeśli baza się zmieniła,
+   odśwież kandydata i oba dowody.
+3. Przy przygotowaniu żądania zachowaj zwykłe `workflow_blob`,
+   `workflow_id`, `run_id` i `job_id` dla dotychczasowej bazy i nowego
+   `verify` zgodnie z ich dotychczasowym znaczeniem. W zaufanej polityce
+   operatora dodaj obiekt `workflow_change` z polami `candidate_blob`
+   (przejrzany blob nowego `ci.yml`), `trusted_blob` (blob
+   `promotion-trusted.yml` z bazy), `workflow_id`, `run_id` i `job_id`
+   (identyfikatory zaufanego przebiegu i zadania). Kontroler sprawdza źródło
+   obu dowodów i odczytany z checkoutu identyczny commit testowy. Brak
+   któregokolwiek dowodu blokuje promocję.
+
+Pozostają zwykłe wymagania ochrony `main`, squash przez App,
+synchronizacja `smoke` i sprawdzenie wydania. Pierwsza próba dla #307
+wymaga osobnego odbioru oraz gotowego wykonawcy następnego wdrożenia.
+
 ### Publication and planning after a selective merge
 
 Set `selective_sync_enabled` only for a selective repository that has GitHub merge commits and auto-merge
