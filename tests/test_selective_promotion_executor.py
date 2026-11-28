@@ -60,6 +60,34 @@ class TestSelectivePromotionExecutor(unittest.TestCase):
             self.assertFalse(path.exists())
         transport.assert_not_called()
 
+    def test_routes_only_the_two_staged_jobs_through_the_log_reader(self):
+        project = {"repository_id": 2, "selective_request_path": "fixture", "owner": "test",
+                   "repository": "repo", "project_owner": "test", "project_number": 1}
+        staged = {"manifest": {"repository_id": 2, "main": "a"*40, "smoke": "b"*40,
+                               "candidate": "c"*40, "tree": "d"*40,
+                               "sources": [{"pr": 2, "issue": 1, "cycle": 7, "sha": "e"*40, "method": "merge"}]},
+                  "pr": 3, "policy": {"workflow_change": {"job_id": 13}}, "run_id": 11, "job_id": 12}
+        trusted = "/repos/test/repo/actions/jobs/13/logs"
+        unstaged = "/repos/test/repo/actions/jobs/14/logs"
+        transport = Mock(return_value=({"standard": True}, None))
+
+        def verify(*_args, read_ci, **_kwargs):
+            self.assertEqual(read_ci(unstaged[1:]), {"standard": True})
+            self.assertEqual(read_ci(JOB[1:]), "ordinary log")
+            self.assertEqual(read_ci(trusted[1:]), "trusted log")
+            return "waiting-or-stale"
+
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "selective_promotion_executor.read_private_file", return_value=json.dumps(staged).encode()
+        ), patch("selective_promotion_executor.verify_and_squash", side_effect=verify), patch(
+            "selective_promotion_executor.read_job_log", side_effect=["ordinary log", "trusted log"]
+        ) as log_reader:
+            self.assertEqual(run_prepared_promotion(transport, "fixture", project, project_token="fixture",
+                                                    journal_path=Path(tmp) / "selective.sqlite"), "waiting-checks")
+        self.assertEqual([item.args for item in log_reader.call_args_list],
+                         [(JOB, "fixture"), (trusted, "fixture")])
+        transport.assert_called_once_with(unstaged, "fixture")
+
     def test_deployment_guard_blocks_new_attempt_but_allows_reconciliation(self):
         project = {"repository_id": 2, "selective_request_path": "fixture", "owner": "test",
                    "repository": "repo", "project_owner": "test", "project_number": 1}
