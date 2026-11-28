@@ -9,6 +9,7 @@ from urllib.request import Request, build_opener
 
 from deployment_source import pull_request_merge_oid
 from mvp_credentials import read_private_file
+from mvp_decision import _id
 from mvp_errors import GitHubRequestError
 from mvp_github import API, MAX_RESPONSE, PROJECT_QUERY, GitHub, _NoRedirect
 from selective_promotion_flow import verify_and_squash
@@ -71,12 +72,16 @@ def run_prepared_promotion(transport, token, project, *, project_token, journal_
     owner, name = project["owner"], project["repository"]
     repository = f"{owner}/{name}"
     root = f"/repos/{repository}"
-    log_path = f"{root}/actions/jobs/{staged['job_id']}/logs"
+    workflow_change = policy.get("workflow_change")
+    trusted_job = workflow_change.get("job_id") if isinstance(workflow_change, dict) else None
+    log_paths = {f"{root}/actions/jobs/{job_id}/logs"
+                 for job_id in (staged["job_id"], trusted_job) if _id(job_id)}
 
     def read(endpoint):
-        if endpoint == log_path[1:]:
-            return read_job_log(log_path, token)
-        return transport("/" + endpoint, token)[0]
+        api_path = "/" + endpoint
+        if api_path in log_paths:
+            return read_job_log(api_path, token)
+        return transport(api_path, token)[0]
 
     board = GitHub(repository_id=repository_id, owner=owner, repository=name,
                    project_owner=project["project_owner"], project_number=project["project_number"],
