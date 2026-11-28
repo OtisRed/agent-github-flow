@@ -20,14 +20,14 @@ MAX_REQUEST = 65536
 MAX_RESPONSE = 8192
 
 
-def _trusted_path(path, *, executable=False):
+def _trusted_path(path, *, executable=False, directory=False):
     if not isinstance(path, str) or not os.path.isabs(path) or os.path.realpath(path) != path:
         raise ValueError('Invalid trusted path')
     node = Path(path)
     leaf = node
     while True:
         info = os.lstat(node)
-        expected = stat.S_ISREG(info.st_mode) if node == leaf else stat.S_ISDIR(info.st_mode)
+        expected = stat.S_ISDIR(info.st_mode) if directory or node != leaf else stat.S_ISREG(info.st_mode)
         if not expected or info.st_uid != 0 or info.st_mode & 0o022:
             raise ValueError('Path is not root controlled')
         if node == leaf and executable and not info.st_mode & 0o111:
