@@ -177,7 +177,7 @@ def execute(action, request, permit, *, port):
     return completed
 
 
-def serve():
+def serve_request(state, handle):
     os.umask(0o077)
     raw = sys.stdin.buffer.readline(MAX_INPUT + 1)
     if len(raw) > MAX_INPUT or not raw.endswith(b'\n'):
@@ -186,24 +186,31 @@ def serve():
     if set(envelope) != {'action', 'request'} or envelope['action'] not in ('deploy', 'status'):
         raise ValueError('Invalid action')
     request = target_request(envelope['request'])
-    permit = load_json(PILOT)
-    if set(permit) != {'baseline', 'request'}:
-        raise ValueError('Invalid permit')
-    release(permit['baseline'])
     # The operator owns this directory. The service account has no write access.
-    st = STATE.stat()
-    if not stat.S_ISDIR(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o077 or STATE.resolve() != STATE:
+    st = state.stat()
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o077 or state.resolve() != state:
         raise ValueError('Invalid executor state directory')
-    fd = os.open(STATE / 'deploy.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    fd = os.open(state / 'deploy.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         with CONFIG.open(encoding='utf-8') as stream:
             port = json.load(stream)['port']
         if type(port) is not int or not 1 <= port <= 65535:
             raise ValueError('Invalid controller port')
-        print(json.dumps(execute(envelope['action'], request, permit, port=port)), flush=True)
+        print(json.dumps(handle(envelope['action'], request, port=port)), flush=True)
     finally:
         os.close(fd)
+
+
+def serve():
+    def handle(action, request, *, port):
+        permit = load_json(PILOT)
+        if set(permit) != {'baseline', 'request'}:
+            raise ValueError('Invalid permit')
+        release(permit['baseline'])
+        return execute(action, request, permit, port=port)
+
+    serve_request(STATE, handle)
 
 
 if __name__ == '__main__':

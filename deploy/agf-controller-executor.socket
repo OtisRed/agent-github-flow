@@ -1,0 +1,14 @@
+[Unit]
+Description=AGF main release executor socket
+
+[Socket]
+ListenStream=/run/agf-controller-executor.sock
+SocketUser=root
+SocketGroup=agent-flow
+SocketMode=0660
+Accept=yes
+MaxConnections=8
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target
