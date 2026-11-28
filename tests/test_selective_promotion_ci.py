@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from selective_promotion_ci import verify_candidate_ci
+from selective_promotion_ci import TRUSTED_CHECKOUT, TRUSTED_JOB, TRUSTED_PATH, verify_candidate_ci
 
 
 class SelectiveCiTests(unittest.TestCase):
@@ -87,6 +87,62 @@ class SelectiveCiTests(unittest.TestCase):
     def test_later_log_lines_do_not_substitute_for_the_checkout(self):
         self.responses["actions/jobs/6/logs"] = self.log.replace("00:00:01.", "00:00:04.")
         self.assertEqual(self.verify()["reason"], "checkout-revision-missing")
+
+    def trust_workflow_change(self):
+        base = self.expected["main"]
+        proof = {"run_id": 15, "job_id": 16, "workflow_id": 13,
+                 "trusted_blob": "8" * 40, "candidate_blob": "9" * 40}
+        self.policy["workflow_change"] = proof
+        self.responses[self.test_workflow]["sha"] = proof["candidate_blob"]
+        self.responses.update({
+            f"contents/{TRUSTED_PATH}?ref={base}": {"sha": proof["trusted_blob"]},
+            f"contents/{TRUSTED_PATH}?ref={self.tested}": {"sha": proof["trusted_blob"]},
+            "actions/runs/15": {"id": 15, "repository": {"id": 1}, "head_repository": {"id": 1},
+                                "workflow_id": 13, "path": TRUSTED_PATH, "event": "workflow_dispatch",
+                                "head_branch": "main", "head_sha": base, "status": "completed",
+                                "conclusion": "success", "run_attempt": 1, "check_suite_id": 17},
+            "actions/jobs/16": {"id": 16, "run_id": 15, "run_attempt": 1, "head_sha": base,
+                                "name": TRUSTED_JOB, "status": "completed", "conclusion": "success",
+                                "steps": [dict(self.step, name=TRUSTED_CHECKOUT)],
+                                "check_run_url": f"https://api.github.com/repos/{self.repo}/check-runs/16"},
+            "actions/jobs/16/logs": self.log,
+            f"commits/{base}/check-runs?check_name={TRUSTED_JOB}&filter=latest&per_page=100":
+                {"total_count": 1, "check_runs": [{"id": 16, "app": {"id": 4}, "name": TRUSTED_JOB,
+                    "head_sha": base, "status": "completed", "conclusion": "success",
+                    "check_suite": {"id": 17}}]},
+        })
+
+    def test_changed_workflow_needs_both_evidences(self):
+        self.trust_workflow_change()
+        self.assertEqual(self.verify()["kind"], "verified")
+        self.responses["actions/jobs/6"]["conclusion"] = "failure"
+        self.assertEqual(self.verify()["reason"], "job-mismatch")
+        self.responses["actions/jobs/6"]["conclusion"] = "success"
+        del self.responses["actions/runs/15"]
+        self.assertEqual(self.verify()["reason"], "evidence-unavailable")
+
+    def test_trusted_evidence_rejects_wrong_revision_branch_or_attempt(self):
+        self.trust_workflow_change()
+        run = self.responses["actions/runs/15"]
+        for key, value in (("head_branch", "smoke"), ("head_sha", "1" * 40), ("event", "pull_request"),
+                           ("workflow_id", 3), ("conclusion", "failure")):
+            with self.subTest(key=key):
+                original = run[key]
+                run[key] = value
+                self.assertEqual(self.verify()["reason"], "trusted-run-mismatch")
+                run[key] = original
+        self.responses["actions/jobs/16"]["run_attempt"] = 2
+        self.assertEqual(self.verify()["reason"], "trusted-job-mismatch")
+        self.responses["actions/jobs/16"]["run_attempt"] = 1
+        self.responses["actions/jobs/16/logs"] = self.log.replace(self.tested, "1" * 40)
+        self.assertEqual(self.verify()["reason"], "trusted-tested-revision-mismatch")
+
+    def test_changed_workflow_requires_both_approved_blobs(self):
+        self.trust_workflow_change()
+        self.responses[self.test_workflow]["sha"] = "1" * 40
+        self.assertEqual(self.verify()["reason"], "unapproved-changed-workflow")
+        self.responses[f"contents/{TRUSTED_PATH}?ref={self.tested}"]["sha"] = "2" * 40
+        self.assertEqual(self.verify()["reason"], "unapproved-trusted-workflow")
 
     def test_accepts_the_requested_suite_alongside_another_successful_suite(self):
         result = self.responses[self.check_path]
